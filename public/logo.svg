@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
+  <!-- 머리카락 -->
+  <path d="M150 150 Q250 50 350 150 T450 250 Q250 400 150 250" fill="black"/>
+  
+  <!-- 얼굴 -->
+  <circle cx="250" cy="250" r="100" fill="white" stroke="black" stroke-width="5"/>
+  
+  <!-- 안경 -->
+  <circle cx="200" cy="250" r="50" fill="white" stroke="black" stroke-width="5"/>
+  <circle cx="300" cy="250" r="50" fill="white" stroke="black" stroke-width="5"/>
+  <line x1="250" y1="250" x2="250" y2="250" stroke="black" stroke-width="5"/>
+  
+  <!-- 눈동자 -->
+  <circle cx="200" cy="250" r="10" fill="black"/>
+  <circle cx="300" cy="250" r="10" fill="black"/>
+  
+  <!-- 미소 -->
+  <path d="M220 290 Q250 320 280 290" stroke="black" stroke-width="5" fill="none"/>
+  
+  <!-- 나비넥타이 -->
+  <polygon points="220,320 200,340 220,360 240,340" fill="brown"/>
+  <polygon points="280,320 300,340 280,360 260,340" fill="brown"/>
+  <circle cx="250" cy="340" r="10" fill="brown"/>
+  
+  <!-- 텍스트 -->
+  <text x="100" y="420" font-size="50" font-weight="bold" font-family="serif" fill="black">NERD&amp;GEEKS</text>
+</svg>

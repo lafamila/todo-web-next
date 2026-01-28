@@ -1,11 +1,11 @@
 import "./globals.css";
-import Sidebar from "./left-sidebar";
+import Sidebar from "./client-components/left-sidebar";
 
 export default function RootLayout({ children }) {
+
   return (
     <html lang="en">
       <body>
-        <Sidebar/>
         {children}
       </body>
     </html>
