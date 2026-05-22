@@ -11,7 +11,6 @@ import type {
   CreateProjectRequestInterface,
   DailyTaskTypeInterface,
   DayDetailInterface,
-  LoginResponseInterface,
   MemoInterface,
   ProjectInterface,
   ProjectMemberInterface,
@@ -79,8 +78,8 @@ export { SOCKET_BASE_URL, SOCKET_PATH };
 export async function login(
   username: string,
   password: string,
-): Promise<LoginResponseInterface> {
-  return fetchJson<LoginResponseInterface>(
+): Promise<UserInterface> {
+  return fetchJson<UserInterface>(
     "/session/login",
     {
       method: "POST",

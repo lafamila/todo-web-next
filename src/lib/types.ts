@@ -135,10 +135,6 @@ export interface TodoAppContextTypeInterface {
   removeMember: (projectId: string, userId: string) => Promise<void>;
 }
 
-export interface LoginResponseInterface {
-  user: UserInterface;
-}
-
 export interface CalendarDayInterface {
   date: string;
   completedCount: number;
