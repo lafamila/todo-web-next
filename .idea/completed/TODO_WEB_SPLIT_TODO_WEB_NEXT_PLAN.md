@@ -1,5 +1,5 @@
 ---
-status: PREPARED
+status: COMPLETED
 summary: "기존 beer-house todo UI를 todo-web-next 독립 Next 앱으로 옮기고 todo-api-fastapi와 직접 통신하게 한다."
 ---
 
