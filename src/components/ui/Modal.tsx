@@ -58,7 +58,7 @@ export function Modal({
       <div
         className={cn(
           'relative bg-white rounded-lg shadow-xl w-full mx-4',
-          'transform transition-all',
+          'transform transition-all max-h-[85vh] overflow-hidden flex flex-col',
           sizeStyles[size]
         )}
       >
@@ -86,7 +86,7 @@ export function Modal({
         </div>
 
         {/* Content */}
-        <div className="p-4">{children}</div>
+        <div className="p-4 overflow-y-auto">{children}</div>
       </div>
     </div>
   );

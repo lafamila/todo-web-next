@@ -2,6 +2,7 @@ export interface ProjectInterface {
   id: string;
   name: string;
   icon: string;
+  status?: number;
   isSecret: boolean;
   ownerId?: string;
   createdAt: Date | string;
@@ -20,6 +21,7 @@ export interface MemoInterface {
   projectId: string;
   title: string;
   content: string;
+  status?: number;
   createdBy?: string;
   createdAt: Date | string;
   updatedAt: Date | string;

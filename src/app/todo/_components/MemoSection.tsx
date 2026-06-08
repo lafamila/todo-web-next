@@ -4,10 +4,12 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { MonacoCodeEditor } from '@/components/editor/MonacoCodeEditor';
 import { CheckboxItem } from '@/components/editor/CheckboxItem';
+import { Modal } from '@/components/ui/Modal';
 import { parseContent, toggleCheckbox } from '@/lib/utils';
 import type { ContentBlockInterface, ArticleInterface } from '@/lib/types';
 import { publishArticle, getMemoArticle, deleteArticle } from '@/lib/api';
@@ -21,6 +23,28 @@ const isTypingContext = (el: Element | null) => {
   return !!htmlEl.isContentEditable;
 };
 
+const editorFeatureHelp = [
+  { syntax: '-- 할 일', description: '체크되지 않은 체크박스를 만듭니다.' },
+  { syntax: '--v 완료한 일', description: '체크된 체크박스를 만듭니다.' },
+  { syntax: '```ts ... ```', description: '코드 블록을 만들고 에디터로 수정할 수 있습니다.' },
+  { syntax: '@메모명', description: '편집 중 다른 메모를 검색해서 링크로 삽입합니다.' },
+  { syntax: '1. 항목', description: '번호 목록을 만듭니다.' },
+  { syntax: '- 항목', description: '글머리 목록을 만듭니다.' },
+  { syntax: '[텍스트](URL)', description: '링크를 만듭니다.' },
+];
+
+const shortcutHelp = [
+  { keys: 'Ctrl/⌘ + S', description: '현재 메모를 저장합니다.' },
+  { keys: '더블클릭', description: '메모 본문 편집창을 엽니다.' },
+  { keys: '본문에서 바로 입력', description: '편집창을 열고 입력한 문자를 이어서 반영합니다.' },
+  { keys: 'Ctrl/⌘ + Shift + X', description: '프로젝트가 선택되어 있으면 새 메모 입력칸에 포커스합니다. 프로젝트가 없으면 새 프로젝트 모달을 엽니다.' },
+  { keys: 'Ctrl/⌘ + P', description: '관리자에게 멤버 관리 모달을 엽니다.' },
+  { keys: 'Ctrl/⌘ + 메모 클릭', description: '메모 목록에서 여러 메모를 선택합니다.' },
+  { keys: '↑ / ↓', description: '메모 검색 또는 새 메모 추천 목록에서 항목을 이동합니다.' },
+  { keys: 'Enter', description: '새 메모 입력칸에서는 선택한 추천 메모로 이동하거나 새 메모를 만듭니다.' },
+  { keys: 'Esc', description: '검색 추천 목록이나 열린 모달을 닫습니다.' },
+];
+
 export function MemoSection() {
   const {
     state: { selectedMemo, selectedProject, memos },
@@ -29,6 +53,7 @@ export function MemoSection() {
   const { user } = useAuth();
   const isAdmin = user?.isAdmin ?? false;
   const [showTextarea, setShowTextarea] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [lockMessage, setLockMessage] = useState<string | null>(null);
   const isLockedByOtherRef = useRef(false);
@@ -461,10 +486,9 @@ export function MemoSection() {
   }, []);
 
 
-  const markdownComponents = React.useMemo(
+  const markdownComponents = React.useMemo<Components>(
     () => ({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      a: ({ href, children, ...props }: any) => {
+      a: ({ href, children, ...props }) => {
         if (href && (href.includes('memoId=') || href.startsWith('?'))) {
           return (
             <a
@@ -479,11 +503,26 @@ export function MemoSection() {
           );
         }
         return (
-          <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+          <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:underline" {...props}>
             {children}
           </a>
         );
       },
+      ol: ({ children, ...props }) => (
+        <ol className="my-1 list-decimal pl-6 marker:text-white" {...props}>
+          {children}
+        </ol>
+      ),
+      ul: ({ children, ...props }) => (
+        <ul className="my-1 list-disc pl-6 marker:text-white" {...props}>
+          {children}
+        </ul>
+      ),
+      li: ({ children, ...props }) => (
+        <li className="pl-1" {...props}>
+          {children}
+        </li>
+      ),
     }),
     []
   );
@@ -593,6 +632,16 @@ export function MemoSection() {
           )}
         </div>
 
+        <button
+          type="button"
+          onClick={() => setShowHelpModal(true)}
+          className="fixed bottom-4 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white text-lg font-bold text-gray-900 shadow-lg transition-colors hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-white/70"
+          aria-label="에디터 도움말 열기"
+          title="에디터 도움말"
+        >
+          ?
+        </button>
+
         <div className="flex flex-col h-full min-h-0">
           
 
@@ -648,7 +697,43 @@ export function MemoSection() {
           </div>)}
         </div>
       </div>
+
+      <Modal
+        isOpen={showHelpModal}
+        onClose={() => setShowHelpModal(false)}
+        title="에디터 도움말"
+        size="lg"
+      >
+        <div className="space-y-6 text-sm text-gray-700">
+          <section>
+            <h3 className="mb-3 text-base font-semibold text-gray-900">특수 문법</h3>
+            <div className="space-y-2">
+              {editorFeatureHelp.map((item) => (
+                <div key={item.syntax} className="grid grid-cols-[150px_1fr] gap-3 rounded border border-gray-200 px-3 py-2">
+                  <code className="whitespace-pre-wrap rounded bg-gray-100 px-2 py-1 font-mono text-xs text-gray-900">
+                    {item.syntax}
+                  </code>
+                  <p>{item.description}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <h3 className="mb-3 text-base font-semibold text-gray-900">단축키</h3>
+            <div className="space-y-2">
+              {shortcutHelp.map((item) => (
+                <div key={item.keys} className="grid grid-cols-[150px_1fr] gap-3 rounded border border-gray-200 px-3 py-2">
+                  <kbd className="rounded bg-gray-900 px-2 py-1 text-center font-mono text-xs text-white">
+                    {item.keys}
+                  </kbd>
+                  <p>{item.description}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      </Modal>
     </main>
   );
 }
-

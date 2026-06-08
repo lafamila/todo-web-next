@@ -13,7 +13,7 @@ export default function ManagePage() {
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      router.push('/todo/login?redirect=/calendar/manage');
+      router.push('/login?redirect=/calendar/manage');
     }
   }, [isLoading, isAuthenticated, router]);
 

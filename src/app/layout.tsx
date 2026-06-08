@@ -3,6 +3,7 @@ import { Space_Grotesk } from "next/font/google";
 import { AuthProvider } from "@/contexts/AuthContext";
 import BackgroundEffect from "@/components/layout/BackgroundEffect";
 import "./globals.css";
+import "./todo/global.css";
 
 const spaceGrotesk = Space_Grotesk({ subsets: ["latin"] });
 
