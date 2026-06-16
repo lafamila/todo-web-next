@@ -6,6 +6,7 @@ import { AppProvider } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/Button';
 import * as api from '@/lib/api';
+import { consumePostLoginRedirect } from '@/lib/auth';
 import MemoListSection from './todo/_components/MemoListSection';
 import ProjectSection from './todo/_components/ProjectSection';
 import ScreenShare from './todo/_components/ScreenShare';
@@ -117,6 +118,14 @@ export default function IndexPage() {
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       router.replace('/login');
+      return;
+    }
+
+    if (!isLoading && isAuthenticated) {
+      const redirectTo = consumePostLoginRedirect('/');
+      if (redirectTo !== '/') {
+        router.replace(redirectTo);
+      }
     }
   }, [isAuthenticated, isLoading, router]);
 

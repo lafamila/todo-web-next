@@ -1,31 +1,52 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
+import {
+  consumePostLoginRedirect,
+  getLoginErrorFromSearchParams,
+  normalizePostLoginRedirect,
+  rememberPostLoginRedirect,
+} from '@/lib/auth';
 
-export default function LoginPage() {
-  const { login } = useAuth();
+function LoginPageContent() {
+  const {
+    login,
+    isAuthenticated,
+    isLoading,
+    accessDeniedMessage,
+    clearAccessDeniedMessage,
+  } = useAuth();
   const router = useRouter();
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const searchParams = useSearchParams();
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!username.trim() || !password.trim()) return;
+  const redirectTo = useMemo(
+    () => normalizePostLoginRedirect(searchParams.get('redirect')),
+    [searchParams]
+  );
+  const callbackError = useMemo(
+    () => getLoginErrorFromSearchParams(new URLSearchParams(searchParams.toString())),
+    [searchParams]
+  );
 
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) {
+      router.replace(consumePostLoginRedirect(redirectTo));
+    }
+  }, [isAuthenticated, isLoading, redirectTo, router]);
+
+  const handleLogin = async () => {
+    rememberPostLoginRedirect(redirectTo);
+    clearAccessDeniedMessage();
     setError('');
     setIsSubmitting(true);
 
     try {
-      await login(username, password);
-      const searchParams = new URLSearchParams(window.location.search);
-      const redirectTo = searchParams.get('redirect') || '/';
-      router.push(redirectTo);
+      await login();
     } catch (err) {
       const message = err instanceof Error ? err.message : '로그인에 실패했습니다.';
       setError(message);
@@ -34,6 +55,16 @@ export default function LoginPage() {
     }
   };
 
+  const visibleError = error || callbackError || accessDeniedMessage;
+
+  if (isLoading || isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-950">
+        <span className="text-gray-400">Loading...</span>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-950">
       <div className="w-full max-w-sm p-8 bg-gray-900 rounded-2xl shadow-2xl border border-gray-800">
@@ -41,48 +72,37 @@ export default function LoginPage() {
           TODO
         </h1>
 
-        <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1.5">
-              아이디
-            </label>
-            <Input
-              value={username}
-              onChange={setUsername}
-              placeholder="아이디를 입력하세요"
-              className="w-full outline-none bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
-              autoFocus
-              autoComplete="off"
-              name="teddy-login-id"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1.5">
-              비밀번호
-            </label>
-            <Input
-              type="password"
-              value={password}
-              onChange={setPassword}
-              placeholder="비밀번호를 입력하세요"
-              className="w-full outline-none bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
-              autoComplete="new-password"
-              name="teddy-login-pw"
-            />
-          </div>
-
-          {error && <p className="text-sm text-red-500">{error}</p>}
+        <div className="space-y-4">
+          {visibleError && (
+            <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+              {visibleError}
+            </p>
+          )}
 
           <Button
-            type="submit"
-            disabled={isSubmitting || !username.trim() || !password.trim()}
+            type="button"
+            onClick={() => void handleLogin()}
+            disabled={isSubmitting}
             className="w-full bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg py-2.5 font-medium transition-colors"
           >
             {isSubmitting ? '로그인 중...' : '로그인'}
           </Button>
-        </form>
+        </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-gray-950">
+          <span className="text-gray-400">Loading...</span>
+        </div>
+      }
+    >
+      <LoginPageContent />
+    </Suspense>
   );
 }

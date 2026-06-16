@@ -20,17 +20,37 @@ import type {
 
 interface ApiErrorShape {
   message?: string;
+  error?: string;
+  error_description?: string;
   detail?: string | { existingMemoId?: string };
 }
 
-async function parseError(response: Response, fallback: string): Promise<Error> {
-  const errorData = (await response.json().catch(() => null)) as ApiErrorShape | null;
-  const message =
-    typeof errorData?.detail === "string"
-      ? errorData.detail
-      : errorData?.message || fallback;
+export class ApiError extends Error {
+  status: number;
+  code?: string;
 
-  return new Error(message);
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    Object.setPrototypeOf(this, ApiError.prototype);
+  }
+}
+
+async function parseError(response: Response, fallback: string): Promise<ApiError> {
+  const errorData = (await response.json().catch(() => null)) as ApiErrorShape | null;
+  const detail =
+    typeof errorData?.detail === "string" ? errorData.detail : undefined;
+  const description =
+    typeof errorData?.error_description === "string"
+      ? errorData.error_description
+      : undefined;
+  const code = typeof errorData?.error === "string" ? errorData.error : undefined;
+  const message =
+    detail ?? description ?? errorData?.message ?? fallback;
+
+  return new ApiError(message, response.status, code);
 }
 
 async function fetchJson<T>(
@@ -75,18 +95,36 @@ async function fetchVoid(
 
 export { SOCKET_BASE_URL, SOCKET_PATH };
 
-export async function login(
-  username: string,
-  password: string,
-): Promise<UserInterface> {
-  return fetchJson<UserInterface>(
-    "/session/login",
+interface LoginStartResponse {
+  authorizeUrl?: string;
+  authorize_url?: string;
+  loginTransactionId?: string;
+  expiresAt?: string;
+}
+
+export async function startLogin(): Promise<{
+  authorizeUrl: string;
+  loginTransactionId?: string;
+  expiresAt?: string;
+}> {
+  const response = await fetchJson<LoginStartResponse>(
+    "/session/oidc/start",
     {
       method: "POST",
-      body: JSON.stringify({ loginId: username, password }),
     },
-    "로그인에 실패했습니다.",
+    "로그인을 시작하지 못했습니다.",
   );
+
+  const authorizeUrl = response.authorizeUrl ?? response.authorize_url;
+  if (!authorizeUrl) {
+    throw new ApiError("로그인 시작 응답이 올바르지 않습니다.", 502);
+  }
+
+  return {
+    authorizeUrl,
+    loginTransactionId: response.loginTransactionId,
+    expiresAt: response.expiresAt,
+  };
 }
 
 export async function getMe(): Promise<UserInterface> {
