@@ -7,6 +7,7 @@ RUN npm ci
 
 COPY . .
 
+# Independent deploys must inject public backend/realtime endpoints at build time.
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_SOCKET_URL
 ARG NEXT_PUBLIC_SOCKET_PATH
