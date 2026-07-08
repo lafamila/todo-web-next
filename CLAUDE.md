@@ -4,6 +4,11 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 
 > 이 파일이 본 레포의 canonical 가이드입니다. `AGENTS.md` 는 codex 호환용 stub 입니다.
 
+- **Lifecycle**: DEPLOY
+- **Status**: active
+- **Port**: 3034
+- **Auth**: via todo-api-fastapi 세션 — 자체 OIDC client 없음
+
 ## 워크스페이스 대원칙 (canonical)
 
 이 레포는 `../CLAUDE.md` 의 **DEVELOPMENT PRINCIPLES** 섹션을 따른다. 핵심 재진술:
