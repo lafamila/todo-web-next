@@ -8,7 +8,13 @@ import { MemoInterface, ProjectRole, SortOption, UserInterface } from "@/lib/typ
 import { formatDate } from "@/lib/utils";
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import * as api from "@/lib/api";
-import { MemoSection } from "./MemoSection";
+import { isTypingContext, MemoSection } from "./MemoSection";
+
+const DEFAULT_PANE_WIDTH = 400;
+// Tasks (n) 헤더 + 멤버초대 버튼 라인이 줄바꿈되지 않는 최소폭
+const MIN_PANE_WIDTH = 264;
+const MAX_PANE_WIDTH = 760;
+const PANE_WIDTH_STORAGE_KEY = "todo:tasksPaneWidth";
 
 export default function MemoListSection() {
   const {
@@ -29,6 +35,11 @@ export default function MemoListSection() {
   const [newMemoTitle, setNewMemoTitle] = useState('');
   // 정렬 방향 — 기본 오름차순. 활성 항목 재클릭 시 토글, 다른 항목 클릭 시 오름차순으로 리셋.
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  // tasks 영역 폭 (경계 드래그로 조절, localStorage 유지)
+  const [tasksPaneWidth, setTasksPaneWidth] = useState(DEFAULT_PANE_WIDTH);
+  const [isResizing, setIsResizing] = useState(false);
+  // Cmd/Ctrl+Enter 에디터 전체화면 — ESC 로 종료
+  const [detailFullscreen, setDetailFullscreen] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -42,6 +53,46 @@ export default function MemoListSection() {
   const [inviteRole, setInviteRole] = useState<ProjectRole>('editor');
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+
+  // 저장된 tasks 영역 폭 복원/유지
+  useEffect(() => {
+    const saved = Number(window.localStorage.getItem(PANE_WIDTH_STORAGE_KEY));
+    if (saved >= MIN_PANE_WIDTH && saved <= MAX_PANE_WIDTH) {
+      setTasksPaneWidth(saved);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(PANE_WIDTH_STORAGE_KEY, String(tasksPaneWidth));
+  }, [tasksPaneWidth]);
+
+  const startPaneResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = tasksPaneWidth;
+    setIsResizing(true);
+    document.body.style.userSelect = 'none';
+    const onMove = (ev: PointerEvent) => {
+      setTasksPaneWidth(
+        Math.min(MAX_PANE_WIDTH, Math.max(MIN_PANE_WIDTH, startWidth + ev.clientX - startX)),
+      );
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.style.userSelect = '';
+      setIsResizing(false);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  // 메모 선택이 풀리면 전체화면도 해제
+  useEffect(() => {
+    if (!selectedMemo) {
+      setDetailFullscreen(false);
+    }
+  }, [selectedMemo]);
 
   const handleOpenMemberModal = useCallback(async () => {
     if (!selectedProject) return;
@@ -70,10 +121,24 @@ export default function MemoListSection() {
           handleOpenMemberModal();
         }
       }
+
+      // Cmd/Ctrl+Enter: 선택된 메모의 에디터를 전체화면으로
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        if (selectedMemo && selectedMemoIds.length === 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          setDetailFullscreen(true);
+        }
+      }
+
+      // ESC: 전체화면 종료 — 단, 입력중(라인 편집 등)이면 에디터의 ESC 가 우선
+      if (e.key === 'Escape' && !isTypingContext(document.activeElement)) {
+        setDetailFullscreen(false);
+      }
     };
     window.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
-  }, [selectedProject, isAdmin, handleOpenMemberModal]);
+  }, [selectedProject, isAdmin, handleOpenMemberModal, selectedMemo, selectedMemoIds]);
 
   const handleSearchUsers = useCallback((query: string) => {
     setSearchUserQuery(query);
@@ -269,7 +334,10 @@ export default function MemoListSection() {
   return (
     <>
     <div className="content">
-      <div className="main-container">
+      <div
+        className={`main-container${detailFullscreen ? ' detail-fullscreen' : ''}`}
+        style={{ gridTemplateColumns: `${tasksPaneWidth}px 1fr` }}
+      >
         <div className="title-container">
           <span>{selectedProject.name}</span>
           <div id="screen-share-buttons" />
@@ -376,6 +444,12 @@ export default function MemoListSection() {
               ))
             )}
           </div>
+          <div
+            className={`pane-resizer${isResizing ? ' dragging' : ''}`}
+            onPointerDown={startPaneResize}
+            onDoubleClick={() => setTasksPaneWidth(DEFAULT_PANE_WIDTH)}
+            title="드래그로 폭 조절 · 더블클릭 초기화"
+          />
         </div>
 
         {isMultiSelectMode ? (

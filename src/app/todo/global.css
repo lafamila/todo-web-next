@@ -60,11 +60,48 @@ body {
 
 /* 원본 그리드 리듬(80px 헤더 / 60px 입력 / 1fr 목록)에 정렬 select 행(auto)을 추가 수용 */
 .main {
+  position: relative; /* .pane-resizer 기준 */
   min-height: 0;
   overflow: hidden;
   display: grid;
   grid-template-rows: 80px 60px auto minmax(0, 1fr);
   padding: 0 20px;
+}
+
+/* tasks 영역 ↔ 에디터 영역 경계 드래그 리사이저 (더블클릭 = 기본폭 복원) */
+.pane-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+.pane-resizer::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background 120ms;
+}
+
+.pane-resizer:hover::after,
+.pane-resizer.dragging::after {
+  background: #999;
+}
+
+/* Cmd/Ctrl+Enter — 에디터(.detail) 전체화면, ESC 로 종료 */
+.main-container.detail-fullscreen .detail {
+  position: fixed;
+  inset: 0;
+  z-index: 1200; /* left-sidebar(z 999) 위 */
+  height: 100vh;
+  padding: 16px;
 }
 
 .detail {

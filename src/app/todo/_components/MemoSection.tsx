@@ -13,7 +13,7 @@ import type { ArticleInterface } from '@/lib/types';
 import { publishArticle, getMemoArticle, deleteArticle } from '@/lib/api';
 import { useMemoSocket } from '@/hooks/useMemoSocket';
 
-const isTypingContext = (el: Element | null) => {
+export const isTypingContext = (el: Element | null) => {
   if (!el) return false;
   const tag = (el as HTMLElement).tagName?.toLowerCase();
   if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
