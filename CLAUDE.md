@@ -38,6 +38,40 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 - realtime은 `todo-api-fastapi` 의 Python Socket.IO endpoint를 사용한다.
 - LiveKit viewer/publisher UI는 유지하되 token 발급 endpoint는 `todo-api-fastapi` 로 바꾼다.
 
+## Memo Editor (인라인 라이브 렌더링)
+
+메모 본문 편집기는 **편집창/미리보기 분리가 없는 단일 서피스**다. 활성 라인 1개만 `<textarea>` 로
+살아 있고 나머지 라인은 렌더된 블록으로 남는다. 구현은 `src/components/editor/inline/` 에 있고
+`MemoSection` 이 이를 호스팅한다.
+
+- **데이터 모델**: `EditorLine { id, text }`. 로드 = `content.split('\n')`, 저장 = `join('\n')`.
+  **바이트 동일 왕복이 불변식**이다 (개행 손실 금지). `id` 는 세션-로컬 값으로 React key 안정성만 담당한다.
+- **라인 상태**: `rendered` → (더블클릭) → `editing` → (완결 패턴 + 2초 무변경 + 조합 중 아님) →
+  `focused-rendered` → (Backspace 1회는 삭제 없이 소스 복귀 / 문자 입력·조합 시작도 소스 복귀).
+  blur·Escape·다른 라인 활성화는 즉시 `rendered`. `--` 나 `-- ` 같은 미완결 패턴은 절대 자동 렌더되지 않는다.
+- **타이머 2종**: `renderSettleTimer`(2초, 자동 렌더)와 `MemoSection` 의 6초 락 해제 타이머는 **별개**다.
+  6초 타이머는 "활성 라인이 없을 때만" 돈다 (`onEditingChange`).
+- **IME**: `composingRef` 로 조합 중에는 렌더 타이머·라인 전환·분할/병합을 모두 막는다.
+  `e.isComposing || e.keyCode === 229` 인 keydown 은 상태 머신 입력이 아니다. 전역 "아무 키나 입력하면
+  편집 시작" 핸들러는 `preventDefault` 하지 않고 마지막 라인에 포커스만 옮긴다 (수동 append 금지 — 이중 입력 원인).
+- **구조 편집**: Enter 분할 / 라인 시작 Backspace 병합 / 라인 끝 Delete 다음 줄 병합 / ↑·↓ 인접 라인 이동
+  (캐럿 열 유지). 활성 라인에 개행이 들어오면 `handleLineChange` 가 라인 분할로 흡수한다.
+- **코드펜스**: ` ``` ` 펜스 라인만 라인 편집 대상이고 본문은 항상 Monaco 가 소유한다. 자동 렌더 없음.
+  방향키 이동은 Monaco 본문 라인을 건너뛴다.
+- **Undo/redo**: 문서 스냅샷 스택(`history.ts`, 최대 200, 500ms 병합). 활성 라인 안에서 타이핑한 내용이
+  남아 있는 동안에는 네이티브 undo 를 우선한다.
+- **Raw 모드 (Cmd/Ctrl+E)**: 문서 전체를 하나의 textarea 로 여는 escape hatch. 멀티라인 선택/복사와
+  `@메모명` 검색이 필요할 때 쓴다.
+- **불변 계약**: 저장은 Ctrl/⌘+S 만 (자동 저장 없음), 체크박스 토글만 즉시 서버 반영, Socket.IO 단일 작성자 락,
+  `PUT /api/memos/{id}` 계약 — 전부 그대로다. 에디터는 API/소켓을 바꾸지 않는다.
+- **`parseContent` 와의 관계**: `lib/utils.ts` 의 `parseContent` 는 `ArticleDetail` 이 계속 사용한다.
+  신규 `classifyLine`/`buildLineGroups` 가 같은 판정을 유지하는지 개발 모드에서
+  `assertClassifierMatchesParseContent` 가 감시한다. 문법을 바꾸면 **두 경로를 함께** 고쳐야 한다.
+- **블록 스타일**: 렌더된 체크박스/코드/마크다운 블록은 `src/components/editor/blocks/ContentBlocks.tsx`
+  하나에서 나온다. 에디터와 `ArticleDetail` 이 같은 컴포넌트를 쓰므로 한쪽만 손대 시각이 갈라지지 않게 한다.
+- **시각 토큰**: `src/components/editor/inline/editor-tokens.css` 의 `.editor-line*` 4종만 쓴다
+  (전환 100ms / editing 배경 / focused 1px 액센트 링 / 자동 렌더 200ms 플래시). 일회성 클래스를 흩뿌리지 말 것.
+
 ## Expected Stack
 
 - Next.js 16
