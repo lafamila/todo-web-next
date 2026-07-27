@@ -1,9 +1,11 @@
 'use client';
 
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkBreaks from 'remark-breaks';
 import Icon from '@/components/ui/Icon';
+import {
+  CheckboxBlock,
+  MarkdownBlock,
+  StaticCodeBlock,
+} from '@/components/editor/blocks/ContentBlocks';
 import { parseContent } from '@/lib/utils';
 import type { ArticleInterface, ContentBlockInterface } from '@/lib/types';
 
@@ -32,42 +34,21 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
       switch (block.type) {
         case 'checkbox':
           return (
-            <div key={index} className="flex items-start gap-2 my-1">
-              <input
-                type="checkbox"
-                checked={block.metadata?.checked || false}
-                readOnly
-                className="mt-1 accent-[#3994ef]"
-              />
-              <span className={block.metadata?.checked ? 'line-through text-gray-500' : 'text-gray-300'}>
-                {block.content}
-              </span>
+            <div key={index} className="my-1">
+              <CheckboxBlock checked={block.metadata?.checked || false} content={block.content} />
             </div>
           );
 
         case 'code':
           return (
-            <div key={index} className="my-4">
-              <div className="flex items-center justify-between px-4 py-2 bg-white/5 border border-white/10 rounded-t-xl">
-                <span className="text-xs text-gray-500 font-mono">
-                  {block.metadata?.language || 'code'}
-                </span>
-              </div>
-              <pre className="px-4 py-3 bg-white/[0.03] border border-t-0 border-white/10 rounded-b-xl overflow-x-auto">
-                <code className="text-sm font-mono text-gray-300 whitespace-pre">
-                  {block.content}
-                </code>
-              </pre>
-            </div>
+            <StaticCodeBlock key={index} code={block.content} language={block.metadata?.language} />
           );
 
         case 'memo-link':
           return (
-            <div key={index} className="my-2">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                {block.content}
-              </ReactMarkdown>
-            </div>
+            <MarkdownBlock key={index} className="my-2">
+              {block.content}
+            </MarkdownBlock>
           );
 
         case 'text':
@@ -76,11 +57,9 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
             return <br key={index} />;
           }
           return (
-            <div key={index} className="article-markdown">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                {block.content}
-              </ReactMarkdown>
-            </div>
+            <MarkdownBlock key={index} className="article-markdown">
+              {block.content}
+            </MarkdownBlock>
           );
       }
     });
