@@ -1,8 +1,10 @@
 :root {
   --white: #ffffff;
   --black: #171717;
-  --left-sidebar-width: 5vw;
-  --left-sidebar-width-expanded: 25vw;
+  /* 20px icon + 20px horizontal padding on each side */
+  --left-sidebar-width: max(5vw, 60px);
+  --left-sidebar-width-expanded: max(25vw, calc(var(--left-sidebar-width) + 40px));
+  --left-sidebar-transition: 500ms ease;
 }
 
 
@@ -257,7 +259,7 @@ body {
   position: fixed;
   left: 0;
   top: 0;
-  transition: all 500ms ease;
+  transition: width var(--left-sidebar-transition);
   display: grid;
   grid-template-rows: 80px 1fr 120px;
   grid-template-columns: 1fr;
@@ -269,14 +271,13 @@ body {
   display: grid;
 }
 
-/* 로고는 접힘/펼침/트랜지션 중 항상 현재 너비의 가로 중앙 (원본 동작) */
+/* 접힌 상태에서는 아이콘 열 중앙, 펼친 상태에서는 전체 사이드바 중앙을 따른다. */
 .left-sidebar .sidebar-logo {
   justify-content: center;
 }
 
 .left-sidebar:hover {
   width: var(--left-sidebar-width-expanded);
-  transition: all 500ms ease;
 }
 
 .project {
@@ -294,12 +295,21 @@ body {
   width: calc(var(--left-sidebar-width) - 40px);
   flex-shrink: 0;
   position: relative;
+  transition: width var(--left-sidebar-transition);
 }
 
 .project-secret {
   left: calc(var(--left-sidebar-width) / 2 - 20px);
   position: absolute;
   top: -10px;
+  transition: left var(--left-sidebar-transition);
+}
+
+/* 화면 폭 변경과 hover 폭 애니메이션을 분리해 리사이즈 중 위치가 뒤늦게 따라오지 않게 한다. */
+html.viewport-resizing .left-sidebar,
+html.viewport-resizing .project-icon,
+html.viewport-resizing .project-secret {
+  transition: none;
 }
 .project-icon svg g {
   stroke: var(--white);

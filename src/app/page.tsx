@@ -13,7 +13,9 @@ import ScreenShare from './todo/_components/ScreenShare';
 
 function TodoHomeContent() {
   const { user, logout } = useAuth();
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(
+    'todo 서비스를 사용하기 위해 user 권한 상승을 요청합니다.',
+  );
   const [status, setStatus] = useState<'idle' | 'submitting' | 'submitted'>('idle');
   const [error, setError] = useState('');
 

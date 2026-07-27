@@ -47,6 +47,27 @@ export default function ProjectSection() {
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
   }, [currentProject, isAdmin]);
 
+  // 뷰포트 리사이즈 중에는 반응형 폭 변경을 즉시 반영해 로고와 아이콘의 전환 지연을 없앤다.
+  useEffect(() => {
+    const root = document.documentElement;
+    let resizeEndTimer: number | undefined;
+
+    const handleResize = () => {
+      root.classList.add('viewport-resizing');
+      window.clearTimeout(resizeEndTimer);
+      resizeEndTimer = window.setTimeout(() => {
+        root.classList.remove('viewport-resizing');
+      }, 100);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.clearTimeout(resizeEndTimer);
+      root.classList.remove('viewport-resizing');
+    };
+  }, []);
+
   const handleProjectClick = async (project: ProjectInterface) => {
     if (project.isSecret) {
       setPendingProject(project);

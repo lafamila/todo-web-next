@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { AuthProvider } from "@/contexts/AuthContext";
-import BackgroundEffect from "@/components/layout/BackgroundEffect";
 import "./globals.css";
 import "./todo/global.css";
 // 인라인 에디터 라인 상태 토큰 — todo/global.css 의 `.detail textarea` 를 이겨야 하므로 뒤에 로드한다.
@@ -22,7 +21,6 @@ export default function RootLayout({
       <body
         className="min-h-screen bg-black text-white antialiased selection:bg-[#3994ef] selection:text-white"
       >
-        <BackgroundEffect />
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
