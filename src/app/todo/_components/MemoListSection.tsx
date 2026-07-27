@@ -360,7 +360,7 @@ export default function MemoListSection() {
                     } flex flex-row justify-between w-full`
                   }
                 >
-                  <h3 className="truncate">
+                  <h3 className="min-w-0 flex-1 truncate">
                     {selectedMemoIds.includes(memo.id) && (
                       <span className="inline-block w-4 h-4 mr-2 bg-red-500 rounded-sm text-white text-xs text-center leading-4">
                         ✓
@@ -368,7 +368,7 @@ export default function MemoListSection() {
                     )}
                     {memo.title}
                   </h3>
-                  <div className="flex flex-col gap-1 text-xs text-gray-500 mr-2">
+                  <div className="shrink-0 whitespace-nowrap text-right flex flex-col gap-1 text-xs text-gray-500 mr-2 ml-3">
                     <span>생성: {formatDate(memo.createdAt)}</span>
                     <span>편집: {formatDate(memo.updatedAt)}</span>
                   </div>
