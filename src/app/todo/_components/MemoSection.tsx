@@ -3,15 +3,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
-import ReactMarkdown from 'react-markdown';
-import type { Components } from 'react-markdown';
-import remarkBreaks from 'remark-breaks';
-import remarkGfm from 'remark-gfm';
-import { MonacoCodeEditor } from '@/components/editor/MonacoCodeEditor';
-import { CheckboxItem } from '@/components/editor/CheckboxItem';
 import { Modal } from '@/components/ui/Modal';
-import { parseContent, toggleCheckbox } from '@/lib/utils';
-import type { ContentBlockInterface, ArticleInterface } from '@/lib/types';
+import {
+  InlineEditor,
+  type InlineEditorHandle,
+  type MentionState,
+} from '@/components/editor/inline/InlineEditor';
+import type { ArticleInterface } from '@/lib/types';
 import { publishArticle, getMemoArticle, deleteArticle } from '@/lib/api';
 import { useMemoSocket } from '@/hooks/useMemoSocket';
 
@@ -24,7 +22,10 @@ const isTypingContext = (el: Element | null) => {
 };
 
 const editorFeatureHelp = [
-  { syntax: '-- 할 일', description: '체크되지 않은 체크박스를 만듭니다.' },
+  {
+    syntax: '-- 할 일',
+    description: '체크되지 않은 체크박스를 만듭니다. 입력을 멈추고 2초가 지나면 그 줄만 체크박스로 바뀝니다.',
+  },
   { syntax: '--v 완료한 일', description: '체크된 체크박스를 만듭니다.' },
   { syntax: '```ts ... ```', description: '코드 블록을 만들고 에디터로 수정할 수 있습니다.' },
   { syntax: '@메모명', description: '편집 중 다른 메모를 검색해서 링크로 삽입합니다.' },
@@ -35,14 +36,16 @@ const editorFeatureHelp = [
 
 const shortcutHelp = [
   { keys: 'Ctrl/⌘ + S', description: '현재 메모를 저장합니다.' },
-  { keys: '더블클릭', description: '메모 본문 편집창을 엽니다.' },
-  { keys: '본문에서 바로 입력', description: '편집창을 열고 입력한 문자를 이어서 반영합니다.' },
+  { keys: 'Ctrl/⌘ + E', description: 'Raw 모드를 켜고 끕니다. 본문 전체를 하나의 텍스트로 선택·복사할 때 씁니다.' },
+  { keys: '더블클릭', description: '그 줄을 소스 상태로 열어 수정합니다.' },
+  { keys: 'Backspace', description: '방금 자동으로 렌더된 줄에서 한 번 누르면 지우지 않고 소스로 돌아갑니다.' },
+  { keys: '본문에서 바로 입력', description: '마지막 줄이 편집 상태가 되고 입력이 이어집니다.' },
+  { keys: 'Enter / ↑ / ↓', description: '줄을 나누거나 위아래 줄로 편집을 옮깁니다.' },
+  { keys: 'Ctrl/⌘ + Z', description: '되돌리기. Shift 를 더하면 다시 실행합니다.' },
   { keys: 'Ctrl/⌘ + Shift + X', description: '프로젝트가 선택되어 있으면 새 메모 입력칸에 포커스합니다. 프로젝트가 없으면 새 프로젝트 모달을 엽니다.' },
   { keys: 'Ctrl/⌘ + P', description: '관리자에게 멤버 관리 모달을 엽니다.' },
   { keys: 'Ctrl/⌘ + 메모 클릭', description: '메모 목록에서 여러 메모를 선택합니다.' },
-  { keys: '↑ / ↓', description: '메모 검색 또는 새 메모 추천 목록에서 항목을 이동합니다.' },
-  { keys: 'Enter', description: '새 메모 입력칸에서는 선택한 추천 메모로 이동하거나 새 메모를 만듭니다.' },
-  { keys: 'Esc', description: '검색 추천 목록이나 열린 모달을 닫습니다.' },
+  { keys: 'Esc', description: '편집 중인 줄을 확정하거나, 검색 추천 목록·모달을 닫습니다.' },
 ];
 
 export function MemoSection() {
@@ -52,7 +55,10 @@ export function MemoSection() {
   } = useApp();
   const { user } = useAuth();
   const isAdmin = user?.isAdmin ?? false;
-  const [showTextarea, setShowTextarea] = useState(false);
+
+  // Raw 모드 = 문서 전체를 하나의 textarea 로 다루는 escape hatch (멀티라인 선택/복사용).
+  const [rawMode, setRawMode] = useState(false);
+  const rawModeRef = useRef(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [lockMessage, setLockMessage] = useState<string | null>(null);
@@ -82,7 +88,8 @@ export function MemoSection() {
     },
     onLockDenied: (displayName: string) => {
       setLockMessage(`${displayName}님이 수정중입니다`);
-      setShowTextarea(false);
+      setRawMode(false);
+      rawModeRef.current = false;
     },
   });
 
@@ -97,36 +104,38 @@ export function MemoSection() {
     });
   };
 
-  const resetTimer = useCallback(() => {
+  /**
+   * 6초 락 해제 타이머는 "활성 편집이 없을 때"만 돈다.
+   * 인라인 에디터에서 라인이 편집/포커스 상태로 살아 있는 동안에는 holdLock 이 타이머를 끈다.
+   */
+  const holdLock = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    requestLock();
+  }, [requestLock]);
+
+  const scheduleLockRelease = useCallback(() => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
     }
 
     timeoutRef.current = setTimeout(() => {
+      timeoutRef.current = null;
       releaseLock();
-      setShowTextarea(false);
+      setRawMode(false);
+      rawModeRef.current = false;
     }, 6_000);
   }, [releaseLock]);
 
-  const openTextarea = () => {
-    // If locked by another user, don't open
-    if (isLockedByOtherRef.current || lockHolder) {
-      return;
-    }
-    requestLock();
-    setShowTextarea(true);
-    resetTimer();
-    focusTextareaToEnd();
-  };
-
   useEffect(() => {
-    if (showTextarea && textareaRef.current) {
+    if (rawMode && textareaRef.current) {
       requestAnimationFrame(() => {
         focusTextareaToEnd();
       });
     }
-  }, [showTextarea]);
-
+  }, [rawMode]);
 
   useEffect(() => {
     return () => {
@@ -144,8 +153,11 @@ export function MemoSection() {
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inlineEditorRef = useRef<InlineEditorHandle>(null);
   const contentRef = useRef<string>('');
   const originalContentRef = useRef<string>('');
+
+  const isLockedByOther = Boolean(lockHolder);
 
   // Article (게시) 관련 상태
   const [articleStatus, setArticleStatus] = useState<ArticleInterface | null>(null);
@@ -168,7 +180,8 @@ export function MemoSection() {
       setOriginalContent(selectedMemo.content);
       contentRef.current = selectedMemo.content;
       originalContentRef.current = selectedMemo.content;
-      setShowTextarea(false);
+      setRawMode(false);
+      rawModeRef.current = false;
       setLockMessage(null);
       isLockedByOtherRef.current = false;
     }
@@ -262,23 +275,32 @@ export function MemoSection() {
 
   const handleInsertMemoLink = useCallback(
     (memo: { id: string; title: string }) => {
-      if (!textareaRef.current || !selectedProject) return;
+      if (!selectedProject) return;
+
+      const memoUrl = `?projectId=${selectedProject.id}&memoId=${memo.id}`;
+      const linkText = `[@${memo.title}](${memoUrl})`;
+
+      setShowMemoSearch(false);
+      setSearchQuery('');
+
+      if (!rawModeRef.current) {
+        inlineEditorRef.current?.insertMemoLink(linkText);
+        return;
+      }
 
       const textarea = textareaRef.current;
-      const currentCursorPos = textarea.selectionStart;
+      if (!textarea) return;
 
+      const currentCursorPos = textarea.selectionStart;
       const currentContent = contentRef.current;
       const textBeforeCursor = currentContent.substring(0, currentCursorPos);
       const textAfterCursor = currentContent.substring(currentCursorPos);
       const lastAtIndex = textBeforeCursor.lastIndexOf('@');
 
-      const memoUrl = `?projectId=${selectedProject.id}&memoId=${memo.id}`;
-      const linkText = `[@${memo.title}](${memoUrl})`;
-
       let newContent: string;
       let newCursorPos: number;
 
-      if (lastAtIndex !== -1 && showMemoSearch) {
+      if (lastAtIndex !== -1) {
         newContent = textBeforeCursor.substring(0, lastAtIndex) + linkText + textAfterCursor;
         newCursorPos = lastAtIndex + linkText.length;
       } else {
@@ -289,9 +311,6 @@ export function MemoSection() {
       setContent(newContent);
       contentRef.current = newContent;
 
-      setShowMemoSearch(false);
-      setSearchQuery('');
-
       setTimeout(() => {
         if (textareaRef.current) {
           textareaRef.current.focus();
@@ -299,13 +318,13 @@ export function MemoSection() {
         }
       }, 0);
     },
-    [selectedProject, showMemoSearch]
+    [selectedProject]
   );
 
   useEffect(() => {
     const handleInsertMemoLinkEvent = (e: Event) => {
       const customEvent = e as CustomEvent<{ id: string; title: string }>;
-      if (customEvent.detail && textareaRef.current) {
+      if (customEvent.detail) {
         const { id, title } = customEvent.detail;
         handleInsertMemoLink({ id, title });
       }
@@ -315,6 +334,23 @@ export function MemoSection() {
     return () => window.removeEventListener('insertMemoLink', handleInsertMemoLinkEvent);
   }, [handleInsertMemoLink]);
 
+  const toggleRawMode = useCallback(() => {
+    const next = !rawModeRef.current;
+
+    if (next && (isLockedByOtherRef.current || lockHolder)) return;
+
+    rawModeRef.current = next;
+    setRawMode(next);
+    setShowMemoSearch(false);
+    setSearchQuery('');
+
+    if (next) {
+      holdLock();
+    } else {
+      scheduleLockRelease();
+    }
+  }, [holdLock, lockHolder, scheduleLockRelease]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -322,52 +358,44 @@ export function MemoSection() {
         handleSaveMemo();
         return;
       }
-      if (showTextarea) return;
 
-    // 단축키는 패스 (Ctrl/⌘/Alt 포함)
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'e' || e.key === 'E')) {
+        e.preventDefault();
+        toggleRawMode();
+        return;
+      }
 
-    // 현재 어딘가 입력중이면 패스
-    if (isTypingContext(document.activeElement)) return;
+      if (rawMode) return;
 
-    // "문자 입력"만 트리거 (방향키/Tab/F1 등 제외)
-    const isPrintable = e.key.length === 1;
-    const isEnter = e.key === 'Enter';
-    const isBackspace = e.key === 'Backspace';
-    if (!isPrintable && !isEnter && !isBackspace) return;
+      // 단축키는 패스 (Ctrl/⌘/Alt 포함)
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-    // 다른 사용자가 편집 중이면 열지 않음
-    if (isLockedByOtherRef.current || lockHolder) return;
+      // IME 조합 입력은 상태 머신 입력으로 취급하지 않는다
+      if (e.isComposing || e.keyCode === 229) return;
 
-    // 기본 동작 막고 textarea 열기
-    e.preventDefault();
-    requestLock();
-    setShowTextarea(true);
-    resetTimer();
+      // 현재 어딘가 입력중이면 패스 (활성 라인 textarea 포함)
+      if (isTypingContext(document.activeElement)) return;
 
-    // (선택) 첫 입력을 content에 반영해서 "첫 글자 씩힘" 방지
-    setContent((prev) => {
-      if (isBackspace) return prev.slice(0, -1);
-      if (isEnter) return prev + '\n';
-      return prev + e.key;
-    });
+      // "문자 입력"만 트리거 (방향키/Tab/F1 등 제외)
+      const isPrintable = e.key.length === 1;
+      const isEnter = e.key === 'Enter';
+      const isBackspace = e.key === 'Backspace';
+      if (!isPrintable && !isEnter && !isBackspace) return;
 
-    // 렌더 후 포커스/커서 맨끝 (이미 네가 showTextarea effect로 해주고 있지만, 첫 입력 직후 안정성 위해 한번 더)
-    requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      if (!el) return;
-      el.focus();
-      const len = el.value.length;
-      el.setSelectionRange(len, len);
-      el.scrollTop = el.scrollHeight;
-    });
+      // 다른 사용자가 편집 중이면 열지 않음
+      if (isLockedByOtherRef.current || lockHolder) return;
+
+      // preventDefault 하지 않는다 — 마지막 라인에 포커스만 먼저 옮기고
+      // 입력 자체는 브라우저에 맡긴다 (수동 append 로 인한 IME 이중 입력 제거).
+      holdLock();
+      inlineEditorRef.current?.focusLastLine();
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleSaveMemo, lockHolder, requestLock, resetTimer, showTextarea]);
+  }, [handleSaveMemo, holdLock, lockHolder, rawMode, toggleRawMode]);
 
-  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleRawContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newContent = e.target.value;
     const cursorPos = e.target.selectionStart;
 
@@ -406,185 +434,93 @@ export function MemoSection() {
     }
   };
 
-  const handleSearchKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      resetTimer();
-      if (!showMemoSearch || filteredMemos.length === 0) return;
+  /** @ 검색 드롭다운 키 처리. 처리했으면 true 를 돌려 에디터의 기본 동작을 막는다. */
+  const handleMentionKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
+      if (!showMemoSearch || filteredMemos.length === 0) return false;
 
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setSelectedSearchIndex((prev) => (prev < filteredMemos.length - 1 ? prev + 1 : prev));
-      } else if (e.key === 'ArrowUp') {
+        return true;
+      }
+
+      if (e.key === 'ArrowUp') {
         e.preventDefault();
         setSelectedSearchIndex((prev) => (prev > 0 ? prev - 1 : prev));
-      } else if (e.key === 'Enter') {
+        return true;
+      }
+
+      if (e.key === 'Enter') {
         e.preventDefault();
         const selectedMemoData = filteredMemos[selectedSearchIndex];
         if (selectedMemoData) {
-          handleInsertMemoLink({
-            id: selectedMemoData.id,
-            title: selectedMemoData.title,
-          });
+          handleInsertMemoLink({ id: selectedMemoData.id, title: selectedMemoData.title });
         }
-      } else if (e.key === 'Escape') {
+        return true;
+      }
+
+      if (e.key === 'Escape') {
         e.preventDefault();
         setShowMemoSearch(false);
         setSearchQuery('');
+        return true;
       }
+
+      return false;
     },
-    [filteredMemos, handleInsertMemoLink, resetTimer, selectedSearchIndex, showMemoSearch]
+    [filteredMemos, handleInsertMemoLink, selectedSearchIndex, showMemoSearch]
   );
 
-  const handleCheckboxToggle = async (lineIndex: number) => {
-    const newContent = toggleCheckbox(contentRef.current, lineIndex);
-    setContent(newContent);
-    contentRef.current = newContent;
+  const handleRawKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      scheduleLockRelease();
+      handleMentionKeyDown(e);
+    },
+    [handleMentionKeyDown, scheduleLockRelease]
+  );
 
-    try {
-      await updateMemo(newContent);
-      setOriginalContent(newContent);
-      originalContentRef.current = newContent;
-    } catch (error) {
-      console.error('Failed to update checkbox:', error);
-    }
-  };
-
-  const handleCodeBlockChange = useCallback((blockIndex: number, newCode: string) => {
-    const lines = contentRef.current.split('\n');
-    let currentBlockIndex = 0;
-    let inCodeBlock = false;
-    let codeBlockStartLine = -1;
-    let codeBlockEndLine = -1;
-
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].startsWith('```')) {
-        if (!inCodeBlock) {
-          if (currentBlockIndex === blockIndex) {
-            codeBlockStartLine = i;
-          }
-          inCodeBlock = true;
-        } else {
-          if (currentBlockIndex === blockIndex) {
-            codeBlockEndLine = i;
-            break;
-          }
-          currentBlockIndex++;
-          inCodeBlock = false;
-        }
-      }
+  const handleMentionChange = useCallback((state: MentionState | null) => {
+    if (!state) {
+      setShowMemoSearch(false);
+      setSearchQuery('');
+      return;
     }
 
-    if (codeBlockStartLine !== -1 && codeBlockEndLine !== -1) {
-      const before = lines.slice(0, codeBlockStartLine + 1);
-      const after = lines.slice(codeBlockEndLine);
-      const newLines = [...before, ...newCode.split('\n'), ...after];
-      const nextContent = newLines.join('\n');
-
-      setContent(nextContent);
-      contentRef.current = nextContent;
-    }
+    setSearchQuery(state.query);
+    setSearchPosition({ top: state.top, left: state.left });
+    setShowMemoSearch(true);
   }, []);
 
-
-  const markdownComponents = React.useMemo<Components>(
-    () => ({
-      a: ({ href, children, ...props }) => {
-        if (href && (href.includes('memoId=') || href.startsWith('?'))) {
-          return (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-white hover:underline cursor-pointer"
-              {...props}
-            >
-              {children}
-            </a>
-          );
-        }
-        return (
-          <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:underline" {...props}>
-            {children}
-          </a>
-        );
-      },
-      ol: ({ children, ...props }) => (
-        <ol className="my-1 list-decimal pl-6 marker:text-white" {...props}>
-          {children}
-        </ol>
-      ),
-      ul: ({ children, ...props }) => (
-        <ul className="my-1 list-disc pl-6 marker:text-white" {...props}>
-          {children}
-        </ul>
-      ),
-      li: ({ children, ...props }) => (
-        <li className="pl-1" {...props}>
-          {children}
-        </li>
-      ),
-    }),
-    []
+  const handleEditingChange = useCallback(
+    (editing: boolean) => {
+      if (editing) {
+        holdLock();
+      } else {
+        scheduleLockRelease();
+      }
+    },
+    [holdLock, scheduleLockRelease]
   );
 
-  const renderContent = () => {
-    const blocks = parseContent(content) as ContentBlockInterface[];
-    let codeBlockIndex = 0;
-
-    return blocks.map((block, index) => {
-      switch (block.type) {
-        case 'checkbox':
-          return (
-            <CheckboxItem
-              key={index}
-              checked={block.metadata?.checked || false}
-              onChange={() => handleCheckboxToggle(index)}
-              content={block.content}
-            />
-          );
-
-        case 'code': {
-          const currentCodeBlockIndex = codeBlockIndex;
-          codeBlockIndex++;
-          return (
-            <div key={index} className="my-4">
-              <MonacoCodeEditor
-                value={block.content}
-                language={block.metadata?.language}
-                onChange={(value) => {
-                  handleCodeBlockChange(currentCodeBlockIndex, value || '');
-                }}
-                onSave={handleSaveMemo}
-                height="200px"
-              />
-            </div>
-          );
-        }
-
-        case 'memo-link':
-          return (
-            <div key={index} className="my-2">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
-                {block.content}
-              </ReactMarkdown>
-            </div>
-          );
-
-        case 'text':
-        default:
-          if (block.content.trim() === '') {
-            return <br key={index} />;
-          }
-          return (
-            <div key={index}>
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
-                {block.content}
-              </ReactMarkdown>
-            </div>
-          );
+  /** 체크박스 토글은 기존과 동일하게 즉시 서버에 반영한다. */
+  const handlePersist = useCallback(
+    async (next: string) => {
+      try {
+        await updateMemo(next);
+        setOriginalContent(next);
+        originalContentRef.current = next;
+      } catch (error) {
+        console.error('Failed to update checkbox:', error);
       }
-    });
-  };
+    },
+    [updateMemo]
+  );
+
+  const handleInlineChange = useCallback((next: string) => {
+    setContent(next);
+    contentRef.current = next;
+  }, []);
 
   if (!selectedProject || !selectedMemo) {
     return <div></div>;
@@ -607,6 +543,11 @@ export function MemoSection() {
           <div className="text-sm text-gray-500">
             {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘S' : 'Ctrl+S'}로 저장
           </div>
+          {rawMode && (
+            <span className="text-xs text-gray-400 border border-white/20 rounded px-2 py-0.5">
+              RAW 모드 · {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'}로 종료
+            </span>
+          )}
           {isAdmin && (
             <>
               <button
@@ -643,32 +584,45 @@ export function MemoSection() {
         </button>
 
         <div className="flex flex-col h-full min-h-0">
-          
+          {rawMode ? (
+            <div className="w-full min-h-0 h-full overflow-y-auto relative">
+              <textarea
+                ref={textareaRef}
+                value={content}
+                onChange={handleRawContentChange}
+                onKeyDown={handleRawKeyDown}
+                className="w-full h-full p-0 resize-none focus:outline-none font-mono text-sm"
+                placeholder=""
+              />
+            </div>
+          ) : (
+            <div className="w-full min-h-0 h-full overflow-y-auto p-0 prose prose-sm max-w-none text-white">
+              <InlineEditor
+                ref={inlineEditorRef}
+                value={content}
+                onChange={handleInlineChange}
+                onPersist={handlePersist}
+                onSave={handleSaveMemo}
+                onEditingChange={handleEditingChange}
+                onMentionChange={handleMentionChange}
+                mentionActive={showMemoSearch}
+                onMentionKeyDown={handleMentionKeyDown}
+                readOnly={isLockedByOther}
+              />
+            </div>
+          )}
 
-          <div className={`w-full min-h-0 transition-all p-0 duration-300 ${showTextarea ? 'h-2/3' : 'h-full'} overflow-y-auto prose prose-sm max-w-none text-white`} onDoubleClick={openTextarea}>
-            {renderContent()}
-          </div>
-          {showTextarea && (
-          <div className="w-full min-h-0 h-1/3 transition-all duration-300 border-r border-gray-200 overflow-y-auto relative">
-            <textarea
-              ref={textareaRef}
-              value={content}
-              onChange={handleContentChange}
-              onKeyDown={handleSearchKeyDown}
-              className="w-full h-full p-0 resize-none focus:outline-none font-mono text-sm"
-              placeholder=""
-            />
-
-            {showMemoSearch && filteredMemos.length > 0 && searchPosition && (
-              <div
-                className="fixed bg-white border border-gray-300 rounded shadow-lg z-50 max-h-60 overflow-y-auto"
-                style={{
-                  top: `${searchPosition.top}px`,
-                  left: `${searchPosition.left}px`,
-                  minWidth: '250px',
-                }}
-              >
-                {filteredMemos.map((memo, index) => (
+          {showMemoSearch && searchPosition && (
+            <div
+              className="fixed bg-white border border-gray-300 rounded shadow-lg z-50 max-h-60 overflow-y-auto"
+              style={{
+                top: `${searchPosition.top}px`,
+                left: `${searchPosition.left}px`,
+                minWidth: '250px',
+              }}
+            >
+              {filteredMemos.length > 0 ? (
+                filteredMemos.map((memo, index) => (
                   <button
                     key={memo.id}
                     onClick={() => handleInsertMemoLink({ id: memo.id, title: memo.title })}
@@ -678,23 +632,12 @@ export function MemoSection() {
                   >
                     <div className="font-medium text-sm text-gray-900">{memo.title}</div>
                   </button>
-                ))}
-              </div>
-            )}
-
-            {showMemoSearch && filteredMemos.length === 0 && (
-              <div
-                className="fixed bg-white border border-gray-300 rounded shadow-lg z-50 px-4 py-3 text-sm text-gray-500"
-                style={{
-                  top: `${searchPosition?.top}px`,
-                  left: `${searchPosition?.left}px`,
-                  minWidth: '250px',
-                }}
-              >
-                검색 결과가 없습니다.
-              </div>
-            )}
-          </div>)}
+                ))
+              ) : (
+                <div className="px-4 py-3 text-sm text-gray-500">검색 결과가 없습니다.</div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -705,6 +648,17 @@ export function MemoSection() {
         size="lg"
       >
         <div className="space-y-6 text-sm text-gray-700">
+          <section>
+            <h3 className="mb-3 text-base font-semibold text-gray-900">편집 방식</h3>
+            <p className="rounded border border-gray-200 px-3 py-2 leading-6">
+              편집창과 미리보기가 따로 없습니다. 지금 쓰고 있는 줄만 소스로 보이고 나머지 줄은 렌더된 모습으로
+              남습니다. <code className="rounded bg-gray-100 px-1 font-mono text-xs">-- 할 일</code> 처럼 문법이
+              완성된 뒤 2초 동안 입력이 없으면 그 줄만 체크박스로 바뀌고, 더블클릭하거나 Backspace 를 한 번 누르면
+              다시 소스로 돌아옵니다. <code className="rounded bg-gray-100 px-1 font-mono text-xs">--</code> 처럼
+              아직 완성되지 않은 문법은 아무리 기다려도 바뀌지 않습니다.
+            </p>
+          </section>
+
           <section>
             <h3 className="mb-3 text-base font-semibold text-gray-900">특수 문법</h3>
             <div className="space-y-2">

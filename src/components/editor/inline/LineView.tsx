@@ -1,0 +1,147 @@
+'use client';
+
+import React, { memo, useEffect, useLayoutEffect } from 'react';
+import { CheckboxBlock, MarkdownBlock } from '@/components/editor/blocks/ContentBlocks';
+import { cn } from '@/lib/utils';
+import { classifyLine, type EditorLine } from './classifyLine';
+import type { LineHandlers, LineMode } from './useLineStateMachine';
+
+interface CaretPositionSource {
+  caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  caretRangeFromPoint?: (x: number, y: number) => Range | null;
+}
+
+/**
+ * 클릭 지점을 소스 문자열 오프셋으로 근사한다.
+ * 렌더 결과와 소스가 다른 라인(마크다운 변환)에서는 실패할 수 있으므로 라인 끝으로 폴백한다 —
+ * UX 저하일 뿐 데이터는 안전하다.
+ *
+ * 표준 `caretPositionFromPoint` 를 먼저 쓰고, deprecated `caretRangeFromPoint` 를 **의도적으로**
+ * 폴백에 남긴다 — 구버전 WebKit 은 표준 API 를 제공하지 않는다. 둘 다 optional call 이라
+ * 미지원 환경에서도 라인 끝 폴백으로 안전하게 떨어진다.
+ */
+function approximateCaret(text: string, clientX: number, clientY: number): number {
+  const source = document as Document & CaretPositionSource;
+
+  const position = source.caretPositionFromPoint?.(clientX, clientY);
+  if (position?.offsetNode?.nodeType === Node.TEXT_NODE) {
+    const nodeText = position.offsetNode.textContent ?? '';
+    const base = text.indexOf(nodeText);
+    if (base >= 0) return Math.min(base + position.offset, text.length);
+  }
+
+  const range = source.caretRangeFromPoint?.(clientX, clientY);
+  if (range?.startContainer?.nodeType === Node.TEXT_NODE) {
+    const nodeText = range.startContainer.textContent ?? '';
+    const base = text.indexOf(nodeText);
+    if (base >= 0) return Math.min(base + range.startOffset, text.length);
+  }
+
+  return text.length;
+}
+
+const useBrowserLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+
+export interface LineViewProps {
+  line: EditorLine;
+  /** null 이면 rendered 상태 (활성 라인이 아님) */
+  mode: LineMode | null;
+  flash: boolean;
+  readOnly: boolean;
+  onActivate: (lineId: number, caret: number | null) => void;
+  onToggleCheckbox: (lineId: number) => void;
+  /** 활성 라인에만 전달된다. */
+  handlers?: LineHandlers;
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  /** 코드펜스 라인은 원문 그대로 보여주고 자동 렌더 대상에서 제외된다. */
+  asFence?: boolean;
+}
+
+function LineViewImpl({
+  line,
+  mode,
+  flash,
+  readOnly,
+  onActivate,
+  onToggleCheckbox,
+  handlers,
+  textareaRef,
+  asFence = false,
+}: LineViewProps) {
+  const cls = classifyLine(line.text);
+  const isEditing = mode === 'editing';
+  const showRendered = !isEditing;
+
+  // 활성 라인 textarea 자동 높이 — 내용에 맞춰 늘어난다.
+  useBrowserLayoutEffect(() => {
+    if (!handlers) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    if (mode === 'focused-rendered') {
+      el.style.height = '';
+      return;
+    }
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [handlers, line.text, mode, textareaRef]);
+
+  const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (readOnly || isEditing) return;
+    onActivate(line.id, approximateCaret(line.text, e.clientX, e.clientY));
+  };
+
+  const renderBlock = () => {
+    if (asFence) {
+      return <span className="font-mono text-xs text-gray-500">{line.text || '```'}</span>;
+    }
+
+    switch (cls.kind) {
+      case 'checkbox-checked':
+      case 'checkbox-unchecked':
+        return (
+          <CheckboxBlock
+            checked={cls.checked}
+            content={cls.content}
+            onToggle={readOnly ? undefined : () => onToggleCheckbox(line.id)}
+          />
+        );
+      case 'blank':
+        return <br />;
+      default:
+        return <MarkdownBlock>{line.text}</MarkdownBlock>;
+    }
+  };
+
+  return (
+    <div
+      className={cn(
+        'editor-line relative px-1',
+        cls.kind === 'blank' && !isEditing && 'min-h-[1em]',
+        isEditing && 'editor-line-editing',
+        mode === 'focused-rendered' && 'editor-line-focused',
+        flash && 'editor-line-flash',
+      )}
+      onDoubleClick={handleDoubleClick}
+    >
+      {showRendered && renderBlock()}
+      {handlers && (
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          spellCheck={false}
+          value={line.text}
+          onChange={handlers.onChange}
+          onKeyDown={handlers.onKeyDown}
+          onCompositionStart={handlers.onCompositionStart}
+          onCompositionEnd={handlers.onCompositionEnd}
+          onBlur={handlers.onBlur}
+          onPaste={handlers.onPaste}
+          className={cn('editor-line-input', !isEditing && 'editor-line-input-overlay')}
+          aria-label="라인 편집"
+        />
+      )}
+    </div>
+  );
+}
+
+export const LineView = memo(LineViewImpl);

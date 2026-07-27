@@ -1,0 +1,75 @@
+/*
+ * 인라인 에디터 라인 상태 토큰.
+ * 라인 상태(rendered / editing / focused-rendered)의 시각 표현은 이 4종으로만 표현한다 —
+ * 페이지마다 일회성 클래스가 흩어지는 것을 막기 위한 최소 디자인 시스템 (워크스페이스 원칙 9).
+ */
+
+:root {
+  --editor-accent: #3994ef;
+  --editor-line-transition: 100ms;
+  --editor-line-flash: 200ms;
+}
+
+/* 1. 모든 라인의 공통 기저: 상태 전환 트랜지션 */
+.editor-line {
+  border-radius: 4px;
+  transition:
+    background-color var(--editor-line-transition) ease,
+    box-shadow var(--editor-line-transition) ease;
+}
+
+/* 2. editing: 편집 중인 라인 배경 */
+.editor-line-editing {
+  background-color: rgb(255 255 255 / 5%);
+}
+
+/* 3. focused-rendered: 방금 렌더됐고 논리적 포커스가 남아 있는 라인 */
+.editor-line-focused {
+  box-shadow: inset 0 0 0 1px var(--editor-accent);
+}
+
+/* 4. 자동 렌더가 일어난 순간의 미세 플래시 */
+.editor-line-flash {
+  animation: editor-line-flash var(--editor-line-flash) ease-out;
+}
+
+@keyframes editor-line-flash {
+  from {
+    background-color: rgb(57 148 239 / 35%);
+  }
+
+  to {
+    background-color: transparent;
+  }
+}
+
+/*
+ * 라인 textarea.
+ * `.detail textarea { height: 100%; font-size: 18px }` (todo/global.css) 보다 뒤에 로드되고
+ * 같은 특정도(0-1-1)여야 이긴다 — 그래서 요소 선택자를 붙인다. 높이는 내용에 맞춰 JS 가 계산한다.
+ */
+textarea.editor-line-input {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 0;
+  overflow: hidden;
+  font-family: ui-monospace, sfmono-regular, menlo, monospace;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: inherit;
+  resize: none;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+/* focused-rendered 에서는 렌더 결과 위에 투명하게 겹쳐 두고 IME/포커스만 유지한다. */
+textarea.editor-line-input-overlay {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  caret-color: transparent;
+  opacity: 0;
+  pointer-events: none;
+}
