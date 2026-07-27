@@ -254,7 +254,7 @@ export default function MemoListSection() {
           <div id="screen-share-buttons" />
         </div>
         <div className="main">
-          <div style={{ paddingTop: "20px" }} className="flex items-center justify-between">
+          <div style={{ paddingTop: "40px" }} className="flex items-start justify-between">
             <div>
               <span style={{ fontWeight: "bold", fontSize: "20px" }}>Tasks</span>{" "}
               <span className="task-count">({memos.length})</span>

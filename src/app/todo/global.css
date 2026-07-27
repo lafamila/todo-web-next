@@ -28,7 +28,7 @@ body {
 
 .content {
   margin-left: var(--left-sidebar-width);
-  padding: 0px;
+  padding: 0px 10px; /* 원본(todo-next :3030) 좌우 여백 */
   height: 100vh;
   overflow-y: hidden;
 }
@@ -57,12 +57,13 @@ body {
 }
 
 
+/* 원본 그리드 리듬(80px 헤더 / 60px 입력 / 1fr 목록)에 정렬 select 행(auto)을 추가 수용 */
 .main {
   min-height: 0;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  padding: 0 10px;
+  display: grid;
+  grid-template-rows: 80px 60px auto minmax(0, 1fr);
+  padding: 0 20px;
 }
 
 .detail {
@@ -137,33 +138,25 @@ body {
   grid-auto-rows: 60px;
   gap: 4px;
   overflow-y: auto;
-  height: calc(100vh - 80px - (80px + 60px));
+  min-height: 0; /* .main 그리드 1fr 행 안에서 스크롤 — 고정 calc 높이 대신 */
 }
 
 .task {
   cursor: pointer;
   background-color: var(--white);
   align-items: center;
-  padding-left: 12px;
-}
-
-.task>span:first-child {
-  padding-left: 20px;
+  padding-left: 20px; /* 원본 좌측 인셋 */
 }
 
 .task-selected {
   background-color: #EEE;
   border-left: 6px solid var(--black);
-  padding-left: 6px;    /* grid-template-columns: 34px 1fr 80px; */
+  padding-left: 14px; /* 20px - 6px 보더 (원본 보정 규칙) */
 }
 
 .task-multi-selected {
   background-color: #fff4f2;
   border-left: 6px solid #dc2626;
-  padding-left: 6px;
-}
-
-.task-selected>span:first-child {
   padding-left: 14px;
 }
 
@@ -283,6 +276,7 @@ body {
 
 .left-sidebar-footer {
   border-top: 1px solid #333;
+  margin: 0px 10px; /* 원본 footer 여백 */
   padding-top: 10px;
   grid-template-rows: 1fr;
   grid-template-columns: 1fr;
