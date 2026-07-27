@@ -105,7 +105,7 @@ export default function ProjectSection() {
   return (
     <>
     <div className="left-sidebar">
-      <div>TD</div>
+      <div className="sidebar-logo">TD</div>
       <div className="project-container">
         {projects.map((project) => (
           <div

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { useApp } from "@/contexts/AppContext";
 import { useAuth } from '@/contexts/AuthContext';
 import { SORT_OPTIONS } from "@/lib/constants";
-import { MemoInterface, ProjectRole, UserInterface } from "@/lib/types";
+import { MemoInterface, ProjectRole, SortOption, UserInterface } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import * as api from "@/lib/api";
@@ -27,6 +27,8 @@ export default function MemoListSection() {
   const isAdmin = user?.isAdmin ?? false;
 
   const [newMemoTitle, setNewMemoTitle] = useState('');
+  // 정렬 방향 — 기본 오름차순. 활성 항목 재클릭 시 토글, 다른 항목 클릭 시 오름차순으로 리셋.
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -112,24 +114,35 @@ export default function MemoListSection() {
     await removeMember(selectedProject.id, userId);
   }, [selectedProject, removeMember]);
 
-  // Sort memos
+  // Sort memos — 기본 날짜(생성) 오름차순, 방향 토글 지원
   const sortedMemos = useMemo(() => {
     const sorted = [...memos];
+    const dir = sortDirection === 'asc' ? 1 : -1;
     switch (sortOption) {
-      case 'created':
-        return sorted.sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
       case 'name':
-        return sorted.sort((a, b) => a.title.localeCompare(b.title));
+        return sorted.sort((a, b) => a.title.localeCompare(b.title) * dir);
       case 'updated':
         return sorted.sort(
-          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+          (a, b) =>
+            (new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime()) * dir
         );
+      case 'created':
       default:
-        return sorted;
+        return sorted.sort(
+          (a, b) =>
+            (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()) * dir
+        );
     }
-  }, [memos, sortOption]);
+  }, [memos, sortOption, sortDirection]);
+
+  const handleSortClick = (value: SortOption) => {
+    if (sortOption === value) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortOption(value);
+      setSortDirection('asc');
+    }
+  };
 
   const suggestions = useMemo(() => {
     if (!newMemoTitle.trim()) return [];
@@ -223,6 +236,14 @@ export default function MemoListSection() {
   const handleMemoClick = (memo: MemoInterface, e: React.MouseEvent) => {
     if (e.metaKey || e.ctrlKey) {
       e.preventDefault();
+      // 멀티 선택 시작 시, 이미 단일 선택돼 있던 메모도 함께 포함한다
+      if (
+        selectedMemoIds.length === 0 &&
+        selectedMemo &&
+        selectedMemo.id !== memo.id
+      ) {
+        toggleSelectMemo(selectedMemo.id);
+      }
       toggleSelectMemo(memo.id);
     } else {
       selectMemo(memo);
@@ -301,18 +322,26 @@ export default function MemoListSection() {
               </div>
             )}
           </div>
-          {/* Sort Options */}
-          <select
-            value={sortOption}
-            onChange={(e) => setSortOption(e.target.value as typeof sortOption)}
-            className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-gray-900"
-          >
+          {/* Sort Options — 우측정렬 텍스트, 활성 항목 재클릭 시 방향 토글 */}
+          <div className="sort-options">
             {SORT_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => handleSortClick(option.value)}
+                className={`sort-option ${
+                  sortOption === option.value ? 'sort-option-active' : ''
+                }`}
+              >
                 {option.label}
-              </option>
+                {sortOption === option.value && (
+                  <span className="sort-arrow">
+                    {sortDirection === 'asc' ? '▲' : '▼'}
+                  </span>
+                )}
+              </button>
             ))}
-          </select>
+          </div>
           <div className="task-container">
             {sortedMemos.length === 0 ? (
               <div className="p-4 text-center text-gray-500 text-sm">

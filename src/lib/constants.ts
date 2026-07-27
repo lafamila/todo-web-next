@@ -32,9 +32,9 @@ export const LIVEKIT_URL =
   process.env.NEXT_PUBLIC_LIVEKIT_URL || "ws://localhost:7880";
 
 export const SORT_OPTIONS: { value: SortOption; label: string }[] = [
-  { value: "created", label: "생성순" },
-  { value: "name", label: "이름순" },
-  { value: "updated", label: "최근편집순" },
+  { value: "created", label: "날짜" },
+  { value: "name", label: "이름" },
+  { value: "updated", label: "최근편집" },
 ];
 
 export const DEFAULT_CODE_LANGUAGE = "typescript";

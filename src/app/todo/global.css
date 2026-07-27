@@ -35,6 +35,7 @@ body {
 
 .main-container {
   display: grid;
+  height: 100%; /* 그리드 행(minmax 1fr)이 뷰포트에 묶여야 task-container 가 넘쳐 스크롤된다 */
   min-height: 0;
   grid-template-rows: 80px minmax(0, 1fr);
   grid-template-columns: 400px 1fr;
@@ -160,6 +161,35 @@ body {
   padding-left: 14px;
 }
 
+/* 정렬 선택 — 우측정렬 텍스트 3개, 활성 항목 옆에 방향 화살표 */
+.sort-options {
+  max-width: 600px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 0;
+}
+
+.sort-option {
+  font-size: 13px;
+  color: #999;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.sort-option-active {
+  color: var(--black);
+  font-weight: 700;
+}
+
+.sort-arrow {
+  margin-left: 3px;
+  font-size: 10px;
+}
+
 .task-content {
   color: #999;
 }
@@ -194,6 +224,11 @@ body {
 
 .left-sidebar>div {
   display: grid;
+}
+
+/* 로고는 접힘/펼침/트랜지션 중 항상 현재 너비의 가로 중앙 (원본 동작) */
+.left-sidebar .sidebar-logo {
+  justify-content: center;
 }
 
 .left-sidebar:hover {
@@ -286,6 +321,9 @@ body {
   cursor: pointer;
   width: 100%;
   padding: 0px calc((var(--left-sidebar-width) - 40px)/2);
+  /* 접힘 트랜지션 중 아이콘+라벨이 다음 줄로 떨어지지 않게 — 폭이 모자라면 잘림/말줄임 */
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .new-project>div {
