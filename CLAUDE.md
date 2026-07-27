@@ -33,6 +33,10 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 ## Project Direction
 
 - 기존 `ted-yee-beer-house-web-next/src/app/todo` 디자인과 UX를 우선 보존한다.
+- **디자인 원형**: `~/Desktop/lafamila/todo-next` (로컬 :3030, docker 컨테이너 `todo-front`) — todo UI 의 원조.
+  폰트(Arial/Helvetica)와 `todo/global.css` 의 레이아웃 치수(80px 타이틀 행, `.main` 그리드 리듬, task 좌측 인셋 20px 등)는
+  이 원형을 기준으로 맞춘다. 주의: Tailwind v4 유틸리티는 cascade layer 안에 있어 **unlayered 인 `todo/global.css` 규칙이
+  body 의 Tailwind 클래스(`bg-black` 등)를 이긴다** — body 배경은 실제로 global.css 의 `--white` 가 적용된다.
 - API 호출은 `todo-api-fastapi` 를 직접 대상으로 한다.
 - session은 `todo-api-fastapi` 의 HttpOnly cookie 기반 endpoint를 사용한다.
 - realtime은 `todo-api-fastapi` 의 Python Socket.IO endpoint를 사용한다.
