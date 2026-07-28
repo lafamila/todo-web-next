@@ -105,6 +105,8 @@ export function InlineEditor({
                 onSave={onSave}
                 height="200px"
                 readOnly={readOnly}
+                autoFocus={group.open.id === machine.pendingCodeFocusId}
+                onAutoFocused={machine.consumeCodeFocus}
               />
               {group.close && (
                 <LineView

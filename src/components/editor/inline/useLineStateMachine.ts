@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { formatCodeFence } from '@/lib/codeFence';
+import { CODE_FENCE_MARK, formatCodeFence, isCodeFenceLine } from '@/lib/codeFence';
 import { toggleCheckbox } from '@/lib/utils';
 import {
   buildLineGroups,
@@ -105,6 +105,9 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
   }, [options]);
 
   const groups = useMemo(() => buildLineGroups(lines), [lines]);
+
+  /** 방금 만들어진 코드블록의 여는 펜스 id — 그 그룹의 Monaco 가 마운트되면 포커스를 가져간다. */
+  const [pendingCodeFocusId, setPendingCodeFocusId] = useState<number | null>(null);
 
   /**
    * 라인 단위 편집이 허용되는 id 집합을 그 시점의 linesRef 로 계산한다.
@@ -334,6 +337,34 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     [activateLine, commitLines],
   );
 
+  /**
+   * 여는 펜스가 막 만들어졌을 때 코드블록을 완성한다.
+   * 빈 본문 + 닫는 펜스를 함께 넣어 뒤따르는 문서가 코드 본문으로 빨려 들어가지 않게 하고,
+   * 펜스 라인은 비활성화해 화면에서 감춘 뒤 포커스를 코드편집기로 넘긴다
+   * (활성 상태로 두면 ``` 가 그대로 보이고 커서만 사라진다).
+   */
+  const openCodeBlock = useCallback(
+    (openLineId: number) => {
+      const current = linesRef.current;
+      const index = current.findIndex((line) => line.id === openLineId);
+      if (index === -1) return;
+
+      commitLines([
+        ...current.slice(0, index + 1),
+        { id: nextLineId(), text: '' },
+        { id: nextLineId(), text: CODE_FENCE_MARK },
+        ...current.slice(index + 1),
+      ]);
+      forceHistoryBoundaryRef.current = true;
+
+      deactivate();
+      setPendingCodeFocusId(openLineId);
+    },
+    [commitLines, deactivate],
+  );
+
+  const consumeCodeFocus = useCallback(() => setPendingCodeFocusId(null), []);
+
   const handleLineChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const el = e.target;
@@ -354,8 +385,18 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
       }
 
       const current = linesRef.current;
+      const previousText = current[index].text;
       const next = current.map((line) => (line.id === id ? { ...line, text } : line));
       commitLines(next);
+
+      // 이번 입력으로 여는 펜스가 만들어졌으면 바로 코드블록을 완성하고 편집기로 넘긴다.
+      // 조합 중에는 미룬다 — 확정 전 중간 글자에 반응하면 안 된다.
+      if (!composingRef.current && isCodeFenceLine(text) && !isCodeFenceLine(previousText)) {
+        clearRenderSettleTimer();
+        closeMention();
+        openCodeBlock(id);
+        return;
+      }
 
       if (activeModeRef.current !== 'editing') {
         activeModeRef.current = 'editing';
@@ -379,6 +420,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
       commitHistory,
       commitLines,
       findIndex,
+      openCodeBlock,
       updateMention,
     ],
   );
@@ -810,6 +852,8 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     deactivate,
     focusLastLine,
     insertAtCaret,
+    pendingCodeFocusId,
+    consumeCodeFocus,
     setCodeGroupBody,
     setCodeGroupLanguage,
     toggleCheckboxLine: handleToggleCheckbox,

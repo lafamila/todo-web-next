@@ -26,6 +26,9 @@ export interface MonacoCodeEditorProps {
   onSave?: () => void;
   height?: string;
   readOnly?: boolean;
+  /** 새로 만들어진 코드블록이면 마운트 직후 편집기로 포커스를 가져온다. */
+  autoFocus?: boolean;
+  onAutoFocused?: () => void;
 }
 
 export function MonacoCodeEditor({
@@ -36,6 +39,8 @@ export function MonacoCodeEditor({
   onSave,
   height = '300px',
   readOnly = false,
+  autoFocus = false,
+  onAutoFocused,
 }: MonacoCodeEditorProps) {
   // Monaco 에 없는 id 를 넘기면 하이라이팅이 조용히 꺼지므로 항상 canonical id 로 정규화한다.
   const resolvedLanguage = resolveCodeLanguage(language);
@@ -61,7 +66,11 @@ export function MonacoCodeEditor({
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [editorInstance, setEditorInstance] = useState<any>(null);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleEditorDidMount = (editor: any, monaco: any) => {
+    setEditorInstance(editor);
     // Cmd+S (Mac) or Ctrl+S (Windows/Linux) to save
     if (onSave && monaco) {
       editor.addCommand(
@@ -72,6 +81,13 @@ export function MonacoCodeEditor({
       );
     }
   };
+
+  // Monaco 는 동적 로드라 마운트가 늦다 — 인스턴스가 생긴 뒤에 포커스를 준다.
+  useEffect(() => {
+    if (!autoFocus || !editorInstance) return;
+    editorInstance.focus();
+    onAutoFocused?.();
+  }, [autoFocus, editorInstance, onAutoFocused]);
 
   return (
     <div className="border border-gray-300 rounded overflow-hidden">
