@@ -54,14 +54,25 @@ textarea.editor-line-input {
   height: auto;
   padding: 0;
   overflow: hidden;
-  font-family: ui-monospace, sfmono-regular, menlo, monospace;
-  font-size: 0.875rem;
-  line-height: 1.6;
+  /*
+   * 렌더된 줄과 같은 타이포를 쓴다 — 편집으로 들어갈 때 글꼴/크기/줄높이가 튀면 안 된다.
+   * inherit 로 두면 컨테이너 타이포가 바뀌어도 두 상태가 함께 따라간다.
+   */
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
   color: inherit;
   resize: none;
   background: transparent;
   border: 0;
   outline: none;
+}
+
+/* 코드펜스 줄만 코드 톤을 유지한다 (본문은 Monaco 가 소유한다). */
+textarea.editor-line-input-fence {
+  font-family: ui-monospace, sfmono-regular, menlo, monospace;
+  font-size: 0.875rem;
+  line-height: 1.6;
 }
 
 /*

@@ -149,7 +149,11 @@ function LineViewImpl({
           onCompositionEnd={handlers.onCompositionEnd}
           onBlur={handlers.onBlur}
           onPaste={handlers.onPaste}
-          className={cn('editor-line-input', !isEditing && 'editor-line-input-overlay')}
+          className={cn(
+            'editor-line-input',
+            asFence && 'editor-line-input-fence',
+            !isEditing && 'editor-line-input-overlay',
+          )}
           aria-label="라인 편집"
         />
       )}
