@@ -93,8 +93,51 @@ export function InlineEditor({
     machine.focusLastLine();
   };
 
+  /**
+   * 마우스 드래그로 만든 선택을 Raw 모드로 승격한다.
+   * 줄마다 textarea 가 따로라 렌더 화면의 DOM 선택은 복사하면 소스(`-- `·펜스)가 사라지므로,
+   * 드래그가 끝난 시점에 같은 범위를 원문 위 선택으로 옮긴다.
+   */
+  const handleSurfaceMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
+    // 더블/트리플 클릭은 줄 편집 진입이 우선이다.
+    if (readOnly || e.detail >= 2) return;
+
+    const selection = typeof window === 'undefined' ? null : window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
+
+    const endpoint = (node: Node | null, offset: number) => {
+      const element = node instanceof Element ? node : (node?.parentElement ?? null);
+      // 코드편집기는 자체 선택 모델을 갖는다.
+      if (!element || element.closest('.monaco-editor')) return null;
+
+      const lineEl = element.closest<HTMLElement>('[data-line-id]');
+      if (!lineEl) return null;
+
+      const lineId = Number(lineEl.dataset.lineId);
+      if (!Number.isFinite(lineId)) return null;
+
+      const source = machine.lines.find((line) => line.id === lineId)?.text ?? '';
+      const nodeText = node?.textContent ?? '';
+      const base = nodeText ? source.indexOf(nodeText) : -1;
+      return { lineId, column: base >= 0 ? base + offset : offset };
+    };
+
+    const anchor = endpoint(selection.anchorNode, selection.anchorOffset);
+    const focus = endpoint(selection.focusNode, selection.focusOffset);
+    if (!anchor || !focus) return;
+
+    if (machine.selectDomRange(anchor, focus)) {
+      // 렌더 화면의 하이라이트는 지운다 — 선택은 이제 원문 textarea 가 갖는다.
+      selection.removeAllRanges();
+    }
+  };
+
   return (
-    <div className="flex min-h-full flex-col" onClick={handleSurfaceClick}>
+    <div
+      className="flex min-h-full flex-col"
+      onClick={handleSurfaceClick}
+      onMouseUp={handleSurfaceMouseUp}
+    >
       {groups.map((group) => {
         if (group.type === 'code') {
           return (

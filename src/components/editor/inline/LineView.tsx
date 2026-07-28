@@ -97,6 +97,10 @@ function LineViewImpl({
     if (readOnly || isEditing) return;
     // 링크·버튼·코드편집기 클릭은 그쪽 동작이 우선 (체크박스 글리프는 자체적으로 전파를 막는다).
     if ((e.target as HTMLElement).closest?.('a, button, input, select, .monaco-editor')) return;
+    // 드래그로 만든 선택은 한 번 클릭으로 지우지 않는다 — 서피스의 mouseup 이 Raw 모드로 승격한다.
+    // 더블클릭은 브라우저가 단어를 선택한 상태로 오므로 예외다(그 자리를 편집으로 연다).
+    const selection = typeof window === 'undefined' ? null : window.getSelection();
+    if (e.detail < 2 && selection && !selection.isCollapsed) return;
     onActivate(line.id, approximateCaret(line.text, e.clientX, e.clientY));
   };
 
@@ -133,6 +137,7 @@ function LineViewImpl({
         flash && 'editor-line-flash',
         fenceCollapsed && 'editor-line-fence-collapsed',
       )}
+      data-line-id={line.id}
       onClick={activateFromPointer}
       onDoubleClick={activateFromPointer}
     >

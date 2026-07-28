@@ -573,19 +573,35 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
       // Shift+↑/↓: 줄을 넘는 선택은 라인별 textarea 로 표현할 수 없다.
       // 네이티브와 같은 열 유지 규칙으로 anchor/focus 오프셋을 만들어 호출부(Raw 모드)에 넘기면
       // 이후 Shift+방향키·복사·삭제는 전부 브라우저 기본 동작으로 이어진다.
-      if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      if (
+        e.shiftKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+      ) {
         const selectRange = optionsRef.current.onSelectRange;
         const lines = linesRef.current;
-        const targetIndex = index + (e.key === 'ArrowUp' ? -1 : 1);
-        if (selectRange && targetIndex >= 0 && targetIndex < lines.length) {
+        const back = e.key === 'ArrowUp' || e.key === 'ArrowLeft';
+        const targetIndex = index + (back ? -1 : 1);
+        const horizontal = e.key === 'ArrowLeft' || e.key === 'ArrowRight';
+        // ←/→ 는 줄 경계에서만 넘어간다. 줄 안쪽에서는 네이티브 선택이 그대로 낫다.
+        const leaving =
+          !horizontal ||
+          (el.selectionStart === el.selectionEnd &&
+            (back ? el.selectionStart === 0 : el.selectionStart === line.text.length));
+
+        if (selectRange && leaving && targetIndex >= 0 && targetIndex < lines.length) {
+          const target = lines[targetIndex];
+          const offsetOf = (at: number) =>
+            lines.slice(0, at).reduce((sum, item) => sum + item.text.length + 1, 0);
           const column = el.selectionStart;
-          const offsetOf = (target: number) =>
-            lines.slice(0, target).reduce((sum, item) => sum + item.text.length + 1, 0);
           e.preventDefault();
           closeMention();
           selectRange(
             offsetOf(index) + column,
-            offsetOf(targetIndex) + Math.min(column, lines[targetIndex].text.length),
+            offsetOf(targetIndex) +
+              (horizontal ? (back ? target.text.length : 0) : Math.min(column, target.text.length)),
           );
           return;
         }
@@ -690,6 +706,23 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
         e.preventDefault();
         closeMention();
         activateLine(target.id, Math.min(el.selectionStart, target.text.length), 'editing');
+        return;
+      }
+
+      // 줄 경계에서 ←/→ 는 앞/뒤 줄로 넘어간다 (한 줄에 갇히지 않게).
+      // ⌘/Alt 조합은 줄 처음·끝/단어 이동이라 건드리지 않는다.
+      if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.metaKey && !e.altKey && !e.ctrlKey) {
+        const collapsed = el.selectionStart === el.selectionEnd;
+        const atStart = collapsed && el.selectionStart === 0;
+        const atEnd = collapsed && el.selectionStart === line.text.length;
+        const leaving = e.key === 'ArrowLeft' ? atStart : atEnd;
+        if (!leaving) return;
+
+        const target = findAdjacentEditable(index, e.key === 'ArrowLeft' ? -1 : 1);
+        if (!target) return;
+        e.preventDefault();
+        closeMention();
+        activateLine(target.id, e.key === 'ArrowLeft' ? target.text.length : 0, 'editing');
       }
     },
     [
@@ -863,6 +896,37 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     [activateLine, currentEditableIds, focusLastLine],
   );
 
+  /**
+   * 렌더 화면에서 드래그로 만든 선택을 문서 오프셋으로 환산해 호출부(Raw 모드)에 넘긴다.
+   * 렌더 텍스트와 소스가 다른 줄(체크박스·마크다운)에서는 열 위치가 근사값이다 — 줄은 정확하다.
+   * 승격했으면 true.
+   */
+  const selectDomRange = useCallback(
+    (
+      anchor: { lineId: number; column: number },
+      focus: { lineId: number; column: number },
+    ): boolean => {
+      const selectRange = optionsRef.current.onSelectRange;
+      if (!selectRange) return false;
+
+      const lines = linesRef.current;
+      const offsetOf = (lineId: number, column: number) => {
+        const at = lines.findIndex((line) => line.id === lineId);
+        if (at === -1) return null;
+        const base = lines.slice(0, at).reduce((sum, item) => sum + item.text.length + 1, 0);
+        return base + Math.max(0, Math.min(column, lines[at].text.length));
+      };
+
+      const from = offsetOf(anchor.lineId, anchor.column);
+      const to = offsetOf(focus.lineId, focus.column);
+      if (from == null || to == null || from === to) return false;
+
+      selectRange(from, to);
+      return true;
+    },
+    [],
+  );
+
   const insertAtCaret = useCallback(
     (text: string, replaceFromLastAt: boolean) => {
       const el = textareaRef.current;
@@ -924,6 +988,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     insertAtCaret,
     pendingCodeFocusId,
     consumeCodeFocus,
+    selectDomRange,
     setCodeGroupBody,
     setCodeGroupLanguage,
     toggleCheckboxLine: handleToggleCheckbox,
