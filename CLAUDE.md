@@ -64,7 +64,7 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   `e.isComposing || e.keyCode === 229` 인 keydown 은 상태 머신 입력이 아니다. 전역 "아무 키나 입력하면
   편집 시작" 핸들러는 `preventDefault` 하지 않고 마지막 라인에 포커스만 옮긴다 (수동 append 금지 — 이중 입력 원인).
 - **구조 편집**: Enter 분할 / 라인 시작 Backspace 병합 / 라인 끝 Delete 다음 줄 병합 / ↑·↓ 인접 라인 이동
-  (캐럿 열 유지). 활성 라인에 개행이 들어오면 `handleLineChange` 가 라인 분할로 흡수한다.
+  (캐럿 열 유지) / 줄 시작 ← 와 줄 끝 → 는 앞뒤 줄로 넘어간다(⌘·Alt 조합은 줄 처음·끝/단어 이동이라 건드리지 않는다). 활성 라인에 개행이 들어오면 `handleLineChange` 가 라인 분할로 흡수한다.
 - **코드블록 생성**: 라인이 여는 펜스가 되는 순간 `openCodeBlock` 이 **빈 본문 + 닫는 펜스를 함께 삽입**하고
   펜스 라인을 비활성화한 뒤 포커스를 Monaco 로 넘긴다(`pendingCodeFocusId` → `MonacoCodeEditor autoFocus`).
   이렇게 하지 않으면 방금 친 펜스 라인이 활성 상태로 남아 ``` 가 코드편집기 위에 그대로 보이고
@@ -86,7 +86,9 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 - **Raw 모드 (Cmd/Ctrl+E)**: 문서 전체를 하나의 textarea 로 여는 escape hatch. 멀티라인 선택/복사와
   `@메모명` 검색이 필요할 때 쓴다.
 - **줄을 넘는 선택은 Raw 모드가 이어받는다**: 라인마다 textarea 가 따로라 DOM 선택이 줄 경계를 넘지 못한다.
-  `Cmd/Ctrl+A`(`onSelectAll`)와 `Shift+↑/↓`(`onSelectRange`)는 기본 동작을 막고 Raw 모드로 전환하면서
+  `Cmd/Ctrl+A`(`onSelectAll`), `Shift+방향키`(`onSelectRange`; ←/→ 는 줄 경계에서만), 그리고 렌더 화면에서
+  **마우스 드래그**로 만든 선택(서피스 `mouseup` → `selectDomRange`; 더블·트리플 클릭은 `e.detail >= 2` 로
+  제외해 줄 편집 진입을 남긴다)은 기본 동작을 막고 Raw 모드로 전환하면서
   선택을 그대로 복원한다 — 전체 선택이거나, 네이티브와 같은 열 유지 규칙으로 계산한 anchor→focus 오프셋이다.
   `selectionDirection` 까지 넘겨야 이어지는 Shift+방향키가 같은 쪽으로 확장된다. 렌더 화면을 DOM 으로
   선택하는 방식은 복사 시 `-- `·펜스 같은 소스가 사라져 채택하지 않았다.
