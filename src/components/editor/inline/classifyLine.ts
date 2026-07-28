@@ -1,3 +1,4 @@
+import { codeFenceLanguage, isCodeFenceLine } from '@/lib/codeFence';
 import { parseContent } from '@/lib/utils';
 import type { ContentBlockInterface } from '@/lib/types';
 
@@ -30,18 +31,13 @@ export interface LineClassification {
 
 export const CHECKBOX_CHECKED_PREFIX = '--v ';
 export const CHECKBOX_UNCHECKED_PREFIX = '-- ';
-export const CODE_FENCE_PREFIX = '```';
-export const DEFAULT_FENCE_LANGUAGE = 'typescript';
 
 const MEMO_LINK_PATTERN = /\[@([^\]]+)\]\(([^)]+)\)/;
 
-export function isCodeFence(text: string): boolean {
-  return text.startsWith(CODE_FENCE_PREFIX);
-}
-
-export function fenceLanguage(text: string): string {
-  return text.slice(CODE_FENCE_PREFIX.length).trim() || DEFAULT_FENCE_LANGUAGE;
-}
+// 펜스 문법은 `lib/codeFence.ts` 가 단일 소스다 (parseContent 와 공유 — 갈라지면 렌더가 달라진다).
+export { CODE_FENCE_MARK, DEFAULT_CODE_LANGUAGE } from '@/lib/codeFence';
+export const isCodeFence = isCodeFenceLine;
+export const fenceLanguage = codeFenceLanguage;
 
 /**
  * 한 줄을 분류한다. `lib/utils.ts` 의 `parseContent` 와 동일 케이스 판정을 목표로 하며,

@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
+import { formatCodeFence } from '@/lib/codeFence';
 import { toggleCheckbox } from '@/lib/utils';
 import {
   buildLineGroups,
@@ -718,6 +719,25 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     [commitHistory, commitLines],
   );
 
+  /** Monaco 헤더의 언어 선택을 여는 펜스 라인에 되쓴다 (선택이 문서에 남아야 다음에도 유지된다). */
+  const setCodeGroupLanguage = useCallback(
+    (openLineId: number, language: string) => {
+      const current = linesRef.current;
+      const index = current.findIndex((line) => line.id === openLineId);
+      if (index === -1) return;
+
+      const nextText = formatCodeFence(language);
+      if (current[index].text === nextText) return;
+
+      commitHistory(false);
+      commitLines(
+        current.map((line, i) => (i === index ? { ...line, text: nextText } : line)),
+      );
+      forceHistoryBoundaryRef.current = true;
+    },
+    [commitHistory, commitLines],
+  );
+
   const focusLastLine = useCallback(() => {
     const current = linesRef.current;
     const editable = currentEditableIds();
@@ -791,6 +811,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     focusLastLine,
     insertAtCaret,
     setCodeGroupBody,
+    setCodeGroupLanguage,
     toggleCheckboxLine: handleToggleCheckbox,
     undo,
     redo,

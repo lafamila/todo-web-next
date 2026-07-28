@@ -1,8 +1,9 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useState } from 'react';
-import { DEFAULT_CODE_LANGUAGE, EDITOR_THEME } from '@/lib/constants';
+import { useEffect, useState } from 'react';
+import { CODE_LANGUAGES, resolveCodeLanguage } from '@/lib/codeFence';
+import { EDITOR_THEME } from '@/lib/constants';
 
 const Editor = dynamic(() => import('@monaco-editor/react'), {
   ssr: false,
@@ -17,6 +18,11 @@ export interface MonacoCodeEditorProps {
   value: string;
   language?: string;
   onChange: (value: string) => void;
+  /**
+   * 주면 언어 선택이 controlled 가 된다 — 호출부가 선택을 문서(펜스 라인)에 되쓴다.
+   * 없으면 이 컴포넌트 로컬 상태로만 바뀌고 새로고침하면 사라진다.
+   */
+  onLanguageChange?: (language: string) => void;
   onSave?: () => void;
   height?: string;
   readOnly?: boolean;
@@ -24,13 +30,31 @@ export interface MonacoCodeEditorProps {
 
 export function MonacoCodeEditor({
   value,
-  language = DEFAULT_CODE_LANGUAGE,
+  language,
   onChange,
+  onLanguageChange,
   onSave,
   height = '300px',
   readOnly = false,
 }: MonacoCodeEditorProps) {
-  const [selectedLanguage, setSelectedLanguage] = useState(language);
+  // Monaco 에 없는 id 를 넘기면 하이라이팅이 조용히 꺼지므로 항상 canonical id 로 정규화한다.
+  const resolvedLanguage = resolveCodeLanguage(language);
+  const [localLanguage, setLocalLanguage] = useState(resolvedLanguage);
+
+  // 문서 쪽 언어가 바뀌면(펜스 편집·되돌리기) uncontrolled 사용처의 선택도 따라가야 한다.
+  useEffect(() => {
+    setLocalLanguage(resolvedLanguage);
+  }, [resolvedLanguage]);
+
+  const selectedLanguage = onLanguageChange ? resolvedLanguage : localLanguage;
+
+  const handleLanguageSelect = (next: string) => {
+    if (onLanguageChange) {
+      onLanguageChange(next);
+      return;
+    }
+    setLocalLanguage(next);
+  };
 
   const handleEditorChange = (value: string | undefined) => {
     onChange(value || '');
@@ -49,28 +73,18 @@ export function MonacoCodeEditor({
     }
   };
 
-  const languages = [
-    'typescript',
-    'javascript',
-    'python',
-    'java',
-    'go',
-    'rust',
-    'html',
-    'css',
-    'json',
-  ];
-
   return (
     <div className="border border-gray-300 rounded overflow-hidden">
       {/* Language Selector */}
       <div className="bg-gray-800 px-3 py-1.5 flex items-center justify-between">
         <select
           value={selectedLanguage}
-          onChange={(e) => setSelectedLanguage(e.target.value)}
+          onChange={(e) => handleLanguageSelect(e.target.value)}
+          disabled={readOnly}
+          aria-label="코드 언어"
           className="bg-gray-700 text-gray-200 text-sm px-2 py-1 rounded border-none outline-none"
         >
-          {languages.map((lang) => (
+          {CODE_LANGUAGES.map((lang) => (
             <option key={lang} value={lang}>
               {lang}
             </option>

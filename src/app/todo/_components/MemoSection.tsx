@@ -27,7 +27,11 @@ const editorFeatureHelp = [
     description: '체크되지 않은 체크박스를 만듭니다. 입력을 멈추고 2초가 지나면 그 줄만 체크박스로 바뀝니다.',
   },
   { syntax: '--v 완료한 일', description: '체크된 체크박스를 만듭니다.' },
-  { syntax: '```ts ... ```', description: '코드 블록을 만들고 에디터로 수정할 수 있습니다.' },
+  {
+    syntax: '``` / java```',
+    description:
+      '코드 블록을 만듭니다. 기본 언어는 typescript 이고 ``` 앞에 언어를 쓰면 그 언어로 하이라이팅됩니다(에디터 위 선택기로도 바꿀 수 있습니다). ``` 표시는 화면에서 감춰집니다.',
+  },
   { syntax: '@메모명', description: '편집 중 다른 메모를 검색해서 링크로 삽입합니다.' },
   { syntax: '1. 항목', description: '번호 목록을 만듭니다.' },
   { syntax: '- 항목', description: '글머리 목록을 만듭니다.' },

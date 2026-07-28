@@ -1,4 +1,5 @@
 import { clsx, type ClassValue } from "clsx";
+import { codeFenceLanguage, isCodeFenceLine } from "./codeFence";
 import type { ContentBlockInterface } from "./types";
 
 export function cn(...classes: ClassValue[]): string {
@@ -62,12 +63,12 @@ export function parseContent(content: string): ContentBlockInterface[] {
       continue;
     }
 
-    if (line.startsWith("```")) {
-      const language = line.slice(3).trim() || "typescript";
+    if (isCodeFenceLine(line)) {
+      const language = codeFenceLanguage(line);
       const codeLines: string[] = [];
       i++;
 
-      while (i < lines.length && !lines[i].startsWith("```")) {
+      while (i < lines.length && !isCodeFenceLine(lines[i])) {
         codeLines.push(lines[i]);
         i++;
       }

@@ -64,6 +64,18 @@ textarea.editor-line-input {
   outline: none;
 }
 
+/*
+ * 코드펜스(``` / java```) 라인은 비활성일 때 자리를 차지하지 않는다.
+ * 언어는 Monaco 헤더의 선택기가 보여주고, 방향키로 진입하면 다시 펼쳐진다.
+ * Tailwind 유틸(px-1 등)은 cascade layer 안에 있으므로 unlayered 인 이 규칙이 이긴다.
+ */
+.editor-line-fence-collapsed {
+  height: 0;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
 /* focused-rendered 에서는 렌더 결과 위에 투명하게 겹쳐 두고 IME/포커스만 유지한다. */
 textarea.editor-line-input-overlay {
   position: absolute;

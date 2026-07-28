@@ -37,7 +37,8 @@ export const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "updated", label: "최근편집" },
 ];
 
-export const DEFAULT_CODE_LANGUAGE = "typescript";
+// 코드펜스 문법·언어 카탈로그는 lib/codeFence.ts 가 단일 소스다.
+export { CODE_LANGUAGES, DEFAULT_CODE_LANGUAGE } from "./codeFence";
 export const EDITOR_THEME = "vs-dark";
 
 export const AllIcons = [

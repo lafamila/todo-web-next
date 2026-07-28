@@ -97,6 +97,11 @@ export function InlineEditor({
                 value={group.body.map((line) => line.text).join('\n')}
                 language={group.language}
                 onChange={(code) => machine.setCodeGroupBody(group.open.id, code)}
+                onLanguageChange={
+                  readOnly
+                    ? undefined
+                    : (language) => machine.setCodeGroupLanguage(group.open.id, language)
+                }
                 onSave={onSave}
                 height="200px"
                 readOnly={readOnly}

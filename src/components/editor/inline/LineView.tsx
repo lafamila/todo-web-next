@@ -71,6 +71,9 @@ function LineViewImpl({
   const cls = classifyLine(line.text);
   const isEditing = mode === 'editing';
   const showRendered = !isEditing;
+  // 펜스 라인은 비활성일 때 화면에서 감춘다 — 언어/코드는 아래 Monaco 가 대신 보여준다.
+  // 활성(방향키 진입 등)일 때만 원문을 드러내 편집·삭제할 수 있게 한다.
+  const fenceCollapsed = asFence && mode === null;
 
   // 활성 라인 textarea 자동 높이 — 내용에 맞춰 늘어난다.
   useBrowserLayoutEffect(() => {
@@ -92,6 +95,7 @@ function LineViewImpl({
 
   const renderBlock = () => {
     if (asFence) {
+      if (fenceCollapsed) return null;
       return <span className="font-mono text-xs text-gray-500">{line.text || '```'}</span>;
     }
 
@@ -120,6 +124,7 @@ function LineViewImpl({
         isEditing && 'editor-line-editing',
         mode === 'focused-rendered' && 'editor-line-focused',
         flash && 'editor-line-flash',
+        fenceCollapsed && 'editor-line-fence-collapsed',
       )}
       onDoubleClick={handleDoubleClick}
     >
