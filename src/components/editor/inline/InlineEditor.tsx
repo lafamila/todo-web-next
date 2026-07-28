@@ -29,6 +29,8 @@ export interface InlineEditorProps {
   onMentionKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean;
   /** Cmd/Ctrl+A — 문서 전체 선택은 단일 텍스트 서피스(Raw 모드)가 필요하다. */
   onSelectAll?: () => void;
+  /** Shift+↑/↓ — 줄을 넘는 선택도 같은 이유로 Raw 모드가 이어받는다. */
+  onSelectRange?: (anchor: number, focus: number) => void;
   readOnly?: boolean;
 }
 
@@ -48,6 +50,7 @@ export function InlineEditor({
   mentionActive,
   onMentionKeyDown,
   onSelectAll,
+  onSelectRange,
   readOnly = false,
 }: InlineEditorProps) {
   const machine = useLineStateMachine({
@@ -59,6 +62,7 @@ export function InlineEditor({
     mentionActive,
     onMentionKeyDown,
     onSelectAll,
+    onSelectRange,
     readOnly,
   });
 

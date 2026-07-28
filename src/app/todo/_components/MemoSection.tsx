@@ -46,6 +46,10 @@ const shortcutHelp = [
   { keys: 'Ctrl/⌘ + S', description: '현재 메모를 저장합니다.' },
   { keys: 'Ctrl/⌘ + E', description: 'Raw 모드를 켜고 끕니다. 본문 전체를 하나의 텍스트로 선택·복사할 때 씁니다.' },
   { keys: 'Ctrl/⌘ + A', description: '본문 전체를 선택합니다. 전체가 선택된 Raw 모드로 전환됩니다.' },
+  {
+    keys: 'Shift + ↑/↓',
+    description: '여러 줄을 선택합니다. 선택이 그대로 유지된 Raw 모드로 전환되어 계속 늘리거나 복사할 수 있습니다.',
+  },
   { keys: '클릭', description: '그 줄을 클릭한 위치에서 소스 상태로 열어 수정합니다. 본문 아래 여백을 클릭하면 마지막 줄로 갑니다.' },
   { keys: 'Backspace', description: '방금 자동으로 렌더된 줄에서 한 번 누르면 지우지 않고 소스로 돌아갑니다.' },
   { keys: '본문에서 바로 입력', description: '마지막 줄이 편집 상태가 되고 입력이 이어집니다.' },
@@ -138,25 +142,40 @@ export function MemoSection() {
     }, 6_000);
   }, [releaseLock]);
 
-  /** Cmd/Ctrl+A 로 들어온 Raw 모드는 캐럿을 끝에 두는 대신 전체를 선택한다. */
-  const pendingRawSelectAllRef = useRef(false);
+  /**
+   * 선택 때문에 들어온 Raw 모드는 캐럿을 끝에 두는 대신 요청한 범위를 선택한다.
+   * `'all'` 은 Cmd/Ctrl+A, 오프셋 쌍은 Shift+↑/↓ 가 넘긴 anchor→focus 다.
+   */
+  const pendingRawSelectionRef = useRef<'all' | { anchor: number; focus: number } | null>(null);
 
   useEffect(() => {
     if (rawMode && textareaRef.current) {
       requestAnimationFrame(() => {
-        if (pendingRawSelectAllRef.current) {
-          pendingRawSelectAllRef.current = false;
-          const el = textareaRef.current;
-          if (el) {
-            el.focus();
-            el.select();
-            return;
-          }
+        const pending = pendingRawSelectionRef.current;
+        pendingRawSelectionRef.current = null;
+        const el = textareaRef.current;
+
+        if (!el || pending === null) {
+          focusTextareaToEnd();
+          return;
         }
-        focusTextareaToEnd();
+
+        el.focus();
+
+        if (pending === 'all') {
+          el.select();
+          return;
+        }
+
+        // 방향을 유지해야 이어지는 Shift+방향키가 같은 쪽으로 확장된다.
+        el.setSelectionRange(
+          Math.min(pending.anchor, pending.focus),
+          Math.max(pending.anchor, pending.focus),
+          pending.focus >= pending.anchor ? 'forward' : 'backward',
+        );
       });
     } else if (!rawMode) {
-      pendingRawSelectAllRef.current = false;
+      pendingRawSelectionRef.current = null;
     }
   }, [rawMode]);
 
@@ -362,20 +381,43 @@ export function MemoSection() {
    * 인라인 서피스는 라인마다 별개 textarea 라 한 번에 선택할 수 없으므로,
    * 원문 그대로를 담은 Raw 모드로 전환한 뒤 전체를 선택한다 (복사 시 소스 무손실).
    */
+  const enterRawModeForSelection = useCallback(
+    (selection: 'all' | { anchor: number; focus: number }) => {
+      if (isLockedByOtherRef.current || lockHolder) return;
+
+      pendingRawSelectionRef.current = selection;
+      rawModeRef.current = true;
+      setRawMode(true);
+      setShowMemoSearch(false);
+      setSearchQuery('');
+      holdLock();
+    },
+    [holdLock, lockHolder],
+  );
+
   const handleSelectAll = useCallback(() => {
     if (rawModeRef.current) {
       textareaRef.current?.select();
       return;
     }
-    if (isLockedByOtherRef.current || lockHolder) return;
+    enterRawModeForSelection('all');
+  }, [enterRawModeForSelection]);
 
-    pendingRawSelectAllRef.current = true;
-    rawModeRef.current = true;
-    setRawMode(true);
-    setShowMemoSearch(false);
-    setSearchQuery('');
-    holdLock();
-  }, [holdLock, lockHolder]);
+  /** Shift+↑/↓ — 인라인에서 시작한 여러 줄 선택을 Raw 모드가 그대로 이어받는다. */
+  const handleSelectRange = useCallback(
+    (anchor: number, focus: number) => {
+      if (rawModeRef.current) {
+        textareaRef.current?.setSelectionRange(
+          Math.min(anchor, focus),
+          Math.max(anchor, focus),
+          focus >= anchor ? 'forward' : 'backward',
+        );
+        return;
+      }
+      enterRawModeForSelection({ anchor, focus });
+    },
+    [enterRawModeForSelection],
+  );
 
   const toggleRawMode = useCallback(() => {
     const next = !rawModeRef.current;
@@ -649,6 +691,7 @@ export function MemoSection() {
                 onEditingChange={handleEditingChange}
                 onMentionChange={handleMentionChange}
                 onSelectAll={handleSelectAll}
+                onSelectRange={handleSelectRange}
                 mentionActive={showMemoSearch}
                 onMentionKeyDown={handleMentionKeyDown}
                 readOnly={isLockedByOther}

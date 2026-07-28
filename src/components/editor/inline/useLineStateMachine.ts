@@ -41,6 +41,11 @@ export interface UseLineStateMachineOptions {
   onMentionKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean;
   /** Cmd/Ctrl+A — 라인 하나가 아니라 문서 전체를 선택해야 한다 (호출부가 Raw 모드로 전환). */
   onSelectAll?: () => void;
+  /**
+   * Shift+↑/↓ — 여러 줄 선택. 라인마다 textarea 가 따로라 DOM 선택이 줄을 넘지 못하므로
+   * 문서 오프셋(anchor→focus)을 호출부에 넘겨 단일 텍스트 서피스에서 이어받게 한다.
+   */
+  onSelectRange?: (anchor: number, focus: number) => void;
   readOnly?: boolean;
 }
 
@@ -564,6 +569,27 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
 
       const line = linesRef.current[index];
       const mode = activeModeRef.current;
+
+      // Shift+↑/↓: 줄을 넘는 선택은 라인별 textarea 로 표현할 수 없다.
+      // 네이티브와 같은 열 유지 규칙으로 anchor/focus 오프셋을 만들어 호출부(Raw 모드)에 넘기면
+      // 이후 Shift+방향키·복사·삭제는 전부 브라우저 기본 동작으로 이어진다.
+      if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        const selectRange = optionsRef.current.onSelectRange;
+        const lines = linesRef.current;
+        const targetIndex = index + (e.key === 'ArrowUp' ? -1 : 1);
+        if (selectRange && targetIndex >= 0 && targetIndex < lines.length) {
+          const column = el.selectionStart;
+          const offsetOf = (target: number) =>
+            lines.slice(0, target).reduce((sum, item) => sum + item.text.length + 1, 0);
+          e.preventDefault();
+          closeMention();
+          selectRange(
+            offsetOf(index) + column,
+            offsetOf(targetIndex) + Math.min(column, lines[targetIndex].text.length),
+          );
+          return;
+        }
+      }
 
       if (e.key === 'Escape') {
         e.preventDefault();
