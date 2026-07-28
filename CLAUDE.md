@@ -90,6 +90,11 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   선택을 그대로 복원한다 — 전체 선택이거나, 네이티브와 같은 열 유지 규칙으로 계산한 anchor→focus 오프셋이다.
   `selectionDirection` 까지 넘겨야 이어지는 Shift+방향키가 같은 쪽으로 확장된다. 렌더 화면을 DOM 으로
   선택하는 방식은 복사 시 `-- `·펜스 같은 소스가 사라져 채택하지 않았다.
+- **선택 때문에 켜진 Raw 모드는 일시적이다**: `rawModeReasonRef` 가 진입 경로를 기억한다.
+  `'selection'` 이면 복사·잘라내기(다음 프레임에 전환 — 같은 틱에 언마운트하면 클립보드 쓰기가 취소된다)나
+  선택 해제(내비게이션 키·클릭; 타이핑은 제외) 직후 인라인으로 돌아오며, 캐럿은
+  `InlineEditor.focusOffset(문서 오프셋)` 으로 원래 자리에 복원한다(코드 본문에 걸리면 직전 편집 가능 줄).
+  `'manual'`(Cmd/Ctrl+E)은 사용자가 명시적으로 켠 소스 뷰라 자동으로 닫지 않는다.
 - **불변 계약**: 저장은 Ctrl/⌘+S 만 (자동 저장 없음), 체크박스 토글만 즉시 서버 반영, Socket.IO 단일 작성자 락,
   `PUT /api/memos/{id}` 계약 — 전부 그대로다. 에디터는 API/소켓을 바꾸지 않는다.
 - **`parseContent` 와의 관계**: `lib/utils.ts` 의 `parseContent` 는 `ArticleDetail` 이 계속 사용한다.
