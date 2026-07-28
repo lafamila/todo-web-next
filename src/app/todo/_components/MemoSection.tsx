@@ -45,10 +45,14 @@ const editorFeatureHelp = [
 const shortcutHelp = [
   { keys: 'Ctrl/⌘ + S', description: '현재 메모를 저장합니다.' },
   { keys: 'Ctrl/⌘ + E', description: 'Raw 모드를 켜고 끕니다. 본문 전체를 하나의 텍스트로 선택·복사할 때 씁니다.' },
-  { keys: 'Ctrl/⌘ + A', description: '본문 전체를 선택합니다. 전체가 선택된 Raw 모드로 전환됩니다.' },
+  {
+    keys: 'Ctrl/⌘ + A',
+    description: '본문 전체를 선택합니다. 선택 동안만 원문이 보이고, 복사하거나 선택을 풀면 자동으로 돌아옵니다.',
+  },
   {
     keys: 'Shift + ↑/↓',
-    description: '여러 줄을 선택합니다. 선택이 그대로 유지된 Raw 모드로 전환되어 계속 늘리거나 복사할 수 있습니다.',
+    description:
+      '여러 줄을 선택합니다. 선택 동안만 원문이 보이며 계속 늘리거나 복사할 수 있고, 복사·선택 해제 시 캐럿 위치를 유지한 채 돌아옵니다.',
   },
   { keys: '클릭', description: '그 줄을 클릭한 위치에서 소스 상태로 열어 수정합니다. 본문 아래 여백을 클릭하면 마지막 줄로 갑니다.' },
   { keys: 'Backspace', description: '방금 자동으로 렌더된 줄에서 한 번 누르면 지우지 않고 소스로 돌아갑니다.' },
@@ -148,6 +152,14 @@ export function MemoSection() {
    */
   const pendingRawSelectionRef = useRef<'all' | { anchor: number; focus: number } | null>(null);
 
+  /**
+   * Raw 모드에 들어온 경로. `'selection'`(Cmd+A·Shift+↑/↓)은 일시적이라 복사·선택 해제 직후
+   * 인라인으로 되돌리고, `'manual'`(Cmd/Ctrl+E)은 사용자가 명시적으로 켠 소스 뷰라 그대로 둔다.
+   */
+  const rawModeReasonRef = useRef<'manual' | 'selection'>('manual');
+  /** 인라인으로 복귀할 때 캐럿을 놓을 문서 오프셋. */
+  const pendingInlineCaretRef = useRef<number | null>(null);
+
   useEffect(() => {
     if (rawMode && textareaRef.current) {
       requestAnimationFrame(() => {
@@ -177,6 +189,17 @@ export function MemoSection() {
     } else if (!rawMode) {
       pendingRawSelectionRef.current = null;
     }
+  }, [rawMode]);
+
+  // 인라인으로 돌아온 뒤 캐럿 복원 — InlineEditor 가 마운트된 다음 프레임에 요청한다.
+  useEffect(() => {
+    if (rawMode) return;
+    const offset = pendingInlineCaretRef.current;
+    pendingInlineCaretRef.current = null;
+    if (offset == null) return;
+    requestAnimationFrame(() => {
+      inlineEditorRef.current?.focusOffset(offset);
+    });
   }, [rawMode]);
 
   useEffect(() => {
@@ -386,6 +409,7 @@ export function MemoSection() {
       if (isLockedByOtherRef.current || lockHolder) return;
 
       pendingRawSelectionRef.current = selection;
+      rawModeReasonRef.current = 'selection';
       rawModeRef.current = true;
       setRawMode(true);
       setShowMemoSearch(false);
@@ -424,6 +448,7 @@ export function MemoSection() {
 
     if (next && (isLockedByOtherRef.current || lockHolder)) return;
 
+    rawModeReasonRef.current = 'manual';
     rawModeRef.current = next;
     setRawMode(next);
     setShowMemoSearch(false);
@@ -565,6 +590,63 @@ export function MemoSection() {
     [handleMentionKeyDown, scheduleLockRelease]
   );
 
+  /**
+   * 선택 때문에 켜진 Raw 모드에서 인라인으로 돌아온다 (모드 전환 체감 최소화).
+   * Cmd/Ctrl+E 로 직접 켠 소스 뷰는 건드리지 않는다.
+   */
+  const returnToInlineFromSelection = useCallback(
+    (caretOffset: number | null) => {
+      if (!rawModeRef.current || rawModeReasonRef.current !== 'selection') return;
+
+      pendingInlineCaretRef.current = caretOffset;
+      rawModeReasonRef.current = 'manual';
+      rawModeRef.current = false;
+      setRawMode(false);
+      setShowMemoSearch(false);
+      setSearchQuery('');
+      holdLock();
+    },
+    [holdLock],
+  );
+
+  // 복사/잘라내기는 이벤트가 끝난 다음 프레임에 전환한다 — 같은 틱에 언마운트하면 클립보드 쓰기가 취소된다.
+  const handleRawCopy = useCallback(() => {
+    const caret = textareaRef.current?.selectionEnd ?? null;
+    requestAnimationFrame(() => returnToInlineFromSelection(caret));
+  }, [returnToInlineFromSelection]);
+
+  const handleRawCut = useCallback(() => {
+    const caret = textareaRef.current?.selectionStart ?? null;
+    requestAnimationFrame(() => returnToInlineFromSelection(caret));
+  }, [returnToInlineFromSelection]);
+
+  /** 선택이 풀린 순간(내비게이션·클릭)에 복귀한다. 타이핑은 대상이 아니다. */
+  const handleRawSelectionSettled = useCallback(
+    (el: HTMLTextAreaElement) => {
+      if (el.selectionStart !== el.selectionEnd) return;
+      returnToInlineFromSelection(el.selectionStart);
+    },
+    [returnToInlineFromSelection],
+  );
+
+  const handleRawKeyUp = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.shiftKey) return;
+      const navigating =
+        e.key === 'Escape' || e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End';
+      if (!navigating) return;
+      handleRawSelectionSettled(e.currentTarget);
+    },
+    [handleRawSelectionSettled],
+  );
+
+  const handleRawMouseUp = useCallback(
+    (e: React.MouseEvent<HTMLTextAreaElement>) => {
+      handleRawSelectionSettled(e.currentTarget);
+    },
+    [handleRawSelectionSettled],
+  );
+
   const handleMentionChange = useCallback((state: MentionState | null) => {
     if (!state) {
       setShowMemoSearch(false);
@@ -676,6 +758,10 @@ export function MemoSection() {
                 value={content}
                 onChange={handleRawContentChange}
                 onKeyDown={handleRawKeyDown}
+                onKeyUp={handleRawKeyUp}
+                onMouseUp={handleRawMouseUp}
+                onCopy={handleRawCopy}
+                onCut={handleRawCut}
                 className="w-full h-full p-0 resize-none focus:outline-none font-mono text-sm"
                 placeholder=""
               />

@@ -833,6 +833,36 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     }
   }, [activateLine, currentEditableIds]);
 
+  /**
+   * 문서 절대 오프셋이 가리키는 줄을 편집 상태로 만든다.
+   * Raw 모드에서 인라인으로 돌아올 때 캐럿을 그 자리에 그대로 남기기 위한 진입점이며,
+   * 오프셋이 코드 본문(Monaco 소유, 라인 편집 불가)에 걸리면 직전 편집 가능 줄로 떨어진다.
+   */
+  const focusOffset = useCallback(
+    (offset: number) => {
+      const current = linesRef.current;
+      const editable = currentEditableIds();
+      let remaining = Math.max(0, offset);
+      let fallback: EditorLine | null = null;
+
+      for (const line of current) {
+        if (remaining <= line.text.length) {
+          const target = editable.has(line.id) ? line : fallback;
+          if (target) {
+            activateLine(target.id, target === line ? remaining : target.text.length, 'editing');
+            return;
+          }
+          break;
+        }
+        if (editable.has(line.id)) fallback = line;
+        remaining -= line.text.length + 1;
+      }
+
+      focusLastLine();
+    },
+    [activateLine, currentEditableIds, focusLastLine],
+  );
+
   const insertAtCaret = useCallback(
     (text: string, replaceFromLastAt: boolean) => {
       const el = textareaRef.current;
@@ -890,6 +920,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     activateLine: handleLineActivate,
     deactivate,
     focusLastLine,
+    focusOffset,
     insertAtCaret,
     pendingCodeFocusId,
     consumeCodeFocus,

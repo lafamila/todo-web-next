@@ -11,6 +11,8 @@ export type { MentionState };
 export interface InlineEditorHandle {
   /** 전역 "아무 키나 누르면 편집 시작" 진입점 — 마지막 라인을 editing 으로 만든다. */
   focusLastLine: () => void;
+  /** Raw 모드에서 돌아올 때 캐럿이 있던 문서 오프셋의 줄을 편집 상태로 만든다. */
+  focusOffset: (offset: number) => void;
   /** @ 검색으로 고른 메모 링크를 활성 라인의 `@쿼리` 자리에 넣는다. */
   insertMemoLink: (linkText: string) => void;
   isActive: () => boolean;
@@ -72,6 +74,7 @@ export function InlineEditor({
     ref,
     () => ({
       focusLastLine: machine.focusLastLine,
+      focusOffset: machine.focusOffset,
       insertMemoLink: (linkText: string) => machine.insertAtCaret(linkText, true),
       isActive: () => machine.activeMode !== null,
     }),
