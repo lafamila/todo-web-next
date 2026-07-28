@@ -55,13 +55,32 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   blur·Escape·다른 라인 활성화는 즉시 `rendered`. `--` 나 `-- ` 같은 미완결 패턴은 절대 자동 렌더되지 않는다.
 - **타이머 2종**: `renderSettleTimer`(2초, 자동 렌더)와 `MemoSection` 의 6초 락 해제 타이머는 **별개**다.
   6초 타이머는 "활성 라인이 없을 때만" 돈다 (`onEditingChange`).
+- **포커스 판정(`isTypingContext`)**: 전역 "아무 키나 누르면 편집 시작" 핸들러는 이미 입력 중인 곳에서는
+  물러나야 한다. Monaco 는 EditContext API 를 쓰면 포커스 대상이 textarea 도 contenteditable 도 아닌
+  `div.native-edit-context` 라, tag/contentEditable 만 보면 **코드편집기 입력을 가로채 마지막 라인
+  (닫는 펜스)으로 글자를 보낸다**. `.monaco-editor` 조상 검사를 반드시 유지할 것. 코드편집기 포커스는
+  `onFocusChange` 로 `onEditingChange` 에 연결되어 있어 타이핑 중 6초 락 해제도 일어나지 않는다.
 - **IME**: `composingRef` 로 조합 중에는 렌더 타이머·라인 전환·분할/병합을 모두 막는다.
   `e.isComposing || e.keyCode === 229` 인 keydown 은 상태 머신 입력이 아니다. 전역 "아무 키나 입력하면
   편집 시작" 핸들러는 `preventDefault` 하지 않고 마지막 라인에 포커스만 옮긴다 (수동 append 금지 — 이중 입력 원인).
 - **구조 편집**: Enter 분할 / 라인 시작 Backspace 병합 / 라인 끝 Delete 다음 줄 병합 / ↑·↓ 인접 라인 이동
   (캐럿 열 유지). 활성 라인에 개행이 들어오면 `handleLineChange` 가 라인 분할로 흡수한다.
-- **코드펜스**: ` ``` ` 펜스 라인만 라인 편집 대상이고 본문은 항상 Monaco 가 소유한다. 자동 렌더 없음.
-  방향키 이동은 Monaco 본문 라인을 건너뛴다.
+- **코드블록 생성**: 라인이 여는 펜스가 되는 순간 `openCodeBlock` 이 **빈 본문 + 닫는 펜스를 함께 삽입**하고
+  펜스 라인을 비활성화한 뒤 포커스를 Monaco 로 넘긴다(`pendingCodeFocusId` → `MonacoCodeEditor autoFocus`).
+  이렇게 하지 않으면 방금 친 펜스 라인이 활성 상태로 남아 ``` 가 코드편집기 위에 그대로 보이고
+  (펜스는 2초 자동 렌더 대상이 아니라 스스로 접히지 않는다) 닫는 펜스가 없어 뒤따르는 문서가 코드 본문으로 빨려 들어간다.
+  타이핑 중 생성이라 마크다운 접미 표기(` ```java `)는 ``` 시점에 이미 블록이 되므로, 언어는 접두 표기(`java``` `)나
+  Monaco 헤더 선택기로 지정한다. 여러 줄 붙여넣기는 이 경로를 타지 않아 원문 펜스가 그대로 보존된다.
+- **코드펜스**: 펜스 라인만 라인 편집 대상이고 본문은 항상 Monaco 가 소유한다. 자동 렌더 없음.
+  방향키 이동은 Monaco 본문 라인을 건너뛴다. 펜스 라인은 **비활성일 때 화면에서 감춰지고**
+  (`.editor-line-fence-collapsed`, 높이 0) 방향키로 진입하면 다시 펼쳐져 편집·삭제할 수 있다.
+- **펜스 문법과 언어** (`src/lib/codeFence.ts` 가 단일 소스 — `parseContent` 와 인라인 에디터가 공유한다):
+  ` ``` `(기본 typescript) · ` ```java `(마크다운 표준, 기존 메모 호환) · `java``` `(언어를 앞에 쓰는 표기).
+  세 표기 모두 **줄 전체**가 펜스여야 하며(들여쓰기·뒤따르는 문장 불가 — 설명문으로 쓴 줄을 보호한다),
+  앞에 쓰는 표기는 **그 단어가 지원 언어일 때만** 펜스로 본다. 별칭은 canonical Monaco id 로 접힌다
+  (`bash`→`shell`, `tsx`/`ts`→`typescript`, `text`→`plaintext` …). Monaco 에 없는 id 를 넘기면 하이라이팅이
+  조용히 꺼지므로 언어는 반드시 이 모듈을 거쳐 정규화한다. Monaco 헤더의 언어 선택기는 결과를 여는 펜스
+  라인에 되쓴다(`setCodeGroupLanguage` → `formatCodeFence`; 기본 언어면 ` ``` ` 만 남긴다).
 - **Undo/redo**: 문서 스냅샷 스택(`history.ts`, 최대 200, 500ms 병합). 활성 라인 안에서 타이핑한 내용이
   남아 있는 동안에는 네이티브 undo 를 우선한다.
 - **Raw 모드 (Cmd/Ctrl+E)**: 문서 전체를 하나의 textarea 로 여는 escape hatch. 멀티라인 선택/복사와
@@ -93,8 +112,17 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 ## Local / Deploy Env
 
 - local 개발 서버는 `npm run dev` 로 `3034` 포트에서 실행한다.
+- Docker local 개발은 workspace root `../.scripts/todo/compose.yml` 로 API와
+  함께 실행한다. Web은 host `127.0.0.1:3030` → container `0.0.0.0:3034`,
+  browser-facing API/socket 기본값은 `http://localhost:20022` 이다.
 - production 검증 기준은 `npm run build` 이다.
 - 독립 배포 시 Docker build 는 `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SOCKET_URL`, `NEXT_PUBLIC_SOCKET_PATH`, `NEXT_PUBLIC_LIVEKIT_URL` 을 build arg 로 주입해 생성한다.
+- production app compose는 두지 않는다. workspace root
+  `../.scripts/deploy-todo-prod.sh` 가 `.env.build`를 읽어 pull/build/rm/run하고,
+  `teddy-infra`와 `restart: unless-stopped`를 적용한다.
+- `NEXT_PUBLIC_*` 값은 browser bundle에 공개된다. 운영 값은 browser-reachable
+  HTTPS/WSS URL 또는 same-origin 경로여야 하며 Docker service/container hostname을
+  사용하지 않는다. 비밀 값은 넣지 않는다.
 - root compose 제거 이후에도 API, socket, LiveKit 대상은 이 repo 의 public env 값으로 교체한다.
 - infra 의 실제 호스트는 root infra compose 또는 운영 환경이 제공한다. 이 frontend repo 는 host 값을 직접 고정하지 않는다.
 

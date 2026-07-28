@@ -1,4 +1,11 @@
-node_modules
 .next
+.git
+.idea
+.omc
+.omx
+node_modules
+npm-debug.log*
+coverage
+dist
 .env
 .env.*
