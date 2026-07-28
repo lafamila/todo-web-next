@@ -97,6 +97,12 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   선택 해제(내비게이션 키·클릭; 타이핑은 제외) 직후 인라인으로 돌아오며, 캐럿은
   `InlineEditor.focusOffset(문서 오프셋)` 으로 원래 자리에 복원한다(코드 본문에 걸리면 직전 편집 가능 줄).
   `'manual'`(Cmd/Ctrl+E)은 사용자가 명시적으로 켠 소스 뷰라 자동으로 닫지 않는다.
+- **모드 전환은 스크롤 위치를 이어받는다**: 인라인은 감싼 `div`(`inlineScrollRef`)가, Raw 모드는
+  `textarea` 자신이 스크롤한다 — **스크롤러가 서로 다른 요소**라 그냥 전환하면 새 서피스가 맨 위에서 시작해
+  화면이 최상단으로 튄다. 두 서피스의 내용 높이가 달라 픽셀값은 못 쓰므로 스크롤 비율(0~1)을 넘기고
+  (`scrollFractionOf`/`applyScrollFraction`), 승격 시에는 그 뒤에 `ensureOffsetVisible` 로 선택 지점이
+  화면 밖이면 최소한만 보정한다. 복귀 시에는 비율을 먼저 적용해야 `focusOffset` 의 scroll-into-view 가
+  덜 움직인다.
 - **불변 계약**: 저장은 Ctrl/⌘+S 만 (자동 저장 없음), 체크박스 토글만 즉시 서버 반영, Socket.IO 단일 작성자 락,
   `PUT /api/memos/{id}` 계약 — 전부 그대로다. 에디터는 API/소켓을 바꾸지 않는다.
 - **`parseContent` 와의 관계**: `lib/utils.ts` 의 `parseContent` 는 `ArticleDetail` 이 계속 사용한다.
