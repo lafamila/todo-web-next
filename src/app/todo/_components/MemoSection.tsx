@@ -45,7 +45,8 @@ const editorFeatureHelp = [
 const shortcutHelp = [
   { keys: 'Ctrl/⌘ + S', description: '현재 메모를 저장합니다.' },
   { keys: 'Ctrl/⌘ + E', description: 'Raw 모드를 켜고 끕니다. 본문 전체를 하나의 텍스트로 선택·복사할 때 씁니다.' },
-  { keys: '더블클릭', description: '그 줄을 소스 상태로 열어 수정합니다.' },
+  { keys: 'Ctrl/⌘ + A', description: '본문 전체를 선택합니다. 전체가 선택된 Raw 모드로 전환됩니다.' },
+  { keys: '클릭', description: '그 줄을 클릭한 위치에서 소스 상태로 열어 수정합니다. 본문 아래 여백을 클릭하면 마지막 줄로 갑니다.' },
   { keys: 'Backspace', description: '방금 자동으로 렌더된 줄에서 한 번 누르면 지우지 않고 소스로 돌아갑니다.' },
   { keys: '본문에서 바로 입력', description: '마지막 줄이 편집 상태가 되고 입력이 이어집니다.' },
   { keys: 'Enter / ↑ / ↓', description: '줄을 나누거나 위아래 줄로 편집을 옮깁니다.' },
@@ -137,11 +138,25 @@ export function MemoSection() {
     }, 6_000);
   }, [releaseLock]);
 
+  /** Cmd/Ctrl+A 로 들어온 Raw 모드는 캐럿을 끝에 두는 대신 전체를 선택한다. */
+  const pendingRawSelectAllRef = useRef(false);
+
   useEffect(() => {
     if (rawMode && textareaRef.current) {
       requestAnimationFrame(() => {
+        if (pendingRawSelectAllRef.current) {
+          pendingRawSelectAllRef.current = false;
+          const el = textareaRef.current;
+          if (el) {
+            el.focus();
+            el.select();
+            return;
+          }
+        }
         focusTextareaToEnd();
       });
+    } else if (!rawMode) {
+      pendingRawSelectAllRef.current = false;
     }
   }, [rawMode]);
 
@@ -341,6 +356,26 @@ export function MemoSection() {
     window.addEventListener('insertMemoLink', handleInsertMemoLinkEvent);
     return () => window.removeEventListener('insertMemoLink', handleInsertMemoLinkEvent);
   }, [handleInsertMemoLink]);
+
+  /**
+   * Cmd/Ctrl+A — 라인 하나만 선택되던 동작을 문서 전체 선택으로 바꾼다.
+   * 인라인 서피스는 라인마다 별개 textarea 라 한 번에 선택할 수 없으므로,
+   * 원문 그대로를 담은 Raw 모드로 전환한 뒤 전체를 선택한다 (복사 시 소스 무손실).
+   */
+  const handleSelectAll = useCallback(() => {
+    if (rawModeRef.current) {
+      textareaRef.current?.select();
+      return;
+    }
+    if (isLockedByOtherRef.current || lockHolder) return;
+
+    pendingRawSelectAllRef.current = true;
+    rawModeRef.current = true;
+    setRawMode(true);
+    setShowMemoSearch(false);
+    setSearchQuery('');
+    holdLock();
+  }, [holdLock, lockHolder]);
 
   const toggleRawMode = useCallback(() => {
     const next = !rawModeRef.current;
@@ -613,6 +648,7 @@ export function MemoSection() {
                 onSave={handleSaveMemo}
                 onEditingChange={handleEditingChange}
                 onMentionChange={handleMentionChange}
+                onSelectAll={handleSelectAll}
                 mentionActive={showMemoSearch}
                 onMentionKeyDown={handleMentionKeyDown}
                 readOnly={isLockedByOther}

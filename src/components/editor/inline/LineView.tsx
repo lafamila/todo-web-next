@@ -88,8 +88,15 @@ function LineViewImpl({
     el.style.height = `${el.scrollHeight}px`;
   }, [handlers, line.text, mode, textareaRef]);
 
-  const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  /**
+   * 한 번 클릭으로 캐럿이 들어간다.
+   * "빈 줄에서 커서가 안 보인다"의 실제 원인은 더블클릭 전까지 아무것도 포커스되지 않는 것이었다
+   * (캐럿 자체는 정상적으로 깜빡인다).
+   */
+  const activateFromPointer = (e: React.MouseEvent<HTMLDivElement>) => {
     if (readOnly || isEditing) return;
+    // 링크·버튼·코드편집기 클릭은 그쪽 동작이 우선 (체크박스 글리프는 자체적으로 전파를 막는다).
+    if ((e.target as HTMLElement).closest?.('a, button, input, select, .monaco-editor')) return;
     onActivate(line.id, approximateCaret(line.text, e.clientX, e.clientY));
   };
 
@@ -126,7 +133,8 @@ function LineViewImpl({
         flash && 'editor-line-flash',
         fenceCollapsed && 'editor-line-fence-collapsed',
       )}
-      onDoubleClick={handleDoubleClick}
+      onClick={activateFromPointer}
+      onDoubleClick={activateFromPointer}
     >
       {showRendered && renderBlock()}
       {handlers && (

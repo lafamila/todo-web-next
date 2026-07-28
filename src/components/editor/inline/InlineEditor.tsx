@@ -27,6 +27,8 @@ export interface InlineEditorProps {
   onMentionChange?: (state: MentionState | null) => void;
   mentionActive?: boolean;
   onMentionKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean;
+  /** Cmd/Ctrl+A — 문서 전체 선택은 단일 텍스트 서피스(Raw 모드)가 필요하다. */
+  onSelectAll?: () => void;
   readOnly?: boolean;
 }
 
@@ -45,6 +47,7 @@ export function InlineEditor({
   onMentionChange,
   mentionActive,
   onMentionKeyDown,
+  onSelectAll,
   readOnly = false,
 }: InlineEditorProps) {
   const machine = useLineStateMachine({
@@ -55,6 +58,7 @@ export function InlineEditor({
     onMentionChange,
     mentionActive,
     onMentionKeyDown,
+    onSelectAll,
     readOnly,
   });
 
@@ -76,8 +80,14 @@ export function InlineEditor({
     assertClassifierMatchesParseContent(machine.lines);
   }, [machine.lines]);
 
+  /** 본문 아래 빈 여백을 클릭하면 마지막 라인에 캐럿을 놓는다 (일반 에디터와 같은 기대). */
+  const handleSurfaceClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (readOnly || e.target !== e.currentTarget) return;
+    machine.focusLastLine();
+  };
+
   return (
-    <div className="flex flex-col">
+    <div className="flex min-h-full flex-col" onClick={handleSurfaceClick}>
       {groups.map((group) => {
         if (group.type === 'code') {
           return (

@@ -39,6 +39,8 @@ export interface UseLineStateMachineOptions {
   /** @ 검색 드롭다운이 떠 있으면 방향키/Enter/Escape 를 드롭다운에 먼저 넘긴다. */
   mentionActive?: boolean;
   onMentionKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean;
+  /** Cmd/Ctrl+A — 라인 하나가 아니라 문서 전체를 선택해야 한다 (호출부가 Raw 모드로 전환). */
+  onSelectAll?: () => void;
   readOnly?: boolean;
 }
 
@@ -544,6 +546,17 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
       }
 
       if (isCompositionKey(e)) return;
+
+      // Cmd/Ctrl+A: 브라우저 기본값은 활성 라인 textarea 하나만 고른다.
+      // 문서 전체 선택은 단일 텍스트 서피스가 필요하므로 호출부(Raw 모드)에 넘긴다.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'a' || e.key === 'A')) {
+        const selectAll = optionsRef.current.onSelectAll;
+        if (selectAll) {
+          e.preventDefault();
+          selectAll();
+          return;
+        }
+      }
 
       const id = activeLineIdRef.current;
       const index = findIndex(id);
