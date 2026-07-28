@@ -809,7 +809,7 @@ export function MemoSection() {
                 onMouseUp={handleRawMouseUp}
                 onCopy={handleRawCopy}
                 onCut={handleRawCut}
-                className="w-full h-full p-0 resize-none focus:outline-none font-mono text-sm"
+                className="memo-raw-input w-full h-full p-0 resize-none focus:outline-none"
                 placeholder=""
               />
             </div>

@@ -68,6 +68,19 @@ textarea.editor-line-input {
   outline: none;
 }
 
+/*
+ * Raw 모드(Cmd/Ctrl+E · 선택 승격) textarea.
+ * 인라인 서피스와 같은 타이포를 써야 선택 때문에 모드가 바뀔 때 글자 크기·글꼴이 튀지 않고,
+ * 두 서피스의 내용 높이가 비슷해져 스크롤 비율 이어받기도 정확해진다.
+ * `.detail textarea`(todo/global.css)와 특정도가 같으므로 나중에 로드되는 이 파일이 이긴다.
+ * 색은 `.detail textarea` 의 흰색을 그대로 쓴다 (Raw 컨테이너에는 text-white 가 없다).
+ */
+textarea.memo-raw-input {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
 /* 코드펜스 줄만 코드 톤을 유지한다 (본문은 Monaco 가 소유한다). */
 textarea.editor-line-input-fence {
   font-family: ui-monospace, sfmono-regular, menlo, monospace;
