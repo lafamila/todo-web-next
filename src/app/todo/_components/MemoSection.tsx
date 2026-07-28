@@ -25,6 +25,32 @@ export const isTypingContext = (el: Element | null) => {
   return !!el.closest?.('.monaco-editor');
 };
 
+/** 스크롤 가능한 요소의 현재 위치를 0~1 비율로 (내용 높이가 다른 서피스 사이에서 위치를 이어받기 위함). */
+const scrollFractionOf = (el: HTMLElement | null): number | null => {
+  if (!el) return null;
+  const scrollable = el.scrollHeight - el.clientHeight;
+  return scrollable > 0 ? el.scrollTop / scrollable : 0;
+};
+
+const applyScrollFraction = (el: HTMLElement, fraction: number) => {
+  const scrollable = el.scrollHeight - el.clientHeight;
+  if (scrollable > 0) el.scrollTop = fraction * scrollable;
+};
+
+/** 오프셋이 있는 줄이 화면 밖이면 최소한으로 끌어온다 (선택 위치를 눈에서 놓치지 않게). */
+const ensureOffsetVisible = (el: HTMLTextAreaElement, offset: number) => {
+  const lineHeight = parseFloat(window.getComputedStyle(el).lineHeight) || 20;
+  const top = (el.value.slice(0, offset).split('\n').length - 1) * lineHeight;
+
+  if (top < el.scrollTop) {
+    el.scrollTop = Math.max(0, top - lineHeight);
+    return;
+  }
+  if (top + lineHeight > el.scrollTop + el.clientHeight) {
+    el.scrollTop = top - el.clientHeight + lineHeight * 2;
+  }
+};
+
 const editorFeatureHelp = [
   {
     syntax: '-- 할 일',
@@ -159,6 +185,10 @@ export function MemoSection() {
   const rawModeReasonRef = useRef<'manual' | 'selection'>('manual');
   /** 인라인으로 복귀할 때 캐럿을 놓을 문서 오프셋. */
   const pendingInlineCaretRef = useRef<number | null>(null);
+  /** 인라인 화면의 스크롤 컨테이너 (Raw 모드는 textarea 자신이 스크롤한다 — 스크롤러가 서로 다르다). */
+  const inlineScrollRef = useRef<HTMLDivElement>(null);
+  /** 모드 전환 시 이어받을 스크롤 위치(0~1). 없으면 새 서피스가 맨 위에서 시작해 화면이 튄다. */
+  const pendingScrollFractionRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (rawMode && textareaRef.current) {
@@ -176,6 +206,10 @@ export function MemoSection() {
 
         if (pending === 'all') {
           el.select();
+          // 전체 선택은 보던 위치를 그대로 유지한다 (문서 끝으로 튀지 않게).
+          const fraction = pendingScrollFractionRef.current;
+          pendingScrollFractionRef.current = null;
+          if (fraction != null) applyScrollFraction(el, fraction);
           return;
         }
 
@@ -185,6 +219,12 @@ export function MemoSection() {
           Math.max(pending.anchor, pending.focus),
           pending.focus >= pending.anchor ? 'forward' : 'backward',
         );
+
+        // 인라인에서 보던 위치를 이어받은 뒤, 선택한 곳이 화면 밖이면 그쪽으로 최소 이동한다.
+        const fraction = pendingScrollFractionRef.current;
+        pendingScrollFractionRef.current = null;
+        if (fraction != null) applyScrollFraction(el, fraction);
+        ensureOffsetVisible(el, pending.focus);
       });
     } else if (!rawMode) {
       pendingRawSelectionRef.current = null;
@@ -195,9 +235,14 @@ export function MemoSection() {
   useEffect(() => {
     if (rawMode) return;
     const offset = pendingInlineCaretRef.current;
+    const fraction = pendingScrollFractionRef.current;
     pendingInlineCaretRef.current = null;
+    pendingScrollFractionRef.current = null;
     if (offset == null) return;
     requestAnimationFrame(() => {
+      // 보던 위치를 먼저 이어받아야 focus 의 scroll-into-view 가 조금만 보정한다.
+      const scroller = inlineScrollRef.current;
+      if (scroller && fraction != null) applyScrollFraction(scroller, fraction);
       inlineEditorRef.current?.focusOffset(offset);
     });
   }, [rawMode]);
@@ -408,6 +453,7 @@ export function MemoSection() {
     (selection: 'all' | { anchor: number; focus: number }) => {
       if (isLockedByOtherRef.current || lockHolder) return;
 
+      pendingScrollFractionRef.current = scrollFractionOf(inlineScrollRef.current);
       pendingRawSelectionRef.current = selection;
       rawModeReasonRef.current = 'selection';
       rawModeRef.current = true;
@@ -598,6 +644,7 @@ export function MemoSection() {
     (caretOffset: number | null) => {
       if (!rawModeRef.current || rawModeReasonRef.current !== 'selection') return;
 
+      pendingScrollFractionRef.current = scrollFractionOf(textareaRef.current);
       pendingInlineCaretRef.current = caretOffset;
       rawModeReasonRef.current = 'manual';
       rawModeRef.current = false;
@@ -767,7 +814,10 @@ export function MemoSection() {
               />
             </div>
           ) : (
-            <div className="w-full min-h-0 h-full overflow-y-auto p-0 prose prose-sm max-w-none text-white">
+            <div
+              ref={inlineScrollRef}
+              className="w-full min-h-0 h-full overflow-y-auto p-0 prose prose-sm max-w-none text-white"
+            >
               <InlineEditor
                 ref={inlineEditorRef}
                 value={content}
