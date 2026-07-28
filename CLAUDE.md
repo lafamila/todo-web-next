@@ -133,6 +133,11 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 - Docker local 개발은 workspace root `../.scripts/todo/compose.yml` 로 API와
   함께 실행한다. Web은 host `127.0.0.1:3030` → container `0.0.0.0:3034`,
   browser-facing API/socket 기본값은 `http://localhost:20022` 이다.
+- **dev 컨테이너의 잘린 읽기 증상**: bind mount + 폴링 감시라 저장 중인 파일을 읽어 컴파일하는 일이 있다.
+  `Unterminated JSX contents`, `Expected '</', got '<eof>'`, `'const' declarations must be initialized`
+  처럼 **파일이 갑자기 끝난 것처럼 보이는** 에러이고, 지목된 줄은 멀쩡하다. 코드 문제가 아니므로
+  `npx tsc --noEmit` 으로 파일이 유효한지 먼저 확인하고, 해당 파일을 `touch` 해 재컴파일을 유도한다
+  (에러가 캐시돼 새로고침만으로는 안 풀린다).
 - production 검증 기준은 `npm run build` 이다.
 - 독립 배포 시 Docker build 는 `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SOCKET_URL`, `NEXT_PUBLIC_SOCKET_PATH`, `NEXT_PUBLIC_LIVEKIT_URL` 을 build arg 로 주입해 생성한다.
 - production app compose는 두지 않는다. workspace root
