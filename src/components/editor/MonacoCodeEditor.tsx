@@ -29,6 +29,8 @@ export interface MonacoCodeEditorProps {
   /** 새로 만들어진 코드블록이면 마운트 직후 편집기로 포커스를 가져온다. */
   autoFocus?: boolean;
   onAutoFocused?: () => void;
+  /** 코드편집기 포커스도 "편집 중"이다 — 호출부가 락 유지/해제에 쓴다. */
+  onFocusChange?: (focused: boolean) => void;
 }
 
 export function MonacoCodeEditor({
@@ -41,6 +43,7 @@ export function MonacoCodeEditor({
   readOnly = false,
   autoFocus = false,
   onAutoFocused,
+  onFocusChange,
 }: MonacoCodeEditorProps) {
   // Monaco 에 없는 id 를 넘기면 하이라이팅이 조용히 꺼지므로 항상 canonical id 로 정규화한다.
   const resolvedLanguage = resolveCodeLanguage(language);
@@ -71,6 +74,8 @@ export function MonacoCodeEditor({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleEditorDidMount = (editor: any, monaco: any) => {
     setEditorInstance(editor);
+    editor.onDidFocusEditorWidget(() => onFocusChange?.(true));
+    editor.onDidBlurEditorWidget(() => onFocusChange?.(false));
     // Cmd+S (Mac) or Ctrl+S (Windows/Linux) to save
     if (onSave && monaco) {
       editor.addCommand(

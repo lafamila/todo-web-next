@@ -107,6 +107,8 @@ export function InlineEditor({
                 readOnly={readOnly}
                 autoFocus={group.open.id === machine.pendingCodeFocusId}
                 onAutoFocused={machine.consumeCodeFocus}
+                // 코드편집기에 커서가 있는 동안도 "편집 중" — 락이 6초 뒤 풀리면 안 된다.
+                onFocusChange={onEditingChange}
               />
               {group.close && (
                 <LineView

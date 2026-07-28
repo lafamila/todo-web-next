@@ -18,7 +18,11 @@ export const isTypingContext = (el: Element | null) => {
   const tag = (el as HTMLElement).tagName?.toLowerCase();
   if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
   const htmlEl = el as HTMLElement;
-  return !!htmlEl.isContentEditable;
+  if (htmlEl.isContentEditable) return true;
+  // Monaco 는 EditContext API 를 쓰면 포커스 대상이 textarea 도 contenteditable 도 아닌
+  // `div.native-edit-context` 다. 이걸 놓치면 전역 타이핑 핸들러가 코드편집기 입력을 가로채
+  // 마지막 라인(닫는 펜스)으로 글자를 보낸다.
+  return !!el.closest?.('.monaco-editor');
 };
 
 const editorFeatureHelp = [
