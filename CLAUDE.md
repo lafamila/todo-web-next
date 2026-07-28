@@ -85,6 +85,11 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   남아 있는 동안에는 네이티브 undo 를 우선한다.
 - **Raw 모드 (Cmd/Ctrl+E)**: 문서 전체를 하나의 textarea 로 여는 escape hatch. 멀티라인 선택/복사와
   `@메모명` 검색이 필요할 때 쓴다.
+- **줄을 넘는 선택은 Raw 모드가 이어받는다**: 라인마다 textarea 가 따로라 DOM 선택이 줄 경계를 넘지 못한다.
+  `Cmd/Ctrl+A`(`onSelectAll`)와 `Shift+↑/↓`(`onSelectRange`)는 기본 동작을 막고 Raw 모드로 전환하면서
+  선택을 그대로 복원한다 — 전체 선택이거나, 네이티브와 같은 열 유지 규칙으로 계산한 anchor→focus 오프셋이다.
+  `selectionDirection` 까지 넘겨야 이어지는 Shift+방향키가 같은 쪽으로 확장된다. 렌더 화면을 DOM 으로
+  선택하는 방식은 복사 시 `-- `·펜스 같은 소스가 사라져 채택하지 않았다.
 - **불변 계약**: 저장은 Ctrl/⌘+S 만 (자동 저장 없음), 체크박스 토글만 즉시 서버 반영, Socket.IO 단일 작성자 락,
   `PUT /api/memos/{id}` 계약 — 전부 그대로다. 에디터는 API/소켓을 바꾸지 않는다.
 - **`parseContent` 와의 관계**: `lib/utils.ts` 의 `parseContent` 는 `ArticleDetail` 이 계속 사용한다.
