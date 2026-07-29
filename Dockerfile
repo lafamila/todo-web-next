@@ -16,6 +16,9 @@ ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
     NEXT_TELEMETRY_DISABLED=1
 
 COPY . .
+# public/ 은 현재 비어 있어 git 이 추적하지 않는다 — 클론에 디렉토리가 없어도
+# 아래 runner 단계의 COPY 가 성공하도록 항상 존재를 보장한다.
+RUN mkdir -p public
 RUN test -n "${NEXT_PUBLIC_API_URL}" \
     && test -n "${NEXT_PUBLIC_SOCKET_URL}" \
     && test -n "${NEXT_PUBLIC_SOCKET_PATH}" \
