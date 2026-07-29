@@ -6,6 +6,7 @@ import {
   MarkdownBlock,
   StaticCodeBlock,
 } from '@/components/editor/blocks/ContentBlocks';
+import { indentStyle } from '@/lib/lineMarks';
 import { parseContent } from '@/lib/utils';
 import type { ArticleInterface, ContentBlockInterface } from '@/lib/types';
 
@@ -31,10 +32,13 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
     const blocks = parseContent(article.content || '') as ContentBlockInterface[];
 
     return blocks.map((block, index) => {
+      // 들여쓰기(스페이스 2칸 = 1단위)는 에디터와 같은 규칙으로 렌더에서만 되살린다.
+      const indent = indentStyle(block.metadata?.indent ?? 0);
+
       switch (block.type) {
         case 'checkbox':
           return (
-            <div key={index} className="my-1">
+            <div key={index} className="my-1" style={indent}>
               <CheckboxBlock checked={block.metadata?.checked || false} content={block.content} />
             </div>
           );
@@ -46,9 +50,9 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
 
         case 'memo-link':
           return (
-            <MarkdownBlock key={index} className="my-2">
-              {block.content}
-            </MarkdownBlock>
+            <div key={index} style={indent}>
+              <MarkdownBlock className="my-2">{block.content}</MarkdownBlock>
+            </div>
           );
 
         case 'text':
@@ -57,9 +61,9 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
             return <br key={index} />;
           }
           return (
-            <MarkdownBlock key={index} className="article-markdown">
-              {block.content}
-            </MarkdownBlock>
+            <div key={index} style={indent}>
+              <MarkdownBlock className="article-markdown">{block.content}</MarkdownBlock>
+            </div>
           );
       }
     });

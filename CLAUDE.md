@@ -50,6 +50,20 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 
 - **데이터 모델**: `EditorLine { id, text }`. 로드 = `content.split('\n')`, 저장 = `join('\n')`.
   **바이트 동일 왕복이 불변식**이다 (개행 손실 금지). `id` 는 세션-로컬 값으로 React key 안정성만 담당한다.
+- **줄 문법과 들여쓰기** (`src/lib/lineMarks.ts` 가 단일 소스 — `parseContent` 와 인라인 에디터가 공유한다):
+  체크박스는 `-- 할 일`(해제) · `v-- 완료한 일`(체크)다. **구 표기 `--v ` 는 지원하지 않는다**
+  (사용자 결정 2026-07-29 — 도입 직후라 호환 경로를 두지 않고 남은 줄은 직접 고침).
+  **스페이스 2칸 = 들여쓰기 한 단위**이며 체크박스·`1. `/`1) `·`- `/`* `/`+ ` 뒤따르는 줄에만 적용된다
+  (최대 8단계, 홀수 칸은 내림). 들여쓰기는 렌더 시 앞 공백을 **걷어내고** padding 으로 되살리는데,
+  에디터가 한 줄씩 따로 마크다운에 넘기므로 4칸 이상 남아 있으면 목록이 아니라 코드 블록으로 렌더되기
+  때문이다. 반대로 목록 표기가 없는 줄은 공백을 그대로 둔다(의도적으로 들여쓴 예시 문단 보호).
+  padding 은 **렌더된 블록에만** 준다 — 편집 중인 줄은 원문 공백이 이미 보인다. 토글은 들여쓰기를 보존한다.
+- **`[텍스트]` 강조** (`src/lib/bracketBold.ts` 가 단일 소스): 대괄호를 화면에 남긴 채 굵게 표시한다.
+  두 조건이 있다 — 뒤에 `(` 가 오면 강조하지 않고(`[텍스트](URL)` 링크·`[@메모](?memoId=…)` 보호),
+  여는 `[` 는 줄 시작이나 공백 뒤여야 한다(`arr[0]`·`acc[workerId]` 처럼 펜스 없이 붙여넣은 옛 메모의
+  코드 대괄호를 강조하지 않기 위함 — 실측 코퍼스에서 이 조건이 566건의 오탐을 걸러냈다).
+  본문은 remark 플러그인(`remarkBracketBold`)이, 마크다운을 통과하지 않는 체크박스 내용은
+  같은 규칙을 쓰는 `InlineMarks` 가 처리한다. 코드(`code`/`inlineCode`) 노드는 건드리지 않는다.
 - **라인 상태**: `rendered` → (더블클릭) → `editing` → (완결 패턴 + 2초 무변경 + 조합 중 아님) →
   `focused-rendered` → (Backspace 1회는 삭제 없이 소스 복귀 / 문자 입력·조합 시작도 소스 복귀).
   blur·Escape·다른 라인 활성화는 즉시 `rendered`. `--` 나 `-- ` 같은 미완결 패턴은 절대 자동 렌더되지 않는다.
@@ -107,7 +121,10 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   `PUT /api/memos/{id}` 계약 — 전부 그대로다. 에디터는 API/소켓을 바꾸지 않는다.
 - **`parseContent` 와의 관계**: `lib/utils.ts` 의 `parseContent` 는 `ArticleDetail` 이 계속 사용한다.
   신규 `classifyLine`/`buildLineGroups` 가 같은 판정을 유지하는지 개발 모드에서
-  `assertClassifierMatchesParseContent` 가 감시한다. 문법을 바꾸면 **두 경로를 함께** 고쳐야 한다.
+  `assertClassifierMatchesParseContent` 가 감시한다(블록 종류·내용·checked·indent 를 대조).
+  문법을 바꾸면 **두 경로를 함께** 고쳐야 한다 — 판정 자체를 `lib/codeFence.ts`·`lib/lineMarks.ts`·
+  `lib/bracketBold.ts` 에 두고 양쪽이 import 하는 이유다. 문법 변경 후에는 실제 메모 코퍼스로
+  회귀를 확인한다(임시 하네스 페이지에서 전 메모를 두 경로에 통과시켜 경고 0 · 문자 손실 0 을 본다).
 - **블록 스타일**: 렌더된 체크박스/코드/마크다운 블록은 `src/components/editor/blocks/ContentBlocks.tsx`
   하나에서 나온다. 에디터와 `ArticleDetail` 이 같은 컴포넌트를 쓰므로 한쪽만 손대 시각이 갈라지지 않게 한다.
 - **시각 토큰**: `src/components/editor/inline/editor-tokens.css` 의 `.editor-line*` 4종만 쓴다

@@ -1,9 +1,11 @@
 'use client';
 
+import { Fragment } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
+import { remarkBracketBold, splitBracketBold } from '@/lib/bracketBold';
 import { cn } from '@/lib/utils';
 
 /**
@@ -12,7 +14,25 @@ import { cn } from '@/lib/utils';
  * 편집 화면과 읽기 화면의 시각이 갈라지지 않는다 (워크스페이스 원칙 9).
  */
 
-export const CONTENT_MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks];
+export const CONTENT_MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks, remarkBracketBold];
+
+/**
+ * `[텍스트]` 강조만 적용하는 경량 인라인 렌더러.
+ * 마크다운을 통과하지 않는 표면(체크박스 내용)이 본문과 같은 규칙을 쓰게 한다.
+ */
+export function InlineMarks({ text }: { text: string }) {
+  return (
+    <>
+      {splitBracketBold(text).map((part, index) =>
+        part.bold ? (
+          <strong key={index}>{part.text}</strong>
+        ) : (
+          <Fragment key={index}>{part.text}</Fragment>
+        ),
+      )}
+    </>
+  );
+}
 
 export const contentMarkdownComponents: Components = {
   a: ({ href, children, ...props }) => {
@@ -98,7 +118,9 @@ export function CheckboxBlock({ checked, content, onToggle }: CheckboxBlockProps
           </svg>
         )}
       </button>
-      <span className={cn('flex-1', checked && 'text-gray-500 line-through')}>{content}</span>
+      <span className={cn('flex-1', checked && 'text-gray-500 line-through')}>
+        <InlineMarks text={content} />
+      </span>
     </div>
   );
 }

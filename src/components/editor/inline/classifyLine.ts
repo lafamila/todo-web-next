@@ -1,4 +1,5 @@
 import { codeFenceLanguage, isCodeFenceLine } from '@/lib/codeFence';
+import { matchCheckbox, splitIndent } from '@/lib/lineMarks';
 import { parseContent } from '@/lib/utils';
 import type { ContentBlockInterface } from '@/lib/types';
 
@@ -25,12 +26,14 @@ export interface LineClassification {
   /** 렌더용 표시 내용. 원문은 항상 `EditorLine.text` 가 보관한다. */
   content: string;
   checked: boolean;
+  /** 들여쓰기 단위 수 (스페이스 2칸 = 1). 렌더 padding 으로만 쓰인다. */
+  indent: number;
   memoId?: string;
   memoTitle?: string;
 }
 
-export const CHECKBOX_CHECKED_PREFIX = '--v ';
-export const CHECKBOX_UNCHECKED_PREFIX = '-- ';
+// 체크박스/들여쓰기 문법은 `lib/lineMarks.ts` 가 단일 소스다 (parseContent 와 공유).
+export { CHECKBOX_CHECKED_PREFIX, CHECKBOX_UNCHECKED_PREFIX } from '@/lib/lineMarks';
 
 const MEMO_LINK_PATTERN = /\[@([^\]]+)\]\(([^)]+)\)/;
 
@@ -45,24 +48,18 @@ export const fenceLanguage = codeFenceLanguage;
  * 코드펜스의 open/close 구분은 문서 문맥이 필요하므로 `buildLineGroups` 2차 패스가 담당한다.
  */
 export function classifyLine(text: string): LineClassification {
-  if (text.startsWith(CHECKBOX_CHECKED_PREFIX)) {
+  const checkbox = matchCheckbox(text);
+  if (checkbox) {
     return {
-      kind: 'checkbox-checked',
-      content: text.slice(CHECKBOX_CHECKED_PREFIX.length),
-      checked: true,
-    };
-  }
-
-  if (text.startsWith(CHECKBOX_UNCHECKED_PREFIX)) {
-    return {
-      kind: 'checkbox-unchecked',
-      content: text.slice(CHECKBOX_UNCHECKED_PREFIX.length),
-      checked: false,
+      kind: checkbox.checked ? 'checkbox-checked' : 'checkbox-unchecked',
+      content: checkbox.content,
+      checked: checkbox.checked,
+      indent: checkbox.indent,
     };
   }
 
   if (isCodeFence(text)) {
-    return { kind: 'code-fence', content: text, checked: false };
+    return { kind: 'code-fence', content: text, checked: false, indent: 0 };
   }
 
   if (text.includes('[@') && text.includes('](')) {
@@ -70,15 +67,17 @@ export function classifyLine(text: string): LineClassification {
 
     if (match) {
       const [, memoTitle, memoId] = match;
-      return { kind: 'memo-link', content: text, checked: false, memoId, memoTitle };
+      const { level, body } = splitIndent(text);
+      return { kind: 'memo-link', content: body, checked: false, indent: level, memoId, memoTitle };
     }
   }
 
   if (text.trim() === '') {
-    return { kind: 'blank', content: text, checked: false };
+    return { kind: 'blank', content: text, checked: false, indent: 0 };
   }
 
-  return { kind: 'text', content: text, checked: false };
+  const { level, body } = splitIndent(text);
+  return { kind: 'text', content: body, checked: false, indent: level };
 }
 
 /** 자동 렌더(2초 안정화)의 대상이 되는 종류인가. text/blank 는 소스와 렌더 차이가 없어 제외한다. */
@@ -187,16 +186,24 @@ function groupsToBlocks(groups: LineGroup[]): ContentBlockInterface[] {
         return {
           type: 'checkbox',
           content: group.cls.content,
-          metadata: { checked: group.cls.checked },
+          metadata: { checked: group.cls.checked, indent: group.cls.indent },
         };
       case 'memo-link':
         return {
           type: 'memo-link',
-          content: group.line.text,
-          metadata: { memoId: group.cls.memoId, memoTitle: group.cls.memoTitle },
+          content: group.cls.content,
+          metadata: {
+            memoId: group.cls.memoId,
+            memoTitle: group.cls.memoTitle,
+            indent: group.cls.indent,
+          },
         };
       default:
-        return { type: 'text', content: group.line.text };
+        return {
+          type: 'text',
+          content: group.cls.content,
+          metadata: { indent: group.cls.indent },
+        };
     }
   });
 }
@@ -224,7 +231,8 @@ export function assertClassifierMatchesParseContent(lines: EditorLine[]): void {
     if (
       a.type !== b.type ||
       a.content !== b.content ||
-      Boolean(a.metadata?.checked) !== Boolean(b.metadata?.checked)
+      Boolean(a.metadata?.checked) !== Boolean(b.metadata?.checked) ||
+      (a.metadata?.indent ?? 0) !== (b.metadata?.indent ?? 0)
     ) {
       console.warn('[inline-editor] classifier/parseContent 판정 불일치', {
         index: i,

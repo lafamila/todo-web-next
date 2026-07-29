@@ -56,7 +56,7 @@ const editorFeatureHelp = [
     syntax: '-- 할 일',
     description: '체크되지 않은 체크박스를 만듭니다. 입력을 멈추고 2초가 지나면 그 줄만 체크박스로 바뀝니다.',
   },
-  { syntax: '--v 완료한 일', description: '체크된 체크박스를 만듭니다.' },
+  { syntax: 'v-- 완료한 일', description: '체크된 체크박스를 만듭니다.' },
   {
     syntax: '``` / java```',
     description:
@@ -65,6 +65,12 @@ const editorFeatureHelp = [
   { syntax: '@메모명', description: '편집 중 다른 메모를 검색해서 링크로 삽입합니다.' },
   { syntax: '1. 항목', description: '번호 목록을 만듭니다.' },
   { syntax: '- 항목', description: '글머리 목록을 만듭니다.' },
+  {
+    syntax: '  -- 할 일\n  1. 항목\n  - 항목',
+    description:
+      '스페이스 2칸이 들여쓰기 한 단위입니다. 체크박스·번호 목록·글머리 목록 앞에 쓰면 그만큼 들여쓴 채로 렌더됩니다(최대 8단계).',
+  },
+  { syntax: '[텍스트]', description: '대괄호로 감싼 부분을 굵게 표시합니다. 줄 시작이나 공백 뒤에 있어야 하고, 뒤에 (가 오면 링크로 봅니다.' },
   { syntax: '[텍스트](URL)', description: '링크를 만듭니다.' },
 ];
 

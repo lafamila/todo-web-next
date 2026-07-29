@@ -40,6 +40,8 @@ export interface ContentBlockInterface {
     checked?: boolean;
     memoId?: string;
     memoTitle?: string;
+    /** 들여쓰기 단위 수 (스페이스 2칸 = 1). `lib/lineMarks.ts` 참조. */
+    indent?: number;
   };
 }
 

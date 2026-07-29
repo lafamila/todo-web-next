@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { codeFenceLanguage, isCodeFenceLine } from "./codeFence";
+import { matchCheckbox, splitIndent, toggleCheckboxLine } from "./lineMarks";
 import type { ContentBlockInterface } from "./types";
 
 export function cn(...classes: ClassValue[]): string {
@@ -45,20 +46,12 @@ export function parseContent(content: string): ContentBlockInterface[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    if (line.startsWith("--v ")) {
+    const checkbox = matchCheckbox(line);
+    if (checkbox) {
       blocks.push({
         type: "checkbox",
-        content: line.replace("--v ", ""),
-        metadata: { checked: true },
-      });
-      continue;
-    }
-
-    if (line.startsWith("-- ")) {
-      blocks.push({
-        type: "checkbox",
-        content: line.replace("-- ", ""),
-        metadata: { checked: false },
+        content: checkbox.content,
+        metadata: { checked: checkbox.checked, indent: checkbox.indent },
       });
       continue;
     }
@@ -86,16 +79,18 @@ export function parseContent(content: string): ContentBlockInterface[] {
 
       if (match) {
         const [, memoTitle, memoId] = match;
+        const { level, body } = splitIndent(line);
         blocks.push({
           type: "memo-link",
-          content: line,
-          metadata: { memoId, memoTitle },
+          content: body,
+          metadata: { memoId, memoTitle, indent: level },
         });
         continue;
       }
     }
 
-    blocks.push({ type: "text", content: line });
+    const { level, body } = splitIndent(line);
+    blocks.push({ type: "text", content: body, metadata: { indent: level } });
   }
 
   return blocks;
@@ -108,13 +103,7 @@ export function toggleCheckbox(content: string, lineIndex: number): string {
     return content;
   }
 
-  const line = lines[lineIndex];
-
-  if (line.startsWith("--v ")) {
-    lines[lineIndex] = line.replace("--v ", "-- ");
-  } else if (line.startsWith("-- ")) {
-    lines[lineIndex] = line.replace("-- ", "--v ");
-  }
+  lines[lineIndex] = toggleCheckboxLine(lines[lineIndex]);
 
   return lines.join("\n");
 }
