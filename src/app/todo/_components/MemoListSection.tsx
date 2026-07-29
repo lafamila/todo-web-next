@@ -3,12 +3,14 @@ import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { useApp } from "@/contexts/AppContext";
 import { useAuth } from '@/contexts/AuthContext';
+import { useSync } from '@/contexts/SyncContext';
 import { SORT_OPTIONS } from "@/lib/constants";
 import { MemoInterface, ProjectRole, SortOption, UserInterface } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import * as api from "@/lib/api";
 import { isTypingContext, MemoSection } from "./MemoSection";
+import { SyncStatusIndicator } from './SyncStatusIndicator';
 
 const DEFAULT_PANE_WIDTH = 400;
 // Tasks (n) 헤더 + 멤버초대 버튼 라인이 줄바꿈되지 않는 최소폭
@@ -30,6 +32,7 @@ export default function MemoListSection() {
     removeMember,
   } = useApp();
   const { user } = useAuth();
+  const { findIssue } = useSync();
   const isAdmin = user?.isAdmin ?? false;
 
   const [newMemoTitle, setNewMemoTitle] = useState('');
@@ -339,8 +342,11 @@ export default function MemoListSection() {
         style={{ gridTemplateColumns: `${tasksPaneWidth}px 1fr` }}
       >
         <div className="title-container">
-          <span>{selectedProject.name}</span>
+          <span className={findIssue('projects', selectedProject.id) ? 'sync-issue-dim' : ''}>
+            {selectedProject.name}
+          </span>
           <div id="screen-share-buttons" />
+          <SyncStatusIndicator />
         </div>
         <div className="main">
           <div style={{ paddingTop: "40px" }} className="flex items-start justify-between">
@@ -428,7 +434,11 @@ export default function MemoListSection() {
                     } flex flex-row justify-between w-full`
                   }
                 >
-                  <h3 className="min-w-0 flex-1 truncate">
+                  <h3
+                    className={`min-w-0 flex-1 truncate ${
+                      findIssue('memos', memo.id) ? 'sync-issue-dim' : ''
+                    }`}
+                  >
                     {selectedMemoIds.includes(memo.id) && (
                       <span className="inline-block w-4 h-4 mr-2 bg-red-500 rounded-sm text-white text-xs text-center leading-4">
                         ✓

@@ -1,6 +1,7 @@
-import type { ProjectInterface } from '@/lib/types';
+import type { ProjectInterface, SyncIssueInterface } from '@/lib/types';
 import { useApp } from "@/contexts/AppContext";
 import { useAuth } from '@/contexts/AuthContext';
+import { useSync } from '@/contexts/SyncContext';
 import { Modal } from '@/components/ui/Modal';
 import { useState, useEffect } from "react";
 import { Input } from '@/components/ui/Input';
@@ -9,6 +10,8 @@ import { Button } from '@/components/ui/Button';
 import Add from '@/assets/add-icon.svg';
 import Icon from '@/components/ui/Icon';
 import { AllIcons } from '@/lib/constants';
+import * as api from '@/lib/api';
+import { formatDate } from '@/lib/utils';
 
 export default function ProjectSection() {
   const {
@@ -16,13 +19,24 @@ export default function ProjectSection() {
     selectProject,
     createProject,
     verifyProjectPassword,
+    refreshProjects,
   } = useApp();
   const { user, logout } = useAuth();
+  const {
+    findIssue,
+    canMerge,
+    refresh: refreshSync,
+  } = useSync();
   const isAdmin = user?.isAdmin ?? false;
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [pendingProject, setPendingProject] = useState<ProjectInterface | null>(null);
+  const [duplicateIssue, setDuplicateIssue] = useState<SyncIssueInterface | null>(null);
+  const [duplicateWinnerId, setDuplicateWinnerId] = useState('');
+  const [duplicateCounts, setDuplicateCounts] = useState<Record<string, number>>({});
+  const [isMerging, setIsMerging] = useState(false);
+  const [mergeError, setMergeError] = useState('');
 
   // Create Project Modal State
   const [projectName, setProjectName] = useState('');
@@ -69,6 +83,26 @@ export default function ProjectSection() {
   }, []);
 
   const handleProjectClick = async (project: ProjectInterface) => {
+    const issue = findIssue('projects', project.id);
+    if (issue?.kind === 'duplicate_project') {
+      setDuplicateIssue(issue);
+      setDuplicateWinnerId(project.id);
+      setMergeError('');
+      const ids = [issue.refId, issue.peerRefId].filter(
+        (value): value is string => Boolean(value),
+      );
+      const counts = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            return [id, (await api.getProjectMemos(id)).length] as const;
+          } catch {
+            return [id, 0] as const;
+          }
+        }),
+      );
+      setDuplicateCounts(Object.fromEntries(counts));
+      return;
+    }
     if (project.isSecret) {
       setPendingProject(project);
       setShowPasswordModal(true);
@@ -76,6 +110,39 @@ export default function ProjectSection() {
       setPasswordError('');
     } else {
       await selectProject(project);
+    }
+  };
+
+  const duplicateProjects = duplicateIssue
+    ? [duplicateIssue.refId, duplicateIssue.peerRefId]
+        .map((id) => projects.find((project) => project.id === id))
+        .filter((project): project is ProjectInterface => Boolean(project))
+    : [];
+
+  const handleMergeProject = async () => {
+    if (!duplicateIssue || duplicateProjects.length !== 2) return;
+    if (!canMerge) {
+      setMergeError('오프라인 상태에서는 병합할 수 없습니다. 온라인에서 다시 시도하세요.');
+      return;
+    }
+    const loser = duplicateProjects.find((project) => project.id !== duplicateWinnerId);
+    const winner = duplicateProjects.find((project) => project.id === duplicateWinnerId);
+    if (!loser || !winner) return;
+
+    setIsMerging(true);
+    setMergeError('');
+    try {
+      const result = await api.mergeProject(loser.id, winner.id);
+      const appliedWinner = result.pullRequested
+        ? await api.waitForProjectMergeApplied(loser.id, winner.id)
+        : winner;
+      await Promise.all([refreshProjects(), refreshSync()]);
+      await selectProject(appliedWinner);
+      setDuplicateIssue(null);
+    } catch (error) {
+      setMergeError(error instanceof Error ? error.message : '프로젝트 병합에 실패했습니다.');
+    } finally {
+      setIsMerging(false);
     }
   };
 
@@ -142,7 +209,9 @@ export default function ProjectSection() {
               <Icon icon={project.icon} />
             </div>
             <div className="project-name">
-              <span>{project.name}</span>
+              <span className={findIssue('projects', project.id) ? 'sync-issue-dim' : ''}>
+                {project.name}
+              </span>
             </div>
           </div>
         ))}
@@ -222,6 +291,62 @@ export default function ProjectSection() {
               취소
             </Button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(duplicateIssue)}
+        onClose={() => !isMerging && setDuplicateIssue(null)}
+        title="중복 프로젝트 정리"
+        size="lg"
+      >
+        <p className="text-sm text-gray-600 mb-4">
+          생존자를 선택하면 다른 프로젝트의 메모와 멤버가 선택한 프로젝트로 이동합니다.
+        </p>
+        <div className="duplicate-project-grid">
+          {duplicateProjects.map((project) => (
+            <label
+              key={project.id}
+              className={`duplicate-project-card ${
+                duplicateWinnerId === project.id ? 'duplicate-project-selected' : ''
+              }`}
+            >
+              <input
+                type="radio"
+                name={`project-survivor-${duplicateIssue?.id}`}
+                checked={duplicateWinnerId === project.id}
+                onChange={() => setDuplicateWinnerId(project.id)}
+              />
+              <strong>{project.name}</strong>
+              <span>메모 {duplicateCounts[project.id] ?? 0}개</span>
+              <span>생성 {formatDate(project.createdAt)}</span>
+            </label>
+          ))}
+        </div>
+        {!canMerge && (
+          <p className="mt-3 text-sm text-amber-700">
+            오프라인에서는 병합할 수 없습니다. 온라인에서 정리하세요.
+          </p>
+        )}
+        {mergeError && <p className="mt-3 text-sm text-red-600">{mergeError}</p>}
+        <div className="flex justify-end gap-2 mt-6">
+          <Button
+            onClick={handleMergeProject}
+            disabled={
+              isMerging ||
+              duplicateProjects.length !== 2 ||
+              !canMerge
+            }
+          >
+            {isMerging ? '병합 중...' : '선택한 프로젝트로 병합'}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => setDuplicateIssue(null)}
+            disabled={isMerging}
+          >
+            취소
+          </Button>
         </div>
       </Modal>
 

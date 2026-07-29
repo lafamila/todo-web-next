@@ -40,7 +40,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated, user } = useAuth();
   const [state, setState] = useState<TodoAppStateInterface>(initialState);
 
-  const loadProjects = async () => {
+  const refreshProjects = useCallback(async () => {
     try {
       setState((prev) => ({ ...prev, isLoading: true, error: null }));
       const projects = await api.getAllProjects();
@@ -52,16 +52,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         isLoading: false,
       }));
     }
-  };
+  }, []);
 
   // 인증 상태 변경 시 프로젝트 로드 (로그인 시) 또는 초기화 (로그아웃 시)
   useEffect(() => {
     if (isAuthenticated && user?.permission !== 'visitor') {
-      Promise.resolve().then(loadProjects);
+      Promise.resolve().then(refreshProjects);
     } else {
       Promise.resolve().then(() => setState(initialState));
     }
-  }, [isAuthenticated, user?.permission]);
+  }, [isAuthenticated, refreshProjects, user?.permission]);
 
   // Project Actions
   const selectProject = useCallback(async (project: ProjectInterface) => {
@@ -87,6 +87,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }));
     }
   }, []);
+
+  const refreshCurrentProject = useCallback(async () => {
+    const projectId = state.selectedProject?.id;
+    if (!projectId) return;
+    const memos = await api.getProjectMemos(projectId);
+    setState((prev) => {
+      if (prev.selectedProject?.id !== projectId) return prev;
+      const selectedFresh = prev.selectedMemo
+        ? memos.find((memo) => memo.id === prev.selectedMemo?.id)
+        : undefined;
+      return {
+        ...prev,
+        memos,
+        // MemoSection이 별도 로컬 버퍼를 소유한다. 목록 metadata만 갱신하고
+        // 선택 메모의 content는 소켓 보호 경로를 우회해 덮지 않는다.
+        selectedMemo:
+          prev.selectedMemo && selectedFresh
+            ? { ...selectedFresh, content: prev.selectedMemo.content }
+            : selectedFresh ?? null,
+      };
+    });
+  }, [state.selectedProject?.id]);
 
   const createProject = useCallback(
     async (data: CreateProjectRequestInterface) => {
@@ -346,6 +368,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value: TodoAppContextTypeInterface = {
     state,
+    refreshProjects,
+    refreshCurrentProject,
     selectProject,
     createProject,
     verifyProjectPassword,

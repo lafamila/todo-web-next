@@ -12,17 +12,41 @@ import type {
   DailyTaskTypeInterface,
   DayDetailInterface,
   MemoInterface,
+  MemoLeaseInterface,
+  MemoMergeResultInterface,
+  MemoVersionInterface,
   ProjectInterface,
+  ProjectMergeResultInterface,
   ProjectMemberInterface,
   ProjectRole,
+  SyncIssuesResponseInterface,
+  SyncStatusInterface,
   UserInterface,
 } from "./types";
+
+const memoLeaseTokens = new Map<string, MemoLeaseInterface>();
+
+export function setMemoLease(lease: MemoLeaseInterface | null): void {
+  if (lease) {
+    memoLeaseTokens.set(lease.memoId, lease);
+  }
+}
+
+export function clearMemoLease(memoId: string): void {
+  memoLeaseTokens.delete(memoId);
+}
+
+interface ApiErrorDetailShape {
+  code?: string;
+  message?: string;
+  existingMemoId?: string;
+}
 
 interface ApiErrorShape {
   message?: string;
   error?: string;
   error_description?: string;
-  detail?: string | { existingMemoId?: string };
+  detail?: string | ApiErrorDetailShape;
 }
 
 export class ApiError extends Error {
@@ -42,13 +66,23 @@ async function parseError(response: Response, fallback: string): Promise<ApiErro
   const errorData = (await response.json().catch(() => null)) as ApiErrorShape | null;
   const detail =
     typeof errorData?.detail === "string" ? errorData.detail : undefined;
+  const structuredDetail =
+    errorData?.detail && typeof errorData.detail === "object"
+      ? errorData.detail
+      : undefined;
   const description =
     typeof errorData?.error_description === "string"
       ? errorData.error_description
       : undefined;
-  const code = typeof errorData?.error === "string" ? errorData.error : undefined;
+  const code =
+    structuredDetail?.code ??
+    (typeof errorData?.error === "string" ? errorData.error : undefined);
   const message =
-    detail ?? description ?? errorData?.message ?? fallback;
+    detail ??
+    structuredDetail?.message ??
+    description ??
+    errorData?.message ??
+    fallback;
 
   return new ApiError(message, response.status, code);
 }
@@ -279,13 +313,141 @@ export async function getMemo(id: string): Promise<MemoInterface> {
 }
 
 export async function updateMemo(id: string, content: string): Promise<MemoInterface> {
+  const lease = memoLeaseTokens.get(id);
   return fetchJson<MemoInterface>(
     `/memos/${id}`,
     {
       method: "PUT",
+      headers: lease
+        ? { "X-Memo-Lease-Token": lease.leaseToken }
+        : undefined,
       body: JSON.stringify({ content }),
     },
     "Failed to update memo",
+  );
+}
+
+export async function getSyncStatus(): Promise<SyncStatusInterface> {
+  return fetchJson<SyncStatusInterface>(
+    "/sync/status",
+    undefined,
+    "동기화 상태를 불러오지 못했습니다.",
+  );
+}
+
+export async function getSyncIssues(): Promise<SyncIssuesResponseInterface> {
+  return fetchJson<SyncIssuesResponseInterface>(
+    "/sync/issues",
+    undefined,
+    "동기화 문제 목록을 불러오지 못했습니다.",
+  );
+}
+
+export async function resolveSyncIssues(issueIds: string[]): Promise<{
+  resolved: number;
+  counts: Record<string, number>;
+}> {
+  return fetchJson(
+    "/sync/issues/resolve",
+    {
+      method: "POST",
+      body: JSON.stringify({ issueIds }),
+    },
+    "동기화 문제를 해결 처리하지 못했습니다.",
+  );
+}
+
+export async function getMemoVersions(id: string): Promise<MemoVersionInterface[]> {
+  return fetchJson<MemoVersionInterface[]>(
+    `/memos/${id}/versions`,
+    undefined,
+    "메모 버전 목록을 불러오지 못했습니다.",
+  );
+}
+
+export async function getMemoVersion(
+  id: string,
+  version: number,
+): Promise<MemoVersionInterface> {
+  return fetchJson<MemoVersionInterface>(
+    `/memos/${id}/versions/${version}`,
+    undefined,
+    "보존된 메모 버전을 불러오지 못했습니다.",
+  );
+}
+
+export async function mergeMemo(
+  loserId: string,
+  winnerId: string,
+): Promise<MemoMergeResultInterface> {
+  return fetchJson<MemoMergeResultInterface>(
+    `/memos/${loserId}/merge-into/${winnerId}`,
+    { method: "POST" },
+    "메모를 병합하지 못했습니다.",
+  );
+}
+
+export async function mergeProject(
+  loserId: string,
+  winnerId: string,
+): Promise<ProjectMergeResultInterface> {
+  return fetchJson<ProjectMergeResultInterface>(
+    `/projects/${loserId}/merge-into/${winnerId}`,
+    { method: "POST" },
+    "프로젝트를 병합하지 못했습니다.",
+  );
+}
+
+const wait = (milliseconds: number) =>
+  new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+
+export async function waitForMemoMergeApplied(
+  projectId: string,
+  loserId: string,
+  winnerId: string,
+  attempts = 20,
+): Promise<MemoInterface> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const [winner, memos] = await Promise.all([
+        getMemo(winnerId),
+        getProjectMemos(projectId),
+      ]);
+      if (
+        memos.some((memo) => memo.id === winnerId) &&
+        !memos.some((memo) => memo.id === loserId)
+      ) {
+        return winner;
+      }
+    } catch {
+      // pull 적용 중에는 winner/목록 중 한쪽만 먼저 보일 수 있어 다음 poll로 확인한다.
+    }
+    await wait(500);
+  }
+  throw new Error(
+    '원격 병합은 완료되었지만 이 장치의 동기화 반영을 기다리는 중입니다. 잠시 후 다시 확인하세요.',
+  );
+}
+
+export async function waitForProjectMergeApplied(
+  loserId: string,
+  winnerId: string,
+  attempts = 20,
+): Promise<ProjectInterface> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const projects = await getAllProjects();
+      const winner = projects.find((project) => project.id === winnerId);
+      if (winner && !projects.some((project) => project.id === loserId)) {
+        return winner;
+      }
+    } catch {
+      // 원격 merge 직후 pull이 목록에 반영되기 전이면 bounded retry 한다.
+    }
+    await wait(500);
+  }
+  throw new Error(
+    '원격 병합은 완료되었지만 이 장치의 동기화 반영을 기다리는 중입니다. 잠시 후 다시 확인하세요.',
   );
 }
 

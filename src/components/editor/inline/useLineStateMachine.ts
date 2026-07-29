@@ -107,7 +107,8 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
 
   // 콜백/옵션은 ref 로 들고 다닌다 (레포 관례 — useMemoSocket 과 동일 패턴).
   const optionsRef = useRef(options);
-  useEffect(() => {
+  // lease loss 직후 첫 입력도 막아야 하므로 passive effect까지 기다리지 않는다.
+  useBrowserLayoutEffect(() => {
     optionsRef.current = options;
   }, [options]);
 
@@ -180,6 +181,18 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     clearRenderSettleTimer();
     setActive(null, null);
   }, [clearRenderSettleTimer, setActive]);
+
+  // lease를 잃은 렌더에서도 기존 활성 textarea가 한 프레임 살아 있을 수 있다.
+  // 즉시 비활성화/blur해 네이티브 입력과 조합 입력이 모델에 들어올 틈을 닫는다.
+  useEffect(() => {
+    if (!options.readOnly) return;
+    composingRef.current = false;
+    pendingCaretRef.current = null;
+    setPendingCodeFocusId(null);
+    optionsRef.current.onMentionChange?.(null);
+    deactivate();
+    textareaRef.current?.blur();
+  }, [deactivate, options.readOnly]);
 
   const findIndex = useCallback((id: number | null) => {
     if (id == null) return -1;
@@ -374,6 +387,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
 
   const handleLineChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      if (optionsRef.current.readOnly) return;
       const el = e.target;
       const id = activeLineIdRef.current;
       if (id == null) return;
@@ -534,11 +548,13 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
   );
 
   const undo = useCallback(() => {
+    if (optionsRef.current.readOnly) return;
     const snap = historyRef.current.undo(snapshot());
     if (snap) applySnapshot(snap);
   }, [applySnapshot, snapshot]);
 
   const redo = useCallback(() => {
+    if (optionsRef.current.readOnly) return;
     const snap = historyRef.current.redo(snapshot());
     if (snap) applySnapshot(snap);
   }, [applySnapshot, snapshot]);
@@ -546,6 +562,17 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
   const handleLineKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       const el = e.currentTarget;
+      if (optionsRef.current.readOnly) {
+        if (
+          isPrintableKey(e) ||
+          e.key === 'Enter' ||
+          e.key === 'Backspace' ||
+          e.key === 'Delete'
+        ) {
+          e.preventDefault();
+        }
+        return;
+      }
       if (optionsRef.current.mentionActive && optionsRef.current.onMentionKeyDown?.(e)) {
         return;
       }
@@ -743,6 +770,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
   );
 
   const handleCompositionStart = useCallback(() => {
+    if (optionsRef.current.readOnly) return;
     composingRef.current = true;
     clearRenderSettleTimer();
 
@@ -758,6 +786,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
   }, [clearRenderSettleTimer, enterEditing]);
 
   const handleCompositionEnd = useCallback(() => {
+    if (optionsRef.current.readOnly) return;
     composingRef.current = false;
     if (activeModeRef.current === 'editing') {
       armRenderSettleTimer();
@@ -772,6 +801,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
   }, [closeMention, deactivate]);
 
   const handleLinePaste = useCallback(() => {
+    if (optionsRef.current.readOnly) return;
     // 붙여넣기는 커밋 경계 — 다음 change 가 타이핑과 병합되지 않게 한다.
     // 여러 줄은 handleLineChange 의 개행 안전망이 라인 분할로 흡수한다.
     forceHistoryBoundaryRef.current = true;
@@ -786,6 +816,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
 
   const handleToggleCheckbox = useCallback(
     (id: number) => {
+      if (optionsRef.current.readOnly) return;
       const index = findIndex(id);
       if (index === -1) return;
 
@@ -807,6 +838,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
 
   const setCodeGroupBody = useCallback(
     (openLineId: number, code: string) => {
+      if (optionsRef.current.readOnly) return;
       const current = linesRef.current;
       const openIndex = current.findIndex((line) => line.id === openLineId);
       if (openIndex === -1) return;
@@ -836,6 +868,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
   /** Monaco 헤더의 언어 선택을 여는 펜스 라인에 되쓴다 (선택이 문서에 남아야 다음에도 유지된다). */
   const setCodeGroupLanguage = useCallback(
     (openLineId: number, language: string) => {
+      if (optionsRef.current.readOnly) return;
       const current = linesRef.current;
       const index = current.findIndex((line) => line.id === openLineId);
       if (index === -1) return;
@@ -929,6 +962,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
 
   const insertAtCaret = useCallback(
     (text: string, replaceFromLastAt: boolean) => {
+      if (optionsRef.current.readOnly) return;
       const el = textareaRef.current;
       const id = activeLineIdRef.current;
       const index = findIndex(id);

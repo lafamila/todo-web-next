@@ -7,6 +7,7 @@ export interface ProjectInterface {
   ownerId?: string;
   createdAt: Date | string;
   updatedAt: Date | string;
+  updatedAtUtc?: string | null;
 }
 
 export interface CreateProjectRequestInterface {
@@ -25,6 +26,97 @@ export interface MemoInterface {
   createdBy?: string;
   createdAt: Date | string;
   updatedAt: Date | string;
+  updatedAtUtc?: string | null;
+}
+
+export interface MemoLeaseInterface {
+  memoId: string;
+  leaseToken: string;
+  generation?: number;
+}
+
+export type MemoLeaseState = "pending" | "ready" | "denied";
+
+export type SyncIssueKind =
+  | "conflict"
+  | "duplicate_project"
+  | "duplicate_memo"
+  | "identity"
+  | "schema"
+  | "clock";
+
+export interface SyncIssueInterface {
+  id: string;
+  kind: SyncIssueKind;
+  refTable: string | null;
+  refId: string | null;
+  peerRefId: string | null;
+  detail: Record<string, unknown>;
+  detectedAt: string | null;
+  resolvedAt: string | null;
+  resolved: boolean;
+}
+
+export interface SyncIssuesResponseInterface {
+  issues: SyncIssueInterface[];
+  counts: Record<string, number>;
+}
+
+export interface SyncStatusInterface {
+  enabled: boolean;
+  role: string;
+  paused: boolean;
+  peer: string;
+  peerUrl: string | null;
+  schemaVersion: number;
+  lastPushedSeq: number;
+  lastPulledSeq: number;
+  maxSeq: number;
+  pending: number;
+  lastOkAt: string | null;
+  lastError: string | null;
+  issues: Record<string, number>;
+  issueTotal: number;
+  mergeLocked: boolean;
+  online: boolean;
+  running?: boolean;
+}
+
+export interface MemoVersionInterface {
+  id: string;
+  memoId: string;
+  content: string;
+  version: number;
+  note: string | null;
+  createdAt: string;
+  updatedAtUtc: string | null;
+}
+
+export interface MemoMergeResultInterface {
+  kind: "memo";
+  winnerId: string;
+  loserId: string;
+  winnerTitle: string;
+  loserTitle: string;
+  movedContentVersion: number | null;
+  movedVersions: number;
+  latestWinnerVersion: number;
+  resolvedIssues: number;
+  executedOn: "local" | "remote";
+  pullRequested: boolean;
+}
+
+export interface ProjectMergeResultInterface {
+  kind: "project";
+  winnerId: string;
+  loserId: string;
+  winnerName: string;
+  loserName: string;
+  movedMemos: number;
+  mergedMembers: number;
+  resolvedIssues: number;
+  executedOn: "local" | "remote";
+  pullRequested: boolean;
 }
 
 export interface CreateMemoRequestInterface {
@@ -124,6 +216,8 @@ export interface UserInterface {
 
 export interface TodoAppContextTypeInterface {
   state: TodoAppStateInterface;
+  refreshProjects: () => Promise<void>;
+  refreshCurrentProject: () => Promise<void>;
   selectProject: (project: ProjectInterface) => Promise<void>;
   createProject: (data: CreateProjectRequestInterface) => Promise<void>;
   verifyProjectPassword: (projectId: string, password: string) => Promise<boolean>;

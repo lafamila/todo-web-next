@@ -5,6 +5,7 @@ import { MonacoCodeEditor } from '@/components/editor/MonacoCodeEditor';
 import { assertClassifierMatchesParseContent } from './classifyLine';
 import { LineView } from './LineView';
 import { useLineStateMachine, type MentionState } from './useLineStateMachine';
+import { lineCaretToDocumentOffset } from '@/lib/editorIntent';
 
 export type { MentionState };
 
@@ -34,6 +35,7 @@ export interface InlineEditorProps {
   /** Shift+↑/↓ — 줄을 넘는 선택도 같은 이유로 Raw 모드가 이어받는다. */
   onSelectRange?: (anchor: number, focus: number) => void;
   readOnly?: boolean;
+  onReadOnlyEditIntent?: (documentOffset: number) => void;
 }
 
 /**
@@ -54,6 +56,7 @@ export function InlineEditor({
   onSelectAll,
   onSelectRange,
   readOnly = false,
+  onReadOnlyEditIntent,
 }: InlineEditorProps) {
   const machine = useLineStateMachine({
     value,
@@ -95,7 +98,11 @@ export function InlineEditor({
 
   /** 본문 아래 빈 여백을 클릭하면 마지막 라인에 캐럿을 놓는다 (일반 에디터와 같은 기대). */
   const handleSurfaceClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (readOnly || e.target !== e.currentTarget) return;
+    if (e.target !== e.currentTarget) return;
+    if (readOnly) {
+      onReadOnlyEditIntent?.(value.length);
+      return;
+    }
     machine.focusLastLine();
   };
 
@@ -203,6 +210,11 @@ export function InlineEditor({
     dragAnchorRef.current = endpointFromPoint(e.clientX, e.clientY);
   };
 
+  const handleReadOnlyLineIntent = (lineId: number, caret: number) => {
+    const offset = lineCaretToDocumentOffset(machine.lines, lineId, caret);
+    if (offset !== null) onReadOnlyEditIntent?.(offset);
+  };
+
   useEffect(() => {
     // 서피스 밖에서 시작한 드래그가 stale anchor 로 승격되지 않게 플래그를 내린다.
     const onDocumentMouseDown = (event: MouseEvent) => {
@@ -244,6 +256,7 @@ export function InlineEditor({
                 flash={false}
                 readOnly={readOnly}
                 onActivate={machine.activateLine}
+                onReadOnlyEditIntent={handleReadOnlyLineIntent}
                 onToggleCheckbox={machine.toggleCheckboxLine}
                 textareaRef={machine.textareaRef}
                 handlers={group.open.id === activeLineId ? machine.lineHandlers : undefined}
@@ -273,6 +286,7 @@ export function InlineEditor({
                   flash={false}
                   readOnly={readOnly}
                   onActivate={machine.activateLine}
+                  onReadOnlyEditIntent={handleReadOnlyLineIntent}
                   onToggleCheckbox={machine.toggleCheckboxLine}
                   textareaRef={machine.textareaRef}
                   handlers={group.close.id === activeLineId ? machine.lineHandlers : undefined}
@@ -291,6 +305,7 @@ export function InlineEditor({
             flash={group.line.id === flashLineId}
             readOnly={readOnly}
             onActivate={machine.activateLine}
+            onReadOnlyEditIntent={handleReadOnlyLineIntent}
             onToggleCheckbox={machine.toggleCheckboxLine}
             textareaRef={machine.textareaRef}
             handlers={group.line.id === activeLineId ? machine.lineHandlers : undefined}

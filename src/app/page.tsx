@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppProvider } from '@/contexts/AppContext';
+import { SyncProvider } from '@/contexts/SyncContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/Button';
 import * as api from '@/lib/api';
@@ -145,7 +146,9 @@ export default function IndexPage() {
 
   return (
     <AppProvider>
-      <TodoHomeContent />
+      <SyncProvider>
+        <TodoHomeContent />
+      </SyncProvider>
     </AppProvider>
   );
 }

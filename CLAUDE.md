@@ -130,6 +130,30 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   덜 움직인다.
 - **불변 계약**: 저장은 Ctrl/⌘+S 만 (자동 저장 없음), 체크박스 토글만 즉시 서버 반영, Socket.IO 단일 작성자 락,
   `PUT /api/memos/{id}` 계약 — 전부 그대로다. 에디터는 API/소켓을 바꾸지 않는다.
+- **동기화 문제 표시와 해소**: `GET /api/sync/issues` 의 미해결 `conflict`·`duplicate_memo`·
+  `duplicate_project` 가 가리키는 메모/프로젝트 제목만 `.sync-issue-dim` 토큰으로 흐리게 표시한다.
+  문제 메모를 열면 평소 에디터 대신 현재값과 보존 버전을 줄 단위 LCS diff 로 좌우 표시하고,
+  현재 유지·보존 버전 교체·직접 병합 저장 중 하나로 해소한다. 중복 메모/프로젝트는 사용자가
+  생존자를 직접 고르며, 패자 내용과 버전이 생존자의 기록으로 들어간다는 점을 화면에 알린다.
+  LCS 는 공통 prefix/suffix 를 먼저 제외하고 셀 상한을 넘는 큰 문서는 선형 메모리 fallback 으로
+  비교해 큰 메모가 브라우저를 OOM 시키지 않게 한다. 원격에서 한 번만 실행해야 하는 병합은
+  status 미확인·요청 실패·브라우저 오프라인·`mergeLocked` 중 하나라도 해당하면 fail-closed 로 잠근다.
+  원격 병합 응답의 `pullRequested` 가 참이면 bounded poll 로 winner/loser 반영을 확인한 다음 목록을
+  갱신하고, 제한 시간 안에 반영되지 않으면 “동기화 반영 대기”를 명시한다.
+- **편집 버퍼와 원격 변경**: `memoContentUpdated` 를 받았을 때 활성 편집 중이거나 저장하지 않은 변경이
+  있으면 `setContent` 로 덮지 않는다. 원격 본문을 별도 버퍼에 보존하고
+  “원격에서 이 메모가 변경됨 — 비교” 배너를 띄워 좌우 비교 뒤 사용자가 결정하게 한다.
+  편집 중이 아니면 기존처럼 원격 본문을 즉시 적용한다.
+- **편집 lease UX**: `useMemoSocket` 은 `pending | ready | denied` 상태를 명시적으로 노출한다.
+  `ready` 전에 인라인/Raw 편집, ⌘S 저장, 체크박스 즉시 반영을 모두 막고 한국어 안내와 재시도 버튼을
+  보여준다. 메모를 읽기 위해 여는 것만으로는 lease 를 요청하지 않고 첫 편집 의도 뒤 `lockStatus`
+  입장 확인을 받은 후 요청한다. canonical `memoLocked` 이벤트를 받으면 기존 토큰과 활성 라인을 즉시
+  폐기하며, `ready` 상태의 중복 요청은 pending 으로 되돌리지 않는다. REST 저장은 해당 소켓에서 받은
+  `X-Memo-Lease-Token` 을 붙이며 저장 실패를 화면에 표시한다.
+- **헤더 동기화 상태**: 프로젝트 헤더의 작은 표시가 online/offline/paused/blocked, 마지막 성공 시각,
+  대기 변경 수와 미해결 문제 수를 보여준다. 항목별 해소 동작은 이 상태 팝오버가 아니라 위의 제목 클릭
+  경로가 담당한다. `/api/sync/issues` 는 관리자 전용이므로 비관리자는 합계만 보고 상세 확인·해소에
+  관리자 권한이 필요하다는 안내를 받는다.
 - **`parseContent` 와의 관계**: `lib/utils.ts` 의 `parseContent` 는 `ArticleDetail` 이 계속 사용한다.
   신규 `classifyLine`/`buildLineGroups` 가 같은 판정을 유지하는지 개발 모드에서
   `assertClassifierMatchesParseContent` 가 감시한다(블록 종류·내용·checked·indent 를 대조).

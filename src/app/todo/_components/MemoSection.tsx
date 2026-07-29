@@ -3,15 +3,25 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSync } from '@/contexts/SyncContext';
 import { Modal } from '@/components/ui/Modal';
 import {
   InlineEditor,
   type InlineEditorHandle,
   type MentionState,
 } from '@/components/editor/inline/InlineEditor';
-import type { ArticleInterface } from '@/lib/types';
-import { publishArticle, getMemoArticle, deleteArticle } from '@/lib/api';
+import type { ArticleInterface, SyncIssueInterface } from '@/lib/types';
+import {
+  publishArticle,
+  getMemoArticle,
+  deleteArticle,
+  getMemo,
+  getAllProjects,
+  mergeMemo,
+  waitForMemoMergeApplied,
+} from '@/lib/api';
 import { useMemoSocket } from '@/hooks/useMemoSocket';
+import { MemoResolutionPanel } from './MemoResolutionPanel';
 
 export const isTypingContext = (el: Element | null) => {
   if (!el) return false;
@@ -99,10 +109,21 @@ const shortcutHelp = [
 
 export function MemoSection() {
   const {
-    state: { selectedMemo, selectedProject, memos },
+    state: { selectedMemo, selectedProject, projects, memos },
     updateMemo,
+    selectProject,
+    selectMemo,
+    refreshProjects,
+    refreshCurrentProject,
   } = useApp();
   const { user } = useAuth();
+  const {
+    issues,
+    findIssue,
+    resolveIssues,
+    refresh: refreshSync,
+    canMerge,
+  } = useSync();
   const isAdmin = user?.isAdmin ?? false;
 
   // Raw 모드 = 문서 전체를 하나의 textarea 로 다루는 escape hatch (멀티라인 선택/복사용).
@@ -111,16 +132,45 @@ export function MemoSection() {
   const [showHelpModal, setShowHelpModal] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [lockMessage, setLockMessage] = useState<string | null>(null);
-  const isLockedByOtherRef = useRef(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const isEditingRef = useRef(false);
+  const [remoteContent, setRemoteContent] = useState<string | null>(null);
+  const [showRemoteCompare, setShowRemoteCompare] = useState(false);
+
+  const [content, setContent] = useState('');
+  const [originalContent, setOriginalContent] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inlineEditorRef = useRef<InlineEditorHandle>(null);
+  const contentRef = useRef<string>('');
+  const originalContentRef = useRef<string>('');
+  const pendingEditOffsetRef = useRef<number | null>(null);
+  const currentIssue =
+    selectedMemo &&
+    findIssue('memos', selectedMemo.id);
+  const actionableIssue =
+    currentIssue?.kind === 'conflict' || currentIssue?.kind === 'duplicate_memo'
+      ? currentIssue
+      : undefined;
 
   const {
+    isConnected,
     lockHolder,
+    leaseState,
     requestLock,
     releaseLock,
     broadcastUpdate,
   } = useMemoSocket({
     memoId: selectedMemo?.id ?? null,
     onContentUpdated: (newContent: string) => {
+      if (
+        actionableIssue ||
+        isEditingRef.current ||
+        rawModeRef.current ||
+        contentRef.current !== originalContentRef.current
+      ) {
+        setRemoteContent(newContent);
+        return;
+      }
       setContent(newContent);
       contentRef.current = newContent;
       setOriginalContent(newContent);
@@ -128,17 +178,22 @@ export function MemoSection() {
     },
     onLocked: (info) => {
       // Another user locked the memo
-      isLockedByOtherRef.current = true;
       setLockMessage(`${info.displayName}님이 수정중입니다`);
     },
     onUnlocked: () => {
-      isLockedByOtherRef.current = false;
       setLockMessage(null);
     },
     onLockDenied: (displayName: string) => {
       setLockMessage(`${displayName}님이 수정중입니다`);
       setRawMode(false);
       rawModeRef.current = false;
+    },
+    onSyncApplied: () => {
+      void Promise.all([
+        refreshProjects(),
+        refreshCurrentProject(),
+        refreshSync(),
+      ]);
     },
   });
 
@@ -177,6 +232,26 @@ export function MemoSection() {
       rawModeRef.current = false;
     }, 6_000);
   }, [releaseLock]);
+
+  // 편집 의도로 lease를 얻었지만 빈 여백 클릭 등으로 실제 라인이 활성화되지 않은 경우에도
+  // 무기한 renew하지 않는다. 캐럿 재생이 성공해 편집이 시작되면 holdLock이 이 타이머를 끈다.
+  useEffect(() => {
+    if (
+      leaseState === 'ready' &&
+      !isEditingRef.current &&
+      !rawModeRef.current
+    ) {
+      scheduleLockRelease();
+    }
+  }, [leaseState, scheduleLockRelease]);
+
+  useEffect(() => {
+    if (leaseState !== 'ready') return;
+    const offset = pendingEditOffsetRef.current;
+    if (offset === null) return;
+    pendingEditOffsetRef.current = null;
+    requestAnimationFrame(() => inlineEditorRef.current?.focusOffset(offset));
+  }, [leaseState]);
 
   /**
    * 선택 때문에 들어온 Raw 모드는 캐럿을 끝에 두는 대신 요청한 범위를 선택한다.
@@ -261,19 +336,17 @@ export function MemoSection() {
     };
   }, []);
 
-  const [content, setContent] = useState('');
-  const [originalContent, setOriginalContent] = useState('');
   const [showMemoSearch, setShowMemoSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchPosition, setSearchPosition] = useState<{ top: number; left: number } | null>(null);
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const inlineEditorRef = useRef<InlineEditorHandle>(null);
-  const contentRef = useRef<string>('');
-  const originalContentRef = useRef<string>('');
-
   const isLockedByOther = Boolean(lockHolder);
+  const canEdit = leaseState === 'ready' && !isLockedByOther;
+
+  useEffect(() => {
+    if (leaseState === 'ready') setLockMessage(null);
+  }, [leaseState]);
 
   // Article (게시) 관련 상태
   const [articleStatus, setArticleStatus] = useState<ArticleInterface | null>(null);
@@ -299,7 +372,11 @@ export function MemoSection() {
       setRawMode(false);
       rawModeRef.current = false;
       setLockMessage(null);
-      isLockedByOtherRef.current = false;
+      setSaveMessage(null);
+      setRemoteContent(null);
+      setShowRemoteCompare(false);
+      isEditingRef.current = false;
+      pendingEditOffsetRef.current = null;
     }
   }, [selectedMemo]);
 
@@ -323,14 +400,23 @@ export function MemoSection() {
   }, [originalContent]);
 
   const handleSaveMemo = useCallback(async () => {
-    if (!selectedMemo) return;
+    if (!selectedMemo) return false;
+    if (!canEdit) {
+      setSaveMessage(
+        leaseState === 'pending'
+          ? '편집 잠금을 확인하는 중입니다. 잠시 후 다시 저장하세요.'
+          : '편집 잠금을 확보하지 못해 저장할 수 없습니다.',
+      );
+      requestLock();
+      return false;
+    }
 
     const latest = contentRef.current;
     const original = originalContentRef.current;
 
     if (latest === original) {
       console.log('변경사항이 없어 저장하지 않습니다.');
-      return;
+      return true;
     }
 
     try {
@@ -338,11 +424,17 @@ export function MemoSection() {
       setOriginalContent(latest);
       originalContentRef.current = latest;
       broadcastUpdate(latest);
-      console.log('메모가 저장되었습니다.');
+      setSaveMessage('저장되었습니다.');
+      window.setTimeout(() => setSaveMessage(null), 3000);
+      return true;
     } catch (error) {
       console.error('Failed to save memo:', error);
+      setSaveMessage(
+        error instanceof Error ? `저장 실패: ${error.message}` : '저장에 실패했습니다.',
+      );
+      return false;
     }
-  }, [selectedMemo, updateMemo, broadcastUpdate]);
+  }, [selectedMemo, canEdit, leaseState, requestLock, updateMemo, broadcastUpdate]);
 
   // 게시 / 재게시 핸들러
   const handlePublish = useCallback(async () => {
@@ -350,7 +442,8 @@ export function MemoSection() {
 
     // 저장되지 않은 변경사항이 있으면 먼저 저장
     if (contentRef.current !== originalContentRef.current) {
-      await handleSaveMemo();
+      const saved = await handleSaveMemo();
+      if (!saved) return;
     }
 
     setIsPublishing(true);
@@ -457,7 +550,10 @@ export function MemoSection() {
    */
   const enterRawModeForSelection = useCallback(
     (selection: 'all' | { anchor: number; focus: number }) => {
-      if (isLockedByOtherRef.current || lockHolder) return;
+      if (!canEdit) {
+        requestLock();
+        return;
+      }
 
       pendingScrollFractionRef.current = scrollFractionOf(inlineScrollRef.current);
       pendingRawSelectionRef.current = selection;
@@ -468,7 +564,7 @@ export function MemoSection() {
       setSearchQuery('');
       holdLock();
     },
-    [holdLock, lockHolder],
+    [canEdit, holdLock, requestLock],
   );
 
   const handleSelectAll = useCallback(() => {
@@ -498,7 +594,10 @@ export function MemoSection() {
   const toggleRawMode = useCallback(() => {
     const next = !rawModeRef.current;
 
-    if (next && (isLockedByOtherRef.current || lockHolder)) return;
+    if (next && !canEdit) {
+      requestLock();
+      return;
+    }
 
     rawModeReasonRef.current = 'manual';
     rawModeRef.current = next;
@@ -511,7 +610,7 @@ export function MemoSection() {
     } else {
       scheduleLockRelease();
     }
-  }, [holdLock, lockHolder, scheduleLockRelease]);
+  }, [canEdit, holdLock, requestLock, scheduleLockRelease]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -545,7 +644,11 @@ export function MemoSection() {
       if (!isPrintable && !isEnter && !isBackspace) return;
 
       // 다른 사용자가 편집 중이면 열지 않음
-      if (isLockedByOtherRef.current || lockHolder) return;
+      if (!canEdit) {
+        pendingEditOffsetRef.current = contentRef.current.length;
+        requestLock();
+        return;
+      }
 
       // preventDefault 하지 않는다 — 마지막 라인에 포커스만 먼저 옮기고
       // 입력 자체는 브라우저에 맡긴다 (수동 append 로 인한 IME 이중 입력 제거).
@@ -555,7 +658,7 @@ export function MemoSection() {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleSaveMemo, holdLock, lockHolder, rawMode, toggleRawMode]);
+  }, [canEdit, handleSaveMemo, holdLock, rawMode, requestLock, toggleRawMode]);
 
   const handleRawContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newContent = e.target.value;
@@ -714,6 +817,7 @@ export function MemoSection() {
 
   const handleEditingChange = useCallback(
     (editing: boolean) => {
+      isEditingRef.current = editing;
       if (editing) {
         holdLock();
       } else {
@@ -726,21 +830,173 @@ export function MemoSection() {
   /** 체크박스 토글은 기존과 동일하게 즉시 서버에 반영한다. */
   const handlePersist = useCallback(
     async (next: string) => {
+      if (!canEdit) {
+        setSaveMessage('편집 잠금이 준비되기 전에는 체크박스를 변경할 수 없습니다.');
+        requestLock();
+        return;
+      }
       try {
         await updateMemo(next);
         setOriginalContent(next);
         originalContentRef.current = next;
       } catch (error) {
         console.error('Failed to update checkbox:', error);
+        setSaveMessage(
+          error instanceof Error
+            ? `체크박스 저장 실패: ${error.message}`
+            : '체크박스를 저장하지 못했습니다.',
+        );
       }
     },
-    [updateMemo]
+    [canEdit, requestLock, updateMemo]
   );
 
   const handleInlineChange = useCallback((next: string) => {
     setContent(next);
     contentRef.current = next;
   }, []);
+
+  const handleReadOnlyEditIntent = useCallback(
+    (documentOffset: number) => {
+      pendingEditOffsetRef.current = documentOffset;
+      requestLock();
+    },
+    [requestLock],
+  );
+
+  const moveToNextIssue = useCallback(
+    async (resolvedIssue: SyncIssueInterface) => {
+      const currentIndex = issues.findIndex((item) => item.id === resolvedIssue.id);
+      const next = [
+        ...issues.slice(currentIndex + 1),
+        ...issues.slice(0, Math.max(0, currentIndex)),
+      ].find(
+        (item) =>
+          item.id !== resolvedIssue.id &&
+          item.refTable === 'memos' &&
+          (item.kind === 'conflict' || item.kind === 'duplicate_memo'),
+      );
+      if (!next) return;
+      const nextMemoId = next.refId ?? next.peerRefId;
+      if (!nextMemoId) return;
+      try {
+        const nextMemo = await getMemo(nextMemoId);
+        if (selectedProject?.id !== nextMemo.projectId) {
+          const project =
+            projects.find((item) => item.id === nextMemo.projectId) ??
+            (await getAllProjects()).find((item) => item.id === nextMemo.projectId);
+          if (!project) return;
+          await selectProject(project);
+        }
+        await selectMemo(nextMemo);
+      } catch {
+        // 다음 이슈가 현재 사용자의 프로젝트 범위를 벗어나거나 병합으로 사라졌다면
+        // 새로고침된 이슈 목록에서 사용자가 다음 항목을 선택할 수 있다.
+      }
+    },
+    [issues, projects, selectMemo, selectProject, selectedProject],
+  );
+
+  const handleResolveOnly = useCallback(async (winnerContent: string) => {
+    if (actionableIssue) {
+      setContent(winnerContent);
+      contentRef.current = winnerContent;
+      setOriginalContent(winnerContent);
+      originalContentRef.current = winnerContent;
+      setRemoteContent(null);
+      await resolveIssues([actionableIssue.id]);
+      await moveToNextIssue(actionableIssue);
+      return;
+    }
+    if (remoteContent !== null) {
+      if (leaseState !== 'ready') {
+        requestLock();
+        throw new Error('편집 잠금이 아직 준비되지 않았습니다.');
+      }
+      // 원격 변경보다 현재 버퍼를 선택했으므로 실제 서버 메모에도 그 선택을 기록한다.
+      await updateMemo(winnerContent);
+      setContent(winnerContent);
+      contentRef.current = winnerContent;
+      setOriginalContent(winnerContent);
+      originalContentRef.current = winnerContent;
+      broadcastUpdate(winnerContent);
+      setRemoteContent(null);
+      setShowRemoteCompare(false);
+    }
+  }, [
+    actionableIssue,
+    broadcastUpdate,
+    leaseState,
+    moveToNextIssue,
+    remoteContent,
+    requestLock,
+    resolveIssues,
+    updateMemo,
+  ]);
+
+  const handleSaveResolved = useCallback(
+    async (nextContent: string) => {
+      if (!selectedMemo) return;
+      if (leaseState !== 'ready') {
+        requestLock();
+        throw new Error('편집 잠금이 아직 준비되지 않았습니다.');
+      }
+
+      if (!actionableIssue && remoteContent !== null && nextContent === remoteContent) {
+        setContent(nextContent);
+        contentRef.current = nextContent;
+        setOriginalContent(nextContent);
+        originalContentRef.current = nextContent;
+        setRemoteContent(null);
+        setShowRemoteCompare(false);
+        return;
+      }
+
+      await updateMemo(nextContent);
+      setContent(nextContent);
+      contentRef.current = nextContent;
+      setOriginalContent(nextContent);
+      originalContentRef.current = nextContent;
+      broadcastUpdate(nextContent);
+      setRemoteContent(null);
+      setShowRemoteCompare(false);
+      if (actionableIssue) {
+        await resolveIssues([actionableIssue.id]);
+        await moveToNextIssue(actionableIssue);
+      }
+    },
+    [
+      actionableIssue,
+      broadcastUpdate,
+      leaseState,
+      moveToNextIssue,
+      remoteContent,
+      requestLock,
+      resolveIssues,
+      selectedMemo,
+      updateMemo,
+    ],
+  );
+
+  const handleMergeMemo = useCallback(
+    async (loserId: string, winnerId: string) => {
+      if (!selectedProject || !canMerge) {
+        throw new Error('오프라인 상태에서는 병합할 수 없습니다. 온라인에서 다시 시도하세요.');
+      }
+      const result = await mergeMemo(loserId, winnerId);
+      const winner = result.pullRequested
+        ? await waitForMemoMergeApplied(
+            selectedProject.id,
+            loserId,
+            winnerId,
+          )
+        : await getMemo(winnerId);
+      await refreshSync();
+      await selectProject(selectedProject);
+      await selectMemo(winner);
+    },
+    [canMerge, refreshSync, selectMemo, selectProject, selectedProject],
+  );
 
   if (!selectedProject || !selectedMemo) {
     return <div></div>;
@@ -758,6 +1014,22 @@ export function MemoSection() {
           <div className="absolute right-2 top-6 z-10">
             <span className="text-xs text-yellow-400 font-medium bg-gray-800/80 px-2 py-1 rounded">{lockMessage}</span>
           </div>
+        )}
+        {saveMessage && (
+          <div className="absolute right-2 top-12 z-20">
+            <span className="text-xs text-amber-100 font-medium bg-red-950/90 px-2 py-1 rounded">
+              {saveMessage}
+            </span>
+          </div>
+        )}
+        {remoteContent !== null && !showRemoteCompare && (
+          <button
+            type="button"
+            className="remote-update-banner"
+            onClick={() => setShowRemoteCompare(true)}
+          >
+            원격에서 이 메모가 변경됨 — 비교
+          </button>
         )}
         <div className="fixed bottom-[calc(100vh-70px)] right-2 flex flex-col items-end gap-1">
           <div className="text-sm text-gray-500">
@@ -803,8 +1075,38 @@ export function MemoSection() {
           ?
         </button>
 
-        <div className="flex flex-col h-full min-h-0">
-          {rawMode ? (
+        <div
+          className="flex flex-col h-full min-h-0"
+          onPointerDownCapture={() => {
+            if (!canEdit) requestLock();
+          }}
+        >
+          {(actionableIssue || (showRemoteCompare && remoteContent !== null)) ? (
+            <MemoResolutionPanel
+              key={actionableIssue?.id ?? `remote-${selectedMemo.id}`}
+              memo={selectedMemo}
+              currentContent={content}
+              issue={actionableIssue}
+              remoteContent={remoteContent !== null ? remoteContent : undefined}
+              manualSeed={
+                content !== originalContent
+                  ? content
+                  : remoteContent ?? content
+              }
+              hasDirtyBuffer={content !== originalContent}
+              canWrite={canEdit}
+              mergeLocked={!canMerge}
+              onKeepCurrent={handleResolveOnly}
+              onSaveResolved={handleSaveResolved}
+              onMerge={handleMergeMemo}
+              onEditingStart={holdLock}
+              onEditingEnd={scheduleLockRelease}
+              onRequestWrite={requestLock}
+              onClose={
+                !actionableIssue ? () => setShowRemoteCompare(false) : undefined
+              }
+            />
+          ) : rawMode ? (
             <div className="w-full min-h-0 h-full overflow-y-auto relative">
               <textarea
                 ref={textareaRef}
@@ -815,6 +1117,7 @@ export function MemoSection() {
                 onMouseUp={handleRawMouseUp}
                 onCopy={handleRawCopy}
                 onCut={handleRawCut}
+                disabled={!canEdit}
                 className="memo-raw-input w-full h-full p-0 resize-none focus:outline-none"
                 placeholder=""
               />
@@ -836,8 +1139,28 @@ export function MemoSection() {
                 onSelectRange={handleSelectRange}
                 mentionActive={showMemoSearch}
                 onMentionKeyDown={handleMentionKeyDown}
-                readOnly={isLockedByOther}
+                readOnly={!canEdit}
+                onReadOnlyEditIntent={handleReadOnlyEditIntent}
               />
+            </div>
+          )}
+          {!canEdit && !actionableIssue && !showRemoteCompare && (
+            <div className={`memo-lease-overlay memo-lease-${leaseState}`}>
+              <strong>
+                {leaseState === 'pending'
+                  ? '편집 잠금을 확인하는 중입니다'
+                  : isConnected
+                    ? '이 메모는 지금 편집할 수 없습니다'
+                    : '실시간 편집 서버에 연결되지 않았습니다'}
+              </strong>
+              <span>
+                {lockHolder
+                  ? `${lockHolder.displayName}님이 수정 중입니다.`
+                  : '입력과 저장은 안전한 편집 잠금을 확보한 뒤 사용할 수 있습니다.'}
+              </span>
+              <button type="button" onClick={requestLock}>
+                다시 시도
+              </button>
             </div>
           )}
 
