@@ -106,11 +106,17 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   `@메모명` 검색이 필요할 때 쓴다.
 - **줄을 넘는 선택은 Raw 모드가 이어받는다**: 라인마다 textarea 가 따로라 DOM 선택이 줄 경계를 넘지 못한다.
   `Cmd/Ctrl+A`(`onSelectAll`), `Shift+방향키`(`onSelectRange`; ←/→ 는 줄 경계에서만), 그리고 렌더 화면에서
-  **마우스 드래그**로 만든 선택(서피스 `mouseup` → `selectDomRange`; 더블·트리플 클릭은 `e.detail >= 2` 로
+  **마우스 드래그**로 만든 선택(→ `selectDomRange`; 더블·트리플 클릭은 `e.detail >= 2` 로
   제외해 줄 편집 진입을 남긴다)은 기본 동작을 막고 Raw 모드로 전환하면서
   선택을 그대로 복원한다 — 전체 선택이거나, 네이티브와 같은 열 유지 규칙으로 계산한 anchor→focus 오프셋이다.
   `selectionDirection` 까지 넘겨야 이어지는 Shift+방향키가 같은 쪽으로 확장된다. 렌더 화면을 DOM 으로
-  선택하는 방식은 복사 시 `-- `·펜스 같은 소스가 사라져 채택하지 않았다.
+  선택하는 방식은 복사 시 `-- `·펜스·들여쓰기 같은 소스가 사라져 채택하지 않았다.
+- **드래그 승격은 `document` 에서 받는다**: `mouseup` 을 서피스 div 에만 걸면 마우스를 스크롤 컨테이너
+  **밖**(메모 목록·헤더·푸터)에서 놓았을 때 핸들러가 돌지 않아 "될 때만 되는" 기능이 된다.
+  서피스 `mousedown` 이 드래그 시작을 기록(`draggingRef` — 밖에서 시작한 드래그는 승격하지 않는 게이트,
+  라인 textarea·Monaco 안에서 시작하면 그쪽 네이티브 선택)하고, document `mouseup` 이 승격한다.
+  선택 endpoint 노드가 우리 줄 밖이면(밖에서 놓으면 Chrome 이 남의 DOM 을 가리킨다) **좌표 폴백**을
+  쓴다: 놓은 y 로 줄을 찾고 위/아래로 벗어나면 문서 시작/끝, 그 사이면 x 로 그 줄의 시작/끝.
 - **선택 때문에 켜진 Raw 모드는 일시적이다**: `rawModeReasonRef` 가 진입 경로를 기억한다.
   `'selection'` 이면 복사·잘라내기(다음 프레임에 전환 — 같은 틱에 언마운트하면 클립보드 쓰기가 취소된다)나
   선택 해제(내비게이션 키·클릭; 타이핑은 제외) 직후 인라인으로 돌아오며, 캐럿은
