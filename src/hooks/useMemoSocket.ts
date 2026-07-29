@@ -6,7 +6,9 @@ import { SOCKET_BASE_URL, SOCKET_PATH } from '@/lib/constants';
 import { clearMemoLease, setMemoLease } from '@/lib/api';
 import type { MemoLeaseState } from '@/lib/types';
 import {
+  leaseStateAfterConnectionLoss,
   leaseStateWithoutOwnership,
+  shouldRetryJoinResponse,
   shouldRetryLockResponse,
   shouldEmitLockRequest,
   shouldRenewLease,
@@ -46,15 +48,19 @@ export function useMemoSocket({
   const socketRef = useRef<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [lockHolder, setLockHolder] = useState<MemoLockInfo | null>(null);
-  const [leaseState, setLeaseState] = useState<MemoLeaseState>('denied');
+  const [leaseState, setLeaseState] = useState<MemoLeaseState>('idle');
   const currentMemoIdRef = useRef<string | null>(null);
   const joinedMemoIdRef = useRef<string | null>(null);
+  const joinRequestMemoRef = useRef<string | null>(null);
   const editIntentRef = useRef(false);
   const lockRequestMemoRef = useRef<string | null>(null);
   const ownsLockRef = useRef(false);
+  const accessDeniedMemoRef = useRef<string | null>(null);
   const startLockResponseWatchdogRef = useRef<(memoId: string) => void>(() => {});
   const stopLockResponseWatchdogRef = useRef<() => void>(() => {});
   const stopRenewalRef = useRef<() => void>(() => {});
+  const startJoinResponseWatchdogRef = useRef<(memoId: string) => void>(() => {});
+  const stopJoinResponseWatchdogRef = useRef<() => void>(() => {});
 
   // Keep callbacks in refs to avoid re-triggering effect
   const onContentUpdatedRef = useRef(onContentUpdated);
@@ -93,8 +99,10 @@ export function useMemoSocket({
     socketRef.current = socket;
     let renewTimer: number | null = null;
     let lockResponseTimer: number | null = null;
+    let joinResponseTimer: number | null = null;
     let renewAfterMs = 30_000;
     let lockAttemptCount = 0;
+    let joinAttemptCount = 0;
     const LOCK_RESPONSE_TIMEOUT_MS = 2_000;
 
     const stopRenewal = () => {
@@ -108,6 +116,58 @@ export function useMemoSocket({
         window.clearTimeout(lockResponseTimer);
         lockResponseTimer = null;
       }
+    };
+    const stopJoinResponseWatchdog = () => {
+      if (joinResponseTimer !== null) {
+        window.clearTimeout(joinResponseTimer);
+        joinResponseTimer = null;
+      }
+    };
+    const denyUnresponsiveJoin = (memoId: string) => {
+      if (memoId !== currentMemoIdRef.current) return;
+      stopJoinResponseWatchdog();
+      editIntentRef.current = false;
+      joinedMemoIdRef.current = null;
+      joinRequestMemoRef.current = null;
+      lockRequestMemoRef.current = null;
+      clearMemoLease(memoId);
+      const displayName = '동기화 서버 응답 없음';
+      setLockHolder({
+        displayName,
+        userId: 'lock-unavailable',
+      });
+      setLeaseState('denied');
+      onLockDeniedRef.current(displayName);
+    };
+    const armJoinResponseWatchdog = (
+      memoId: string,
+      resetAttempts = true,
+    ) => {
+      stopJoinResponseWatchdog();
+      if (resetAttempts) joinAttemptCount = 1;
+      joinResponseTimer = window.setTimeout(() => {
+        joinResponseTimer = null;
+        if (
+          memoId !== currentMemoIdRef.current ||
+          joinedMemoIdRef.current === memoId
+        ) {
+          return;
+        }
+        if (!shouldRetryJoinResponse({
+          connected: socket.connected,
+          currentMemoId: currentMemoIdRef.current,
+          joinedMemoId: joinedMemoIdRef.current,
+          memoId,
+          attemptCount: joinAttemptCount,
+        })) {
+          denyUnresponsiveJoin(memoId);
+          return;
+        }
+        joinAttemptCount += 1;
+        joinRequestMemoRef.current = memoId;
+        socket.emit('joinMemo', { memoId });
+        armJoinResponseWatchdog(memoId, false);
+      }, LOCK_RESPONSE_TIMEOUT_MS);
     };
     const denyUnresponsiveLock = (memoId: string) => {
       if (memoId !== currentMemoIdRef.current) return;
@@ -180,6 +240,10 @@ export function useMemoSocket({
     };
     stopLockResponseWatchdogRef.current = stopLockResponseWatchdog;
     stopRenewalRef.current = stopRenewal;
+    startJoinResponseWatchdogRef.current = (memoId) => {
+      armJoinResponseWatchdog(memoId);
+    };
+    stopJoinResponseWatchdogRef.current = stopJoinResponseWatchdog;
 
     const scheduleRenewal = (delayMs = renewAfterMs) => {
       stopRenewal();
@@ -201,15 +265,21 @@ export function useMemoSocket({
 
     socket.on('connect', () => {
       setIsConnected(true);
+      setLockHolder(null);
+      accessDeniedMemoRef.current = null;
       stopLockResponseWatchdog();
+      stopJoinResponseWatchdog();
       lockAttemptCount = 0;
+      joinAttemptCount = 0;
 
       // 방 입장 확인(lockStatus) 전에는 lockMemo 를 보내지 않는다.
       if (currentMemoIdRef.current) {
         joinedMemoIdRef.current = null;
+        joinRequestMemoRef.current = currentMemoIdRef.current;
         lockRequestMemoRef.current = null;
         setLeaseState(leaseStateWithoutOwnership(editIntentRef.current));
         socket.emit('joinMemo', { memoId: currentMemoIdRef.current });
+        armJoinResponseWatchdog(currentMemoIdRef.current);
       }
     });
 
@@ -217,11 +287,15 @@ export function useMemoSocket({
       setIsConnected(false);
       ownsLockRef.current = false;
       joinedMemoIdRef.current = null;
+      joinRequestMemoRef.current = null;
       lockRequestMemoRef.current = null;
-      setLeaseState(leaseStateWithoutOwnership(editIntentRef.current));
+      setLockHolder(null);
+      setLeaseState(leaseStateAfterConnectionLoss(editIntentRef.current));
       stopRenewal();
       stopLockResponseWatchdog();
+      stopJoinResponseWatchdog();
       lockAttemptCount = 0;
+      joinAttemptCount = 0;
       if (currentMemoIdRef.current) {
         clearMemoLease(currentMemoIdRef.current);
       }
@@ -237,8 +311,11 @@ export function useMemoSocket({
         available?: boolean;
       }) => {
         if (data.memoId !== currentMemoIdRef.current) return;
+        stopJoinResponseWatchdog();
+        joinAttemptCount = 0;
+        accessDeniedMemoRef.current = null;
         joinedMemoIdRef.current = data.memoId;
-        lockRequestMemoRef.current = null;
+        joinRequestMemoRef.current = null;
         if (data.available === false) {
           stopLockResponseWatchdog();
           const displayName = '동기화 서버';
@@ -248,12 +325,14 @@ export function useMemoSocket({
           });
           ownsLockRef.current = false;
           editIntentRef.current = false;
+          lockRequestMemoRef.current = null;
           setLeaseState('denied');
           onLockDeniedRef.current(displayName);
           return;
         }
         if (data.lockedBy && data.lockedByUserId) {
           stopLockResponseWatchdog();
+          lockRequestMemoRef.current = null;
           setLockHolder({
             displayName: data.lockedBy,
             userId: data.lockedByUserId,
@@ -265,17 +344,43 @@ export function useMemoSocket({
           });
         } else {
           setLockHolder(null);
-          if (editIntentRef.current && !ownsLockRef.current) {
+          if (
+            editIntentRef.current &&
+            !ownsLockRef.current &&
+            lockRequestMemoRef.current !== data.memoId
+          ) {
             setLeaseState('pending');
             lockRequestMemoRef.current = data.memoId;
             socket.emit('lockMemo', { memoId: data.memoId });
             armLockResponseWatchdog(data.memoId);
           } else if (!ownsLockRef.current) {
-            setLeaseState('denied');
+            setLeaseState('idle');
           }
         }
       },
     );
+
+    socket.on('memoAccessDenied', (data: { memoId: string }) => {
+      if (data.memoId !== currentMemoIdRef.current) return;
+      stopRenewal();
+      stopLockResponseWatchdog();
+      stopJoinResponseWatchdog();
+      ownsLockRef.current = false;
+      editIntentRef.current = false;
+      joinedMemoIdRef.current = null;
+      joinRequestMemoRef.current = null;
+      lockRequestMemoRef.current = null;
+      accessDeniedMemoRef.current = data.memoId;
+      lockAttemptCount = 0;
+      joinAttemptCount = 0;
+      clearMemoLease(data.memoId);
+      setLockHolder({
+        displayName: '접근 권한 없음',
+        userId: 'access-denied',
+      });
+      setLeaseState('denied');
+      onLockDeniedRef.current('접근 권한 없음');
+    });
 
     socket.on(
       'memoLocked',
@@ -371,9 +476,13 @@ export function useMemoSocket({
         memoId: string;
         lockedBy?: string;
         lockedByUserId?: string;
+        reason?: string;
       }) => {
         if (data.memoId !== currentMemoIdRef.current) return;
-        const lockedBy = data.lockedBy || '동기화 서버';
+        const accessDenied = data.reason === 'access_denied';
+        const lockedBy = accessDenied
+          ? '접근 권한 없음'
+          : data.lockedBy || '동기화 서버 응답 없음';
         ownsLockRef.current = false;
         editIntentRef.current = false;
         lockRequestMemoRef.current = null;
@@ -381,9 +490,12 @@ export function useMemoSocket({
         stopLockResponseWatchdog();
         lockAttemptCount = 0;
         clearMemoLease(data.memoId);
+        accessDeniedMemoRef.current = accessDenied ? data.memoId : null;
         setLockHolder({
           displayName: lockedBy,
-          userId: data.lockedByUserId || 'lock-unavailable',
+          userId: accessDenied
+            ? 'access-denied'
+            : data.lockedByUserId || 'lock-unavailable',
         });
         setLeaseState('denied');
         onLockDeniedRef.current(lockedBy);
@@ -405,15 +517,20 @@ export function useMemoSocket({
     return () => {
       stopRenewal();
       stopLockResponseWatchdog();
+      stopJoinResponseWatchdog();
       startLockResponseWatchdogRef.current = () => {};
       stopLockResponseWatchdogRef.current = () => {};
       stopRenewalRef.current = () => {};
+      startJoinResponseWatchdogRef.current = () => {};
+      stopJoinResponseWatchdogRef.current = () => {};
       if (currentMemoIdRef.current) {
         clearMemoLease(currentMemoIdRef.current);
       }
       ownsLockRef.current = false;
       joinedMemoIdRef.current = null;
+      joinRequestMemoRef.current = null;
       lockRequestMemoRef.current = null;
+      accessDeniedMemoRef.current = null;
       socket.disconnect();
       socketRef.current = null;
       setIsConnected(false);
@@ -427,16 +544,19 @@ export function useMemoSocket({
     if (prevMemoId !== memoId) {
       stopLockResponseWatchdogRef.current();
       stopRenewalRef.current();
+      stopJoinResponseWatchdogRef.current();
+      accessDeniedMemoRef.current = null;
     }
     if (!socket || !socket.connected) {
       if (prevMemoId !== memoId) {
         ownsLockRef.current = false;
         editIntentRef.current = false;
         joinedMemoIdRef.current = null;
+        joinRequestMemoRef.current = null;
         lockRequestMemoRef.current = null;
       }
       currentMemoIdRef.current = memoId;
-      setLeaseState('denied');
+      setLeaseState('idle');
       return;
     }
 
@@ -446,6 +566,7 @@ export function useMemoSocket({
       ownsLockRef.current = false;
       editIntentRef.current = false;
       joinedMemoIdRef.current = null;
+      joinRequestMemoRef.current = null;
       lockRequestMemoRef.current = null;
       clearMemoLease(prevMemoId);
     }
@@ -453,15 +574,19 @@ export function useMemoSocket({
     // Join new room
     if (memoId) {
       currentMemoIdRef.current = memoId;
-      setLeaseState('denied');
+      setLockHolder(null);
+      setLeaseState('idle');
+      joinRequestMemoRef.current = memoId;
       socket.emit('joinMemo', { memoId });
+      startJoinResponseWatchdogRef.current(memoId);
     } else {
       currentMemoIdRef.current = null;
       ownsLockRef.current = false;
       editIntentRef.current = false;
       joinedMemoIdRef.current = null;
+      joinRequestMemoRef.current = null;
       lockRequestMemoRef.current = null;
-      setLeaseState('denied');
+      setLeaseState('idle');
       Promise.resolve().then(() => setLockHolder(null));
     }
   }, [memoId]);
@@ -470,8 +595,25 @@ export function useMemoSocket({
     const socket = socketRef.current;
     if (ownsLockRef.current) return;
     editIntentRef.current = true;
+    if (
+      currentMemoIdRef.current &&
+      accessDeniedMemoRef.current === currentMemoIdRef.current
+    ) {
+      setLeaseState('denied');
+      onLockDeniedRef.current('접근 권한 없음');
+      return;
+    }
     setLeaseState('pending');
     if (!socket || !socket.connected || !currentMemoIdRef.current) {
+      setLeaseState(leaseStateAfterConnectionLoss(true));
+      return;
+    }
+    if (joinedMemoIdRef.current !== currentMemoIdRef.current) {
+      if (joinRequestMemoRef.current !== currentMemoIdRef.current) {
+        joinRequestMemoRef.current = currentMemoIdRef.current;
+        socket.emit('joinMemo', { memoId: currentMemoIdRef.current });
+        startJoinResponseWatchdogRef.current(currentMemoIdRef.current);
+      }
       return;
     }
     if (
@@ -501,7 +643,8 @@ export function useMemoSocket({
     editIntentRef.current = false;
     lockRequestMemoRef.current = null;
     clearMemoLease(memoId);
-    setLeaseState('denied');
+    setLockHolder(null);
+    setLeaseState('idle');
     if (wasOwner) socket.emit('unlockMemo', { memoId });
   }, []);
 

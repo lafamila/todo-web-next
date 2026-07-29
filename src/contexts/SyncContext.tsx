@@ -15,8 +15,12 @@ import type {
   SyncIssueInterface,
   SyncStatusInterface,
 } from '@/lib/types';
-
-type SyncDisplayState = 'online' | 'offline' | 'paused' | 'blocked';
+import {
+  canMergeForSyncStatus,
+  getSyncDisplayState,
+  isClientSyncOnline,
+  type SyncDisplayState,
+} from '@/lib/syncDisplayPolicy';
 
 interface SyncContextValue {
   status: SyncStatusInterface | null;
@@ -33,9 +37,6 @@ interface SyncContextValue {
 }
 
 const SyncContext = createContext<SyncContextValue | null>(null);
-
-const isBlockingIssue = (issue: SyncIssueInterface) =>
-  issue.kind === 'identity' || issue.kind === 'schema' || issue.kind === 'clock';
 
 export function SyncProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -95,31 +96,14 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
 
-  const isOnline =
-    browserOnline &&
-    !requestFailed &&
-    Boolean(status) &&
-    (status?.role !== 'client' || status.online);
-  const displayState: SyncDisplayState = !isOnline
-    ? 'offline'
-    : status?.paused
-      ? 'paused'
-      : Boolean(status?.lastError) ||
-          issues.some(isBlockingIssue) ||
-          Boolean(
-            status &&
-              ((status.issues.identity ?? 0) +
-                (status.issues.schema ?? 0) +
-                (status.issues.clock ?? 0) >
-                0),
-          )
-        ? 'blocked'
-        : 'online';
-  const canMerge =
-    Boolean(status) &&
-    isOnline &&
-    !requestFailed &&
-    status?.mergeLocked === false;
+  const isOnline = isClientSyncOnline(status, browserOnline, requestFailed);
+  const displayState = getSyncDisplayState({
+    status,
+    browserOnline,
+    requestFailed,
+    issues,
+  });
+  const canMerge = canMergeForSyncStatus(status, isOnline, requestFailed);
 
   const findIssues = useCallback(
     (table: string, id: string) =>

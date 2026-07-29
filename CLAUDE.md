@@ -144,16 +144,20 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   있으면 `setContent` 로 덮지 않는다. 원격 본문을 별도 버퍼에 보존하고
   “원격에서 이 메모가 변경됨 — 비교” 배너를 띄워 좌우 비교 뒤 사용자가 결정하게 한다.
   편집 중이 아니면 기존처럼 원격 본문을 즉시 적용한다.
-- **편집 lease UX**: `useMemoSocket` 은 `pending | ready | denied` 상태를 명시적으로 노출한다.
-  `ready` 전에 인라인/Raw 편집, ⌘S 저장, 체크박스 즉시 반영을 모두 막고 한국어 안내와 재시도 버튼을
-  보여준다. 메모를 읽기 위해 여는 것만으로는 lease 를 요청하지 않고 첫 편집 의도 뒤 `lockStatus`
+- **편집 lease UX**: `useMemoSocket` 은 `idle | pending | ready | denied` 상태를 명시적으로 노출한다.
+  `idle` 은 잠금이 비어 있고 아직 편집 의도가 없는 정상 읽기 상태라 차단 안내를 띄우지 않는다.
+  `ready` 전에 인라인/Raw 편집, ⌘S 저장, 체크박스 즉시 반영을 모두 막고, 실제 `pending`/`denied`일
+  때만 한국어 안내와 재시도 버튼을 보여준다. 메모를 읽기 위해 여는 것만으로는 lease 를 요청하지 않고
+  첫 편집 의도 뒤 `lockStatus`
   입장 확인을 받은 후 요청한다. canonical `memoLocked` 이벤트를 받으면 기존 토큰과 활성 라인을 즉시
   폐기하며, `ready` 상태의 중복 요청은 pending 으로 되돌리지 않는다. REST 저장은 해당 소켓에서 받은
   `X-Memo-Lease-Token` 을 붙이며 저장 실패를 화면에 표시한다.
-- **헤더 동기화 상태**: 프로젝트 헤더의 작은 표시가 online/offline/paused/blocked, 마지막 성공 시각,
-  대기 변경 수와 미해결 문제 수를 보여준다. 항목별 해소 동작은 이 상태 팝오버가 아니라 위의 제목 클릭
-  경로가 담당한다. `/api/sync/issues` 는 관리자 전용이므로 비관리자는 합계만 보고 상세 확인·해소에
-  관리자 권한이 필요하다는 안내를 받는다.
+- **헤더 동기화 상태**: 프로젝트 헤더의 작은 표시는 `enabled=false`를 `로컬 전용`, online client만
+  `동기화됨`, server를 `수신 대기`로 구분한다. client 상세에는 실제 `peerUrl`, 마지막 성공 시각,
+  대기 변경 수와 미해결 문제 수를 보여준다. 저장·게시 액션은 헤더에 fixed로 겹치지 않고 편집 패널의
+  normal-flow 툴바에 둔다. 항목별 해소 동작은 상태 팝오버가 아니라 위의 제목 클릭 경로가 담당한다.
+  `/api/sync/issues` 는 관리자 전용이므로 비관리자는 합계만 보고 상세 확인·해소에 관리자 권한이
+  필요하다는 안내를 받는다.
 - **`parseContent` 와의 관계**: `lib/utils.ts` 의 `parseContent` 는 `ArticleDetail` 이 계속 사용한다.
   신규 `classifyLine`/`buildLineGroups` 가 같은 판정을 유지하는지 개발 모드에서
   `assertClassifierMatchesParseContent` 가 감시한다(블록 종류·내용·checked·indent 를 대조).

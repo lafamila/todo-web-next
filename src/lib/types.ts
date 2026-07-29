@@ -35,7 +35,7 @@ export interface MemoLeaseInterface {
   generation?: number;
 }
 
-export type MemoLeaseState = "pending" | "ready" | "denied";
+export type MemoLeaseState = "idle" | "pending" | "ready" | "denied";
 
 export type SyncIssueKind =
   | "conflict"

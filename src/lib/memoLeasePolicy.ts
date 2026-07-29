@@ -18,6 +18,14 @@ export interface LockRetrySnapshot {
   attemptCount: number;
 }
 
+export interface JoinRetrySnapshot {
+  connected: boolean;
+  currentMemoId: string | null;
+  joinedMemoId: string | null;
+  memoId: string;
+  attemptCount: number;
+}
+
 export function shouldEmitLockRequest(snapshot: LockRequestSnapshot): boolean {
   return Boolean(
     snapshot.connected &&
@@ -29,7 +37,13 @@ export function shouldEmitLockRequest(snapshot: LockRequestSnapshot): boolean {
 }
 
 export function leaseStateWithoutOwnership(editIntent: boolean): MemoLeaseState {
-  return editIntent ? "pending" : "denied";
+  return editIntent ? "pending" : "idle";
+}
+
+export function leaseStateAfterConnectionLoss(
+  editIntent: boolean,
+): MemoLeaseState {
+  return editIntent ? "denied" : "idle";
 }
 
 export function shouldRenewLease(
@@ -47,6 +61,17 @@ export function shouldRetryLockResponse(
     snapshot.connected &&
       snapshot.currentMemoId === snapshot.memoId &&
       snapshot.joinedMemoId === snapshot.memoId &&
+      snapshot.attemptCount < MAX_LOCK_RESPONSE_ATTEMPTS,
+  );
+}
+
+export function shouldRetryJoinResponse(
+  snapshot: JoinRetrySnapshot,
+): boolean {
+  return Boolean(
+    snapshot.connected &&
+      snapshot.currentMemoId === snapshot.memoId &&
+      snapshot.joinedMemoId !== snapshot.memoId &&
       snapshot.attemptCount < MAX_LOCK_RESPONSE_ATTEMPTS,
   );
 }

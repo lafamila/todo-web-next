@@ -184,7 +184,12 @@ export function MemoSection() {
       setLockMessage(null);
     },
     onLockDenied: (displayName: string) => {
-      setLockMessage(`${displayName}님이 수정중입니다`);
+      setLockMessage(
+        displayName === '접근 권한 없음' ||
+          displayName.startsWith('동기화 서버')
+          ? displayName
+          : `${displayName}님이 수정중입니다`,
+      );
       setRawMode(false);
       rawModeRef.current = false;
     },
@@ -345,7 +350,9 @@ export function MemoSection() {
   const canEdit = leaseState === 'ready' && !isLockedByOther;
 
   useEffect(() => {
-    if (leaseState === 'ready') setLockMessage(null);
+    if (leaseState === 'ready' || leaseState === 'idle') {
+      setLockMessage(null);
+    }
   }, [leaseState]);
 
   // Article (게시) 관련 상태
@@ -1005,64 +1012,53 @@ export function MemoSection() {
   return (
     <main className="detail min-h-0">
       <div className="h-full flex flex-col min-h-0">
-        {content !== originalContent && (
-          <h1 className="text-xl font-semibold text-gray-900 flex items-center gap-2 absolute right-2 top-0">
-            <span className="text-xs text-orange-600 font-normal">• 저장 안됨</span>
-          </h1>
-        )}
-        {lockMessage && (
-          <div className="absolute right-2 top-6 z-10">
-            <span className="text-xs text-yellow-400 font-medium bg-gray-800/80 px-2 py-1 rounded">{lockMessage}</span>
+        <div className="memo-editor-toolbar">
+          <div className="memo-editor-toolbar-status" aria-live="polite">
+            {content !== originalContent && (
+              <span className="memo-toolbar-unsaved">• 저장 안됨</span>
+            )}
+            {lockMessage && (
+              <span className="memo-toolbar-lock">{lockMessage}</span>
+            )}
+            {saveMessage && (
+              <span className="memo-toolbar-save-message">{saveMessage}</span>
+            )}
+            {publishMessage && (
+              <span className="memo-toolbar-publish-message">{publishMessage}</span>
+            )}
           </div>
-        )}
-        {saveMessage && (
-          <div className="absolute right-2 top-12 z-20">
-            <span className="text-xs text-amber-100 font-medium bg-red-950/90 px-2 py-1 rounded">
-              {saveMessage}
+          <div className="memo-editor-toolbar-actions">
+            <span className="memo-toolbar-shortcut">
+              {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘S' : 'Ctrl+S'}로 저장
             </span>
-          </div>
-        )}
-        {remoteContent !== null && !showRemoteCompare && (
-          <button
-            type="button"
-            className="remote-update-banner"
-            onClick={() => setShowRemoteCompare(true)}
-          >
-            원격에서 이 메모가 변경됨 — 비교
-          </button>
-        )}
-        <div className="fixed bottom-[calc(100vh-70px)] right-2 flex flex-col items-end gap-1">
-          <div className="text-sm text-gray-500">
-            {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘S' : 'Ctrl+S'}로 저장
-          </div>
-          {rawMode && (
-            <span className="text-xs text-gray-400 border border-white/20 rounded px-2 py-0.5">
-              RAW 모드 · {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'}로 종료
-            </span>
-          )}
-          {isAdmin && (
-            <>
-              <button
-                onClick={handlePublish}
-                disabled={isPublishing}
-                className="text-xs px-3 py-1 rounded-full bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isPublishing ? '게시 중...' : articleStatus ? `재게시 (v${articleStatus.publishedVersion})` : '게시'}
-              </button>
-              {articleStatus && (
+            {rawMode && (
+              <span className="memo-toolbar-raw">
+                RAW 모드 · {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'}로 종료
+              </span>
+            )}
+            {isAdmin && (
+              <>
                 <button
-                  onClick={handleUnpublish}
+                  type="button"
+                  onClick={handlePublish}
                   disabled={isPublishing}
-                  className="text-xs px-3 py-1 rounded-full bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="memo-toolbar-publish"
                 >
-                  {isPublishing ? '처리 중...' : '게시 취소'}
+                  {isPublishing ? '게시 중...' : articleStatus ? `재게시 (v${articleStatus.publishedVersion})` : '게시'}
                 </button>
-              )}
-            </>
-          )}
-          {publishMessage && (
-            <span className="text-xs text-green-500">{publishMessage}</span>
-          )}
+                {articleStatus && (
+                  <button
+                    type="button"
+                    onClick={handleUnpublish}
+                    disabled={isPublishing}
+                    className="memo-toolbar-unpublish"
+                  >
+                    {isPublishing ? '처리 중...' : '게시 취소'}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         </div>
 
         <button
@@ -1076,11 +1072,21 @@ export function MemoSection() {
         </button>
 
         <div
-          className="flex flex-col h-full min-h-0"
-          onPointerDownCapture={() => {
-            if (!canEdit) requestLock();
-          }}
+          className={`memo-editor-shell${
+            remoteContent !== null && !showRemoteCompare
+              ? ' has-remote-banner'
+              : ''
+          }`}
         >
+          {remoteContent !== null && !showRemoteCompare && (
+            <button
+              type="button"
+              className="remote-update-banner"
+              onClick={() => setShowRemoteCompare(true)}
+            >
+              원격에서 이 메모가 변경됨 — 비교
+            </button>
+          )}
           {(actionableIssue || (showRemoteCompare && remoteContent !== null)) ? (
             <MemoResolutionPanel
               key={actionableIssue?.id ?? `remote-${selectedMemo.id}`}
@@ -1144,25 +1150,30 @@ export function MemoSection() {
               />
             </div>
           )}
-          {!canEdit && !actionableIssue && !showRemoteCompare && (
-            <div className={`memo-lease-overlay memo-lease-${leaseState}`}>
-              <strong>
-                {leaseState === 'pending'
-                  ? '편집 잠금을 확인하는 중입니다'
-                  : isConnected
-                    ? '이 메모는 지금 편집할 수 없습니다'
-                    : '실시간 편집 서버에 연결되지 않았습니다'}
-              </strong>
-              <span>
-                {lockHolder
-                  ? `${lockHolder.displayName}님이 수정 중입니다.`
-                  : '입력과 저장은 안전한 편집 잠금을 확보한 뒤 사용할 수 있습니다.'}
-              </span>
-              <button type="button" onClick={requestLock}>
-                다시 시도
-              </button>
-            </div>
-          )}
+          {(leaseState === 'pending' || leaseState === 'denied') &&
+            !actionableIssue &&
+            !showRemoteCompare && (
+              <div className={`memo-lease-overlay memo-lease-${leaseState}`}>
+                <strong>
+                  {leaseState === 'pending'
+                    ? '편집 잠금을 확인하는 중입니다'
+                    : isConnected
+                      ? '이 메모는 지금 편집할 수 없습니다'
+                      : '실시간 편집 서버에 연결되지 않았습니다'}
+                </strong>
+                <span>
+                  {lockHolder
+                    ? lockHolder.userId === 'access-denied' ||
+                      lockHolder.userId === 'lock-unavailable'
+                      ? lockHolder.displayName
+                      : `${lockHolder.displayName}님이 수정 중입니다.`
+                    : '입력과 저장은 안전한 편집 잠금을 확보한 뒤 사용할 수 있습니다.'}
+                </span>
+                <button type="button" onClick={requestLock}>
+                  다시 시도
+                </button>
+              </div>
+            )}
 
           {showMemoSearch && searchPosition && (
             <div

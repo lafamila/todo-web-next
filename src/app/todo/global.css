@@ -56,7 +56,10 @@ body {
 .title-container>span {
   font-size: 36px;
   font-weight: bold;
-
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 
@@ -111,6 +114,97 @@ body {
   background-color: var(--black);
   padding: 10px;
   height: calc(100vh - 80px);
+  overflow: hidden;
+}
+
+.memo-editor-toolbar {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  min-height: 38px;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid #343434;
+  font-size: 12px;
+}
+
+.memo-editor-toolbar-status,
+.memo-editor-toolbar-actions {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.memo-editor-toolbar-actions {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.memo-toolbar-unsaved {
+  color: #fb923c;
+}
+
+.memo-toolbar-lock {
+  border-radius: 4px;
+  padding: 3px 6px;
+  background: #303030;
+  color: #fde68a;
+}
+
+.memo-toolbar-save-message {
+  color: #fca5a5;
+}
+
+.memo-toolbar-publish-message {
+  color: #86efac;
+}
+
+.memo-toolbar-shortcut {
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.memo-toolbar-raw {
+  border: 1px solid #525252;
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.memo-toolbar-publish,
+.memo-toolbar-unpublish {
+  border-radius: 999px;
+  padding: 4px 10px;
+  color: white;
+  cursor: pointer;
+}
+
+.memo-toolbar-publish {
+  background: #2563eb;
+}
+
+.memo-toolbar-unpublish {
+  background: #dc2626;
+}
+
+.memo-toolbar-publish:disabled,
+.memo-toolbar-unpublish:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.memo-editor-shell {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 미해결 sync_issues 가 가리키는 제목 전용 토큰. 아이콘/배지는 추가하지 않는다. */
@@ -122,6 +216,7 @@ body {
 .sync-status {
   position: relative;
   margin-left: auto;
+  flex: 0 0 auto;
   font-size: 12px;
 }
 
@@ -147,6 +242,14 @@ body {
 
 .sync-status-offline .sync-status-dot {
   background: #9ca3af;
+}
+
+.sync-status-local .sync-status-dot {
+  background: #64748b;
+}
+
+.sync-status-server .sync-status-dot {
+  background: #3b82f6;
 }
 
 .sync-status-paused .sync-status-dot {
@@ -226,6 +329,10 @@ body {
   color: #d1d5db;
   text-align: center;
   font-size: 12px;
+}
+
+.memo-editor-shell.has-remote-banner .memo-lease-overlay {
+  top: 48px;
 }
 
 .memo-lease-overlay strong {
