@@ -8,12 +8,20 @@ import {
   useCallback,
   type ReactNode,
 } from 'react';
-import type { UserInterface } from '@/lib/types';
+import type { FeatureFlagsInterface, UserInterface } from '@/lib/types';
 import * as api from '@/lib/api';
 import { getAccessDeniedMessage } from '@/lib/auth';
 
+// features 가 응답에 없으면(구버전 API·prod) 전부 노출한다 — prod 무변경 기본값.
+const DEFAULT_FEATURES: FeatureFlagsInterface = {
+  screenShare: true,
+  articles: true,
+  memberInvite: true,
+};
+
 interface AuthContextType {
   user: UserInterface | null;
+  features: FeatureFlagsInterface;
   isLoading: boolean;
   isAuthenticated: boolean;
   accessDeniedMessage: string | null;
@@ -65,6 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value: AuthContextType = {
     user,
+    features: user?.features ?? DEFAULT_FEATURES,
     isLoading,
     isAuthenticated: !!user,
     accessDeniedMessage,

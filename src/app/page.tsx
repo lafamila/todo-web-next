@@ -13,7 +13,7 @@ import ProjectSection from './todo/_components/ProjectSection';
 import ScreenShare from './todo/_components/ScreenShare';
 
 function TodoHomeContent() {
-  const { user, logout } = useAuth();
+  const { user, logout, features } = useAuth();
   const [message, setMessage] = useState(
     'todo 서비스를 사용하기 위해 user 권한 상승을 요청합니다.',
   );
@@ -109,7 +109,7 @@ function TodoHomeContent() {
     <div className="min-h-screen">
       <ProjectSection />
       <MemoListSection />
-      <ScreenShare />
+      {features.screenShare && <ScreenShare />}
     </div>
   );
 }

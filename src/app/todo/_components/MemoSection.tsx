@@ -116,7 +116,7 @@ export function MemoSection() {
     refreshProjects,
     refreshCurrentProject,
   } = useApp();
-  const { user } = useAuth();
+  const { user, features } = useAuth();
   const {
     issues,
     findIssue,
@@ -1036,7 +1036,7 @@ export function MemoSection() {
                 RAW 모드 · {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'}로 종료
               </span>
             )}
-            {isAdmin && (
+            {isAdmin && features.articles && (
               <>
                 <button
                   type="button"

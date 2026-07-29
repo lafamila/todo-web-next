@@ -196,6 +196,13 @@ export interface TodoAppStateInterface {
   members: ProjectMemberInterface[];
 }
 
+/** 스택 성격(sync 역할)에 따라 숨기는 prod 전용 표면 — `/api/session/me` 가 내려준다. */
+export interface FeatureFlagsInterface {
+  screenShare: boolean;
+  articles: boolean;
+  memberInvite: boolean;
+}
+
 export type TodoPermission = "owner" | "admin" | "user" | "visitor";
 export type ProjectRole = "owner" | "editor" | "viewer";
 
@@ -212,6 +219,8 @@ export interface UserInterface {
   inviteDisabledReason?: "visitor";
   isAdmin: boolean;
   isSuperAdmin?: boolean;
+  /** 없으면(구버전 API) 전부 노출로 취급한다. */
+  features?: FeatureFlagsInterface;
 }
 
 export interface TodoAppContextTypeInterface {

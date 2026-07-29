@@ -31,7 +31,7 @@ export default function MemoListSection() {
     inviteMember,
     removeMember,
   } = useApp();
-  const { user } = useAuth();
+  const { user, features } = useAuth();
   const { findIssue } = useSync();
   const isAdmin = user?.isAdmin ?? false;
 
@@ -118,7 +118,7 @@ export default function MemoListSection() {
       }
 
       if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
-        if (isAdmin) {
+        if (isAdmin && features.memberInvite) {
           e.preventDefault();
           e.stopPropagation();
           handleOpenMemberModal();
@@ -141,7 +141,7 @@ export default function MemoListSection() {
     };
     window.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
-  }, [selectedProject, isAdmin, handleOpenMemberModal, selectedMemo, selectedMemoIds]);
+  }, [selectedProject, isAdmin, features.memberInvite, handleOpenMemberModal, selectedMemo, selectedMemoIds]);
 
   const handleSearchUsers = useCallback((query: string) => {
     setSearchUserQuery(query);
@@ -354,7 +354,7 @@ export default function MemoListSection() {
               <span style={{ fontWeight: "bold", fontSize: "20px" }}>Tasks</span>{" "}
               <span className="task-count">({memos.length})</span>
             </div>
-            {isAdmin && (
+            {isAdmin && features.memberInvite && (
               <button
                 onClick={handleOpenMemberModal}
                 className="px-2 py-1 text-sm bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors"
