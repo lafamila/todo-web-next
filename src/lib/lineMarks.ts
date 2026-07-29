@@ -22,6 +22,21 @@ const INDENT_STEP_REM = 1.5;
 
 /** 들여쓰기를 인정하는 목록 표기: `1. ` `1) ` `- ` `* ` `+ `. */
 const LIST_MARKER_PATTERN = /^(?:\d+[.)]|[-*+]) /;
+/**
+ * 들여쓰기를 인정하는 링크 표기: 줄 **어디든** `[텍스트](URL)` 이 있으면 된다
+ * (메모 링크 `[@메모](?memoId=…)` 포함). 링크 앞에는 아무 텍스트나 올 수 있다.
+ * `](` 까지 확인하는 것이 안전장치다 — 실측 코퍼스에서 이 패턴에 걸리는 기존 들여쓴 비목록 줄은
+ * 0개라, 펜스 없이 붙여넣은 코드(`[key: string]: boolean;` 등)는 코드 블록으로 그대로 남는다.
+ */
+const LINK_PATTERN = /\[[^[\]\n]*\]\(/;
+
+function isIndentableBody(body: string): boolean {
+  return (
+    matchCheckboxBody(body) !== null ||
+    LIST_MARKER_PATTERN.test(body) ||
+    LINK_PATTERN.test(body)
+  );
+}
 
 export interface CheckboxMark {
   checked: boolean;
@@ -53,18 +68,18 @@ function matchCheckboxBody(body: string): CheckboxMark | null {
 /**
  * 앞 공백을 들여쓰기 단위로 해석한다.
  *
- * 체크박스/목록 표기가 뒤따를 때**만** 들여쓰기로 보고 그 외 줄은 원문을 그대로 둔다 —
- * 마크다운은 4칸 이상 들여쓴 줄을 코드 블록으로 읽으므로, 임의의 줄에서 공백을 걷어내면
- * 의도적으로 들여쓴 예시 문단의 렌더가 바뀐다. 반대로 목록 줄은 **반드시** 걷어내야 하는데,
- * 인라인 에디터는 한 줄씩 따로 마크다운으로 넘기므로 4칸 들여쓴 `- 항목` 이 목록이 아니라
- * 코드 블록으로 렌더되기 때문이다. 들여쓰기는 렌더에서 padding 으로 되살린다.
+ * 체크박스/목록/링크 표기가 뒤따를 때**만** 들여쓰기로 보고 그 외 줄은 원문을 그대로 둔다.
+ * 이 줄들은 앞 공백을 **반드시** 걷어내야 하는데, 에디터가 한 줄씩 따로 마크다운으로 넘기므로
+ * 4칸 이상 들여쓰면 목록/링크가 아니라 코드 블록으로 렌더되기 때문이다 — 들여쓰기는 렌더에서
+ * padding 으로 되살린다. 반대로 그 외 줄에서 공백을 걷어내면 안 된다: 실측 코퍼스에는 펜스 없이
+ * 붙여넣은 JSON/코드가 11,048줄(메모 95개) 있고, 이들은 4칸 들여쓰기 덕에 코드 블록으로 렌더된다.
  */
 export function splitIndent(text: string): IndentSplit {
   const match = /^( +)(.*)$/.exec(text);
   if (!match) return { level: 0, indentText: '', body: text };
 
   const [, indentText, body] = match;
-  if (!matchCheckboxBody(body) && !LIST_MARKER_PATTERN.test(body)) {
+  if (!isIndentableBody(body)) {
     return { level: 0, indentText: '', body: text };
   }
 

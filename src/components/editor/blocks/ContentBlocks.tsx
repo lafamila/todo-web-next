@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment } from 'react';
+import { Fragment, type AnchorHTMLAttributes, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
@@ -16,39 +16,74 @@ import { cn } from '@/lib/utils';
 
 export const CONTENT_MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks, remarkBracketBold];
 
-/**
- * `[텍스트]` 강조만 적용하는 경량 인라인 렌더러.
- * 마크다운을 통과하지 않는 표면(체크박스 내용)이 본문과 같은 규칙을 쓰게 한다.
- */
-export function InlineMarks({ text }: { text: string }) {
+/** 본문 링크의 단일 표현 — 마크다운 경로와 경량 렌더러가 같은 앵커를 쓴다. */
+function ContentLink({
+  href,
+  children,
+  ...props
+}: { href?: string } & AnchorHTMLAttributes<HTMLAnchorElement>) {
+  const isMemoLink = Boolean(href && (href.includes('memoId=') || href.startsWith('?')));
   return (
-    <>
-      {splitBracketBold(text).map((part, index) =>
-        part.bold ? (
-          <strong key={index}>{part.text}</strong>
-        ) : (
-          <Fragment key={index}>{part.text}</Fragment>
-        ),
-      )}
-    </>
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cn('hover:underline', isMemoLink ? 'text-white' : 'text-blue-300')}
+      {...props}
+    >
+      {children}
+    </a>
   );
 }
 
-export const contentMarkdownComponents: Components = {
-  a: ({ href, children, ...props }) => {
-    const isMemoLink = Boolean(href && (href.includes('memoId=') || href.startsWith('?')));
-    return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className={cn('hover:underline', isMemoLink ? 'text-white' : 'text-blue-300')}
-        {...props}
-      >
-        {children}
-      </a>
+/** `[텍스트](URL)` — 마크다운을 통과하지 않는 표면에서만 필요한 최소 링크 문법. */
+const INLINE_LINK_PATTERN = /\[([^[\]\n]*)\]\(([^()\s]+)\)/g;
+
+function boldNodes(text: string, keyPrefix: string) {
+  return splitBracketBold(text).map((part, index) =>
+    part.bold ? (
+      <strong key={`${keyPrefix}-${index}`}>{part.text}</strong>
+    ) : (
+      <Fragment key={`${keyPrefix}-${index}`}>{part.text}</Fragment>
+    ),
+  );
+}
+
+/**
+ * `[텍스트]` 강조 + `[텍스트](URL)` 링크만 적용하는 경량 인라인 렌더러.
+ * 체크박스 내용은 마크다운을 통과하지 않으므로(원문 그대로를 span 에 넣는다) 이 표면이 본문과
+ * 같은 규칙을 쓰게 하는 유일한 경로다. 전체 마크다운을 돌리지 않는 이유는 기존 체크박스 내용의
+ * `*`·`#`·`_` 가 갑자기 서식으로 해석되는 걸 막기 위함이다.
+ */
+export function InlineMarks({ text }: { text: string }) {
+  const pattern = new RegExp(INLINE_LINK_PATTERN.source, 'g');
+  const nodes: ReactNode[] = [];
+  let last = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > last) nodes.push(...boldNodes(text.slice(last, match.index), `t${last}`));
+    nodes.push(
+      <ContentLink key={`l${match.index}`} href={match[2]}>
+        {match[1]}
+      </ContentLink>,
     );
-  },
+    last = match.index + match[0].length;
+  }
+
+  if (last < text.length || nodes.length === 0) {
+    nodes.push(...boldNodes(text.slice(last), `t${last}`));
+  }
+
+  return <>{nodes}</>;
+}
+
+export const contentMarkdownComponents: Components = {
+  a: ({ href, children, ...props }) => (
+    <ContentLink href={href} {...props}>
+      {children}
+    </ContentLink>
+  ),
   ol: ({ children, ...props }) => (
     <ol className="my-1 list-decimal pl-6 marker:text-white" {...props}>
       {children}
