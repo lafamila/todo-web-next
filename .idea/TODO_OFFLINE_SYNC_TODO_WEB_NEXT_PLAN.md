@@ -1,5 +1,5 @@
 ---
-status: PREPARED
+status: IN_PROGRESS
 summary: "충돌·중복 항목을 목록에서 흐리게 표시하고, 열면 즉시 좌우 분할로 해소하는 화면과 동기화 상태 표시를 만든다."
 ---
 
