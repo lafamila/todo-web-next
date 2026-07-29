@@ -1,6 +1,8 @@
 ---
-status: IN_PROGRESS
+status: COMPLETED
 summary: "충돌·중복 항목을 목록에서 흐리게 표시하고, 열면 즉시 좌우 분할로 해소하는 화면과 동기화 상태 표시를 만든다."
+completed_at: 2026-07-30
+completion_reason: "auth verify 엔드포인트·양방향 동기화·부트스트랩·실시간(socket) 검증까지 전부 배포 완료."
 ---
 
 # TODO OFFLINE SYNC — todo-web-next execution plan
