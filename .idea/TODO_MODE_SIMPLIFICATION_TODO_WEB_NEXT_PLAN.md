@@ -1,5 +1,5 @@
 ---
-status: PREPARED
+status: IN_PROGRESS
 summary: "local 모드용 프로덕션 빌드 경로 검증 — http 로컬 주소 build-arg 로 next build 가 성립하는지 확인하고 문서화한다."
 ---
 
