@@ -211,8 +211,9 @@ todo 는 한 레포로 **2×2 = 4모드**를 돌린다. 축은 직교한다 —
   `NEXT_PUBLIC_API_URL=http://localhost:20022/api`, `NEXT_PUBLIC_SOCKET_URL=http://localhost:20022`,
   `NEXT_PUBLIC_SOCKET_PATH=/api/socket.io/`, `NEXT_PUBLIC_LIVEKIT_URL=ws://localhost:7880`.
   dev 페어는 `next dev` 라 compose `environment` 로 넘겨도 인라인된다 (dev-local `:20023`, dev-prod `:20024`).
-- **prod 전용 표면(화면공유·게시·멤버초대)의 숨김 판정은 신선도 축을 따른다** — `prod-local` 만 숨기고
-  `dev-local`·`dev-prod`·`prod-prod` 는 전부 표시한다 (dev 에서는 모든 기능을 테스트해야 하므로).
+- **prod 전용 표면(화면공유·게시·멤버초대)의 숨김 판정은 위치 축을 따른다** — `*-local`
+  (dev-local·prod-local)은 숨기고 `*-prod`(dev-prod·prod-prod)는 표시한다 (2026-07-31 사용자 확정).
+  dev-local 은 prod-local 의 거울이라 숨김 UX 까지 동일하며, 숨겨진 기능의 테스트는 dev-prod web(:30334)에서 한다.
   판정 자체는 API 가 내려주는 `features` 플래그(`src/lib/types.ts`)이며 web 은 그대로 따른다.
 - **HTTPS/WSS 강제는 `deploy-todo-prod.sh` 의 검증이지 이 레포의 제약이 아니다.** 코드에도 Dockerfile 에도
   scheme 판정이 없다(빌드 인자는 "비어 있지 않을 것"만 검사). prod-local 빌드는 그 스크립트를 거치지 않으므로
