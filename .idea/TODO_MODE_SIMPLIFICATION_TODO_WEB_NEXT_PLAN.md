@@ -1,6 +1,6 @@
 ---
 status: IN_PROGRESS
-summary: "local 모드용 프로덕션 빌드 경로 검증 — http 로컬 주소 build-arg 로 next build 가 성립하는지 확인하고 문서화한다."
+summary: "prod-local 모드용 프로덕션 빌드 경로 검증 — http 로컬 주소 build-arg 로 next build 가 성립하는지 확인하고 문서화한다."
 ---
 
 # TODO MODE SIMPLIFICATION — todo-web-next execution plan
@@ -11,7 +11,7 @@ Canonical orchestration plan:
 
 ## Repo Responsibility
 
-local 모드의 web 이 dev 서버(`next dev` + 소스 마운트)에서 **prod 와 동일한 프로덕션 빌드 이미지**로 바뀐다. 이 레포는 그 빌드가 **http 로컬 주소** build-arg 로 성립하는지 검증하고, 안 되면 최소 수정한다. 이미지를 빌드·구동하는 주체는 루트(`todoctl`/compose)다.
+prod-local 모드의 web 이 dev 서버에서 **prod-prod 와 동일한 프로덕션 빌드 이미지**로 바뀐다. 모드 체계는 2×2(dev-local/dev-prod/prod-local/prod-prod)로 확정 — 문서 표기도 이를 따른다. dev 페어에는 web 이 2개다 (:30333 dev-local, **:30334 dev-prod 신규**). 이 레포는 그 빌드가 **http 로컬 주소** build-arg 로 성립하는지 검증하고, 안 되면 최소 수정한다. 이미지를 빌드·구동하는 주체는 루트(`todoctl`/compose)다.
 
 ## Inputs / Dependencies
 
