@@ -349,6 +349,19 @@ export function MemoSection() {
   const isLockedByOther = Boolean(lockHolder);
   const canEdit = leaseState === 'ready' && !isLockedByOther;
 
+  // pending 오버레이는 300ms 를 넘길 때만 보여준다 — 로컬/근거리 서버에서는 lease
+  // 핸드셰이크가 수십 ms 에 끝나 매 클릭마다 배너가 번쩍이기 때문. 입력 차단
+  // 자체(canEdit)는 지연 없이 즉시 걸리고, denied 는 실제 차단이라 바로 보인다.
+  const [pendingOverlayVisible, setPendingOverlayVisible] = useState(false);
+  useEffect(() => {
+    if (leaseState !== 'pending') {
+      setPendingOverlayVisible(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setPendingOverlayVisible(true), 300);
+    return () => window.clearTimeout(timer);
+  }, [leaseState]);
+
   useEffect(() => {
     if (leaseState === 'ready' || leaseState === 'idle') {
       setLockMessage(null);
@@ -1150,7 +1163,8 @@ export function MemoSection() {
               />
             </div>
           )}
-          {(leaseState === 'pending' || leaseState === 'denied') &&
+          {((leaseState === 'pending' && pendingOverlayVisible) ||
+            leaseState === 'denied') &&
             !actionableIssue &&
             !showRemoteCompare && (
               <div className={`memo-lease-overlay memo-lease-${leaseState}`}>
