@@ -1,4 +1,9 @@
 # Public NEXT_PUBLIC_* values are embedded into the browser bundle at build time.
+# 이 이미지는 prod-local·prod-prod 두 모드가 공유한다 (dev-* 는 Dockerfile.dev).
+# 차이는 주입되는 build-arg 값뿐이며 scheme 제약은 없다 —
+# prod-local 은 http://localhost:*, prod-prod 는 https/wss 를 받는다.
+# (HTTPS/WSS 강제는 ../.scripts/deploy-todo-prod.sh 의 prod 전용 검증이다.)
+# 아래 test 는 "비어 있지 않을 것"만 확인한다.
 FROM node:24-alpine AS builder
 WORKDIR /app
 
@@ -37,6 +42,12 @@ ENV NODE_ENV=production \
 COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+
+# 빌드된 소스의 git ref. todoctl 이 prod-local 이미지를 만들 때 주입하고 `todoctl status` 가 읽는다.
+# 마지막 레이어에 둬서 ref 가 바뀌어도 위 COPY 캐시를 깨지 않는다. 미주입 시 빈 값.
+ARG TODO_BUILD_REF=""
+ENV TODO_BUILD_REF=${TODO_BUILD_REF}
+LABEL org.opencontainers.image.revision=${TODO_BUILD_REF}
 
 USER node
 EXPOSE 3034

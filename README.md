@@ -22,20 +22,32 @@ npm run start   # production 서버 (--port 3034)
 
 ## Docker
 
-### 로컬 Docker 개발
+### 로컬 Docker 스택 (2×2 4모드)
 
-Docker 개발 서버는 host `127.0.0.1:3030` 에만 공개되고, container 안에서는
-`0.0.0.0:3034` 로 실행된다. 기본 API/Socket.IO browser URL은
-`http://localhost:20022` 이다.
+모드는 **신선도**(dev = 핫리로드 / prod = 고정 빌드) × **위치**(local = 클라이언트 / prod = 서버)로 갈린다.
+스택은 workspace root 의 `todoctl` 이 관리한다.
+
+| `TODO_MODE` | web 주소 | 이미지 | 소스 반영 |
+|---|---|---|---|
+| **dev-local** | http://localhost:30333 | `Dockerfile.dev` + 소스 mount (`next dev`) | 저장 즉시 (핫리로드) |
+| **dev-prod** | http://localhost:30334 | `Dockerfile.dev` + 소스 mount (`next dev`) | 저장 즉시 (핫리로드) |
+| **prod-local** | http://localhost:3030 | `Dockerfile` 프로덕션 빌드 | `todoctl local update` 로만 |
+| **prod-prod** | https://todo.lafamila.xyz | `Dockerfile` 프로덕션 빌드 (NAS) | 배포 스크립트 |
 
 ```bash
 # Workspace root
-docker compose -f .scripts/todo/compose.yml up -d --build
-# http://localhost:3030
+./.scripts/todoctl up dev        # dev 페어 (dev-local + dev-prod, web 포함 4컨테이너)
+./.scripts/todoctl up local      # prod-local (실사용 동기화 클라이언트)
+./.scripts/todoctl local update  # origin/main fetch → 이미지 재빌드 → 재생성
+./.scripts/todoctl status
 ```
 
-소스와 분리된 named volume 이 `node_modules` 와 `.next` 를 보관한다. 종료 시에는
-`docker compose -f .scripts/todo/compose.yml down` 을 사용한다.
+**dev 는 페어다.** dev-local ↔ dev-prod 가 상시 동기화되므로, dev-local 에서 만든 메모가
+dev-prod web(`:30334`)에 뜨는지 눈으로 확인할 수 있다 — sync 기능을 개발하는 축소판 실토폴로지다.
+
+**prod-local 은 프로덕션 빌드**라 소스를 고쳐도 화면이 바뀌지 않는다. 코드 확인은 dev 페어에서 하고,
+반영은 `git push` → prod-prod 배포 → `todoctl local update` 순서를 탄다.
+container 내부 port 는 어느 모드나 `3034` 다.
 
 ### 운영 Docker 배포
 

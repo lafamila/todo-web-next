@@ -180,29 +180,62 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 
 ## Ports
 
-- local dev: `3034`
-- API target: `todo-api-fastapi` local `http://localhost:8000/api`
+- 컨테이너 내부 포트는 어느 모드에서나 `3034` 고정 (`npm run dev`/`npm run start` 도 동일).
+- host 노출: **dev-local** `127.0.0.1:30333` · **dev-prod** `127.0.0.1:30334` · **prod-local** `127.0.0.1:3030` · **prod-prod** `127.0.0.1:3034` (NAS, 리버스 프록시 뒤).
+- API target: dev-local `http://localhost:20023/api` · dev-prod `http://localhost:20024/api` · prod-local `http://localhost:20022/api` · prod-prod `https://todo.lafamila.xyz/api`.
+
+## 4-Mode 운영 (2×2: 신선도 × 위치)
+
+todo 는 한 레포로 **2×2 = 4모드**를 돌린다. 축은 직교한다 —
+**코드 신선도**(dev = 작업 중 신버전·핫리로드 / prod = 검증된 고정 이미지) **× 위치**(local = 클라이언트 / prod = 서버).
+**web 의 모드 차이는 오직 "어떤 API 주소를 바라보는가"** 뿐이고, 런타임에 읽는 `NEXT_PUBLIC_*` 은 없다
+(`src/lib/constants.ts` 가 빌드/컴파일 시점에 전부 인라인한다).
+
+| `TODO_MODE` | web 주소 | web 구동 방식 | 역할 |
+|---|---|---|---|
+| **dev-local** | `:30333` | `Dockerfile.dev` + 소스 mount + `next dev` | 개발 중 코드의 **클라이언트** 측 |
+| **dev-prod** | `:30334` | `Dockerfile.dev` + 소스 mount + `next dev` | 개발 중 코드의 **서버** 측 — 동기화 결과를 눈으로 확인 |
+| **prod-local** | `:3030` | **프로덕션 빌드 이미지** (`Dockerfile`) | 노트북 실사용 — 원격 동기화 클라이언트 |
+| **prod-prod** | `todo.lafamila.xyz` | 프로덕션 빌드 이미지 (`Dockerfile`) | 운영 (NAS) — 진실의 원천 |
+
+- **dev 는 항상 페어다.** sync 가 1급 기능이라 개발 환경 자체가 클라↔서버 실토폴로지의 축소판이며,
+  dev-local ↔ dev-prod 가 상시 동기화된다. **web 이 양쪽 모두에 있는 이유**가 여기 있다 —
+  dev-local 에서 만든 메모가 **dev-prod web(`:30334`)** 에 뜨는지 눈으로 확인하는 것이 dev-prod web 의 존재 이유다.
+  양쪽 다 핫리로드이므로 client 역할 기능(sync·오프라인 세션)도 dev 페어에서 개발한다.
+- **prod-local 은 dev 서버가 아니다.** 소스 마운트·`WATCHPACK_POLLING`·핫리로드가 없으므로
+  로컬에서 파일을 고쳐도 prod-local 화면은 바뀌지 않는다. 반영 경로는 하나다:
+  **dev 페어(`:30333`/`:30334`)에서 확인 → `git push` → (NAS) prod-prod 배포 → 노트북에서 `todoctl local update`**
+  (fetch → 이미지 빌드 → 재생성). 세션 DB 영속화 덕에 갱신해도 로그인은 유지된다.
+- build-arg 를 주입하는 주체는 이 레포가 아니라 **워크스페이스 루트의 `todoctl`**(prod-local)과
+  `../.scripts/deploy-todo-prod.sh`(prod-prod)다. prod-local 값은 전부 평문 http 다:
+  `NEXT_PUBLIC_API_URL=http://localhost:20022/api`, `NEXT_PUBLIC_SOCKET_URL=http://localhost:20022`,
+  `NEXT_PUBLIC_SOCKET_PATH=/api/socket.io/`, `NEXT_PUBLIC_LIVEKIT_URL=ws://localhost:7880`.
+  dev 페어는 `next dev` 라 compose `environment` 로 넘겨도 인라인된다 (dev-local `:20023`, dev-prod `:20024`).
+- **prod 전용 표면(화면공유·게시·멤버초대)의 숨김 판정은 신선도 축을 따른다** — `prod-local` 만 숨기고
+  `dev-local`·`dev-prod`·`prod-prod` 는 전부 표시한다 (dev 에서는 모든 기능을 테스트해야 하므로).
+  판정 자체는 API 가 내려주는 `features` 플래그(`src/lib/types.ts`)이며 web 은 그대로 따른다.
+- **HTTPS/WSS 강제는 `deploy-todo-prod.sh` 의 검증이지 이 레포의 제약이 아니다.** 코드에도 Dockerfile 에도
+  scheme 판정이 없다(빌드 인자는 "비어 있지 않을 것"만 검사). prod-local 빌드는 그 스크립트를 거치지 않으므로
+  http/ws 값으로 정상 빌드·동작한다 (2026-07-30 실측 검증).
 
 ## Local / Deploy Env
 
-- local 개발 서버는 `npm run dev` 로 `3034` 포트에서 실행한다.
-- Docker local 개발은 workspace root `../.scripts/todo/compose.yml` 로 API와
-  함께 실행한다. Web은 host `127.0.0.1:3030` → container `0.0.0.0:3034`,
-  browser-facing API/socket 기본값은 `http://localhost:20022` 이다.
+- 순수 로컬 개발 서버는 `npm run dev` 로 `3034` 포트에서 실행한다 (컨테이너 없이 쓸 때).
+- Docker 스택은 workspace root `../.scripts/todo/compose.yml` 이 API 와 함께 정의한다.
 - **dev 컨테이너의 잘린 읽기 증상**: bind mount + 폴링 감시라 저장 중인 파일을 읽어 컴파일하는 일이 있다.
   `Unterminated JSX contents`, `Expected '</', got '<eof>'`, `'const' declarations must be initialized`
   처럼 **파일이 갑자기 끝난 것처럼 보이는** 에러이고, 지목된 줄은 멀쩡하다. 코드 문제가 아니므로
   `npx tsc --noEmit` 으로 파일이 유효한지 먼저 확인하고, 해당 파일을 `touch` 해 재컴파일을 유도한다
-  (에러가 캐시돼 새로고침만으로는 안 풀린다).
+  (에러가 캐시돼 새로고침만으로는 안 풀린다). **dev 페어(`:30333`/`:30334`)에만 해당한다** — prod-local/prod-prod 는 빌드 이미지라 무관하다.
 - production 검증 기준은 `npm run build` 이다.
-- 독립 배포 시 Docker build 는 `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SOCKET_URL`, `NEXT_PUBLIC_SOCKET_PATH`, `NEXT_PUBLIC_LIVEKIT_URL` 을 build arg 로 주입해 생성한다.
+- Docker build 는 `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SOCKET_URL`, `NEXT_PUBLIC_SOCKET_PATH`, `NEXT_PUBLIC_LIVEKIT_URL` 을 build arg 로 주입해 생성한다. 네 값 중 하나라도 비면 builder 가 실패한다.
 - production app compose는 두지 않는다. workspace root
   `../.scripts/deploy-todo-prod.sh` 가 `.env.build`를 읽어 pull/build/rm/run하고,
   `teddy-infra`와 `restart: unless-stopped`를 적용한다.
-- `NEXT_PUBLIC_*` 값은 browser bundle에 공개된다. 운영 값은 browser-reachable
+- `NEXT_PUBLIC_*` 값은 browser bundle에 공개된다. **운영(prod-prod)** 값은 browser-reachable
   HTTPS/WSS URL 또는 same-origin 경로여야 하며 Docker service/container hostname을
-  사용하지 않는다. 비밀 값은 넣지 않는다.
-- root compose 제거 이후에도 API, socket, LiveKit 대상은 이 repo 의 public env 값으로 교체한다.
+  사용하지 않는다. 비밀 값은 넣지 않는다. 나머지 세 모드는 브라우저가 같은 노트북에 있으므로
+  `http://localhost:*` 를 그대로 쓴다 (localhost 는 브라우저에서 secure context 로 취급된다).
 - infra 의 실제 호스트는 root infra compose 또는 운영 환경이 제공한다. 이 frontend repo 는 host 값을 직접 고정하지 않는다.
 
 ## Security
