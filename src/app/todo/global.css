@@ -73,6 +73,11 @@ body {
   padding: 0 20px;
 }
 
+/* "Tasks (n)" 행의 상단 여백 — 인라인 스타일이 아니어야 모바일에서 줄일 수 있다 */
+.tasks-heading {
+  padding-top: 40px;
+}
+
 /* tasks 영역 ↔ 에디터 영역 경계 드래그 리사이저 (더블클릭 = 기본폭 복원) */
 .pane-resizer {
   position: absolute;
@@ -117,18 +122,115 @@ body {
   overflow: hidden;
 }
 
-.memo-editor-toolbar {
-  flex: 0 0 auto;
+/*
+ * 메모 상태·액션 묶음의 자리는 화면 폭에 따라 다르다 (JS: MemoSection).
+ * - 데스크톱: 헤더(동기화 표시 라인)의 `#memo-status-slot` 으로 포털 → 메모 영역을 침범하지 않는다.
+ * - 모바일: 헤더가 좁으므로 패널 상단 앱바(`.memo-mobile-bar`)에 둔다.
+ * 헤더는 흰 배경이라 다크 패널용 색을 그대로 쓸 수 없어 `.memo-status-bar` 안에서 다시 칠한다.
+ */
+.memo-status-slot:empty {
+  display: none;
+}
+
+/* 내용이 있으면 우측으로 밀고, 그 뒤 동기화 표시가 바로 붙게 한다 (auto 여백 중복 방지) */
+.memo-status-slot:not(:empty) {
   min-width: 0;
+  margin-left: auto;
+}
+
+.memo-status-slot:not(:empty) ~ .sync-status {
+  margin-left: 0;
+}
+
+.memo-status-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px 12px;
-  min-height: 38px;
+  justify-content: flex-end;
+  gap: 4px 10px;
+  min-width: 0;
+  max-height: 100%;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.memo-status-bar .memo-toolbar-unsaved {
+  color: #c2410c;
+}
+
+.memo-status-bar .memo-toolbar-lock {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.memo-status-bar .memo-toolbar-save-message {
+  color: #b91c1c;
+}
+
+.memo-status-bar .memo-toolbar-publish-message {
+  color: #15803d;
+}
+
+.memo-status-bar .memo-toolbar-shortcut,
+.memo-status-bar .memo-toolbar-raw {
+  color: #6b7280;
+}
+
+.memo-status-bar .memo-toolbar-raw {
+  border-color: #d4d4d4;
+}
+
+/* 모바일 앱바 — 데스크톱에서는 렌더되지 않지만 폭이 바뀌는 순간을 위해 숨김도 걸어둔다. */
+.memo-mobile-bar {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
   padding: 0 2px 8px;
   border-bottom: 1px solid #343434;
   font-size: 12px;
+}
+
+.memo-mobile-bar .memo-editor-toolbar-status {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.memo-mobile-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.memo-mobile-back,
+.memo-mobile-save {
+  flex: 0 0 auto;
+  border-radius: 6px;
+  /* 터치 타깃 최소 높이 */
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* 모바일의 유일한 뒤로가기 경로 — 흐리게 두면 못 찾는다 */
+.memo-mobile-back {
+  border: 1px solid #6b7280;
+  background: #262626;
+  color: #f3f4f6;
+}
+
+.memo-mobile-save {
+  background: #2563eb;
+  color: white;
+}
+
+.memo-mobile-save:disabled {
+  background: #374151;
+  color: #9ca3af;
+  cursor: not-allowed;
 }
 
 .memo-editor-toolbar-status,
@@ -815,4 +917,264 @@ html.viewport-resizing .project-secret {
 
 .new-project-icon svg g {
   stroke: var(--white);
+}
+
+/* ==========================================================================
+   반응형 — 모바일 (2026-07-31)
+   경계는 768px 하나이며 JS 쪽 `useIsMobile`(MOBILE_BREAKPOINT_PX)과 **같은 값**이어야 한다.
+   레이아웃(이 파일)과 동작(뷰 전환·상태바 위치)이 같은 지점에서 바뀌어야 하기 때문이다.
+   데스크톱 규칙은 이 블록 밖에서 그대로 유지된다 — 아래는 전부 덮어쓰기다.
+   ========================================================================== */
+
+/* 드로어 토글·백드롭은 모바일 전용이다 (미디어 쿼리에서 켠다) */
+.sidebar-drawer-toggle,
+.sidebar-backdrop {
+  display: none;
+}
+
+.sidebar-drawer-toggle {
+  position: fixed;
+  z-index: 1001; /* 사이드바(999)·백드롭(998) 위 — 열린 상태에서 닫기 버튼이 된다 */
+  top: 8px;
+  left: 8px;
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: black;
+  color: var(--white);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.sidebar-backdrop {
+  position: fixed;
+  z-index: 998;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* 태블릿 이상이지만 hover 가 없는 기기 — 사이드바가 hover 로 펼쳐질 수 없으므로 폭을 고정한다 */
+@media (hover: none) and (min-width: 769px) {
+  .left-sidebar:hover {
+    width: var(--left-sidebar-width);
+  }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --mobile-header-height: 56px;
+  }
+
+  /* --- 사이드바 → 슬라이드 드로어 ------------------------------------- */
+  .sidebar-drawer-toggle,
+  .sidebar-backdrop {
+    display: flex;
+  }
+
+  .left-sidebar {
+    width: min(78vw, 300px);
+    height: 100dvh;
+    /* 터치에는 hover 가 없다 — 폭 애니메이션 대신 전체를 밀어 넣고 뺀다 */
+    transform: translateX(-100%);
+    transition: transform 220ms ease;
+    grid-template-rows: var(--mobile-header-height) minmax(0, 1fr) auto;
+  }
+
+  .left-sidebar:hover {
+    width: min(78vw, 300px);
+  }
+
+  .left-sidebar.drawer-open {
+    transform: none;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.6);
+  }
+
+  /* 드로어에서는 프로젝트 이름이 항상 보인다 (hover 전제 제거) */
+  .left-sidebar .project-name,
+  .left-sidebar:hover .project-name {
+    display: inline-flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: space-between;
+    width: auto;
+    padding-left: 12px;
+  }
+
+  .left-sidebar .new-project-label,
+  .left-sidebar:hover .new-project-label {
+    width: auto;
+    padding-left: 12px;
+  }
+
+  .project-container {
+    grid-auto-rows: 52px; /* 터치 타깃 */
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .project-icon {
+    width: 28px;
+  }
+
+  .project-secret {
+    left: 0;
+  }
+
+  .new-project {
+    padding: 10px 12px;
+  }
+
+  /* --- 본문: 단일 컬럼 + 목록/메모 뷰 전환 ---------------------------- */
+  .content {
+    margin-left: 0;
+    padding: 0;
+    height: 100dvh;
+  }
+
+  .main-container {
+    /*
+     * !important 는 **인라인 스타일을 이기기 위한** 것이다. tasks 영역 폭은 데스크톱에서
+     * 인라인(`style={{gridTemplateColumns}}`)으로 들어오는데, JS 가 모바일에서 그걸 빼주기
+     * 전(최초 렌더 한 프레임)이나 JS 판정이 늦는 순간에 400px 컬럼이 남으면 내용이 잘린다.
+     */
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: var(--mobile-header-height) minmax(0, 1fr);
+  }
+
+  .title-container {
+    grid-column: 1;
+    gap: 8px;
+    padding: 0 12px 0 56px; /* 좌측 고정 드로어 토글 자리 */
+  }
+
+  .title-container>span {
+    font-size: 18px;
+  }
+
+  .main,
+  .detail {
+    grid-column: 1;
+  }
+
+  .main-container.mobile-view-list .detail {
+    display: none;
+  }
+
+  .main-container.mobile-view-detail .main {
+    display: none;
+  }
+
+  /* --- 목록 ----------------------------------------------------------- */
+  .main {
+    padding: 0 12px;
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+  }
+
+  .tasks-heading {
+    padding-top: 12px;
+  }
+
+  .new-task-container,
+  .task-container,
+  .sort-options {
+    max-width: none;
+  }
+
+  /* 16px 미만이면 iOS 가 포커스 시 화면을 확대한다 */
+  .new-task {
+    padding-right: 84px;
+    font-size: 16px;
+  }
+
+  .guide-text {
+    font-size: 12px;
+  }
+
+  .sort-options {
+    gap: 18px;
+    padding: 8px 0;
+  }
+
+  .sort-option {
+    padding: 4px 0;
+    font-size: 14px;
+  }
+
+  .task-container {
+    grid-auto-rows: 64px;
+  }
+
+  .task {
+    padding-left: 12px;
+  }
+
+  .task-selected,
+  .task-multi-selected {
+    padding-left: 6px; /* 12px - 6px 보더 */
+  }
+
+  .pane-resizer {
+    display: none; /* 단일 컬럼에서는 조절할 경계가 없다 */
+  }
+
+  /* --- 메모 패널 ------------------------------------------------------ */
+  .detail {
+    height: 100%;
+    padding: 8px;
+  }
+
+  .memo-mobile-bar {
+    display: flex;
+  }
+
+  /* 상태·액션은 앱바가 갖는다. JS 가 포털을 옮기는 사이(회전 등)에도 헤더가 붐비지 않게 못박는다. */
+  .memo-status-slot {
+    display: none;
+  }
+
+  .memo-help-fab {
+    right: 12px;
+    bottom: 12px;
+    width: 40px;
+    height: 40px;
+    font-size: 15px;
+    opacity: 0.85;
+  }
+
+  /* --- 비교/해소·팝오버: 좌우 2열을 위아래로 ------------------------- */
+  .memo-diff-headings,
+  .memo-diff-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .memo-diff-row pre {
+    border-right: 0;
+  }
+
+  .duplicate-project-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .memo-resolution,
+  .memo-resolution-loading {
+    padding: 10px;
+  }
+
+  .sync-status-detail {
+    width: min(280px, calc(100vw - 24px));
+  }
+}
+
+@media (max-width: 480px) {
+  .title-container>span {
+    font-size: 16px;
+  }
+
+  /* 좁은 화면에서는 목록의 날짜 두 줄이 제목을 밀어낸다 — 최근 편집만 남긴다 */
+  .task-container .task-date-created {
+    display: none;
+  }
 }

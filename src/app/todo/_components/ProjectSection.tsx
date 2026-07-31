@@ -46,6 +46,8 @@ export default function ProjectSection() {
   // Password Modal State
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  // 모바일 드로어 — 터치에는 hover 확장이 없으므로 사이드바를 버튼으로 여닫는다.
+  const [drawerOpen, setDrawerOpen] = useState(false);
   // Keyboard shortcut: Cmd+Shift+X when no project is selected → open create project modal
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -83,6 +85,7 @@ export default function ProjectSection() {
   }, []);
 
   const handleProjectClick = async (project: ProjectInterface) => {
+    setDrawerOpen(false);
     const issue = findIssue('projects', project.id);
     if (issue?.kind === 'duplicate_project') {
       setDuplicateIssue(issue);
@@ -192,7 +195,20 @@ export default function ProjectSection() {
 
   return (
     <>
-    <div className="left-sidebar">
+    {/* 모바일 전용 — CSS 가 데스크톱에서 숨긴다 */}
+    <button
+      type="button"
+      className="sidebar-drawer-toggle"
+      aria-label={drawerOpen ? '프로젝트 목록 닫기' : '프로젝트 목록 열기'}
+      aria-expanded={drawerOpen}
+      onClick={() => setDrawerOpen((open) => !open)}
+    >
+      {drawerOpen ? '✕' : '☰'}
+    </button>
+    {drawerOpen && (
+      <div className="sidebar-backdrop" onClick={() => setDrawerOpen(false)} />
+    )}
+    <div className={`left-sidebar${drawerOpen ? ' drawer-open' : ''}`}>
       <div className="sidebar-logo">TD</div>
       <div className="project-container">
         {projects.map((project) => (

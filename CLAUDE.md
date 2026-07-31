@@ -184,6 +184,43 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 - host 노출: **dev-local** `127.0.0.1:30333` · **dev-prod** `127.0.0.1:30334` · **prod-local** `127.0.0.1:3030` · **prod-prod** `127.0.0.1:3034` (NAS, 리버스 프록시 뒤).
 - API target: dev-local `http://localhost:20023/api` · dev-prod `http://localhost:20024/api` · prod-local `http://localhost:20022/api` · prod-prod `https://todo.lafamila.xyz/api`.
 
+## 반응형 (데스크톱 ↔ 모바일)
+
+경계는 **768px 하나**다. 값이 두 곳에 있으므로 바꿀 때 **함께** 고친다 —
+`src/app/todo/global.css` 의 `@media (max-width: 768px)` 와 `src/hooks/useIsMobile.ts` 의
+`MOBILE_BREAKPOINT_PX`. 레이아웃(CSS)과 동작(JS: 뷰 전환·상태바 위치)이 어긋나면
+"목록은 숨었는데 메모도 안 보이는" 상태가 난다.
+
+- **viewport 메타는 필수다** — `src/app/layout.tsx` 의 `export const viewport`. 이게 없으면
+  모바일 브라우저가 980px 가상 폭으로 렌더한 뒤 축소해서 보여준다(2026-07-31 이전 상태).
+  확대는 막지 않는다(접근성). `interactiveWidget: 'resizes-content'` 로 키보드가 올라올 때
+  `dvh` 가 줄어 에디터가 가려지지 않는다.
+- **메모 상태·액션의 자리는 폭에 따라 다르다** (`MemoSection`):
+  - 데스크톱 → 헤더(동기화 표시 라인)의 `#memo-status-slot` 으로 **포털**한다. 그래서 메모 패널에
+    툴바 행이 없고 에디터가 패널 높이를 전부 쓴다 (2026-07-31 사용자 요청 — "메모 영역 침범 금지").
+    헤더는 흰 배경이라 다크 패널용 색을 쓸 수 없어 `.memo-status-bar` 안에서 다시 칠한다.
+  - 모바일 → 패널 상단 앱바(`.memo-mobile-bar`): `← 목록`, 상태, `게시`, **`저장`**.
+    모바일에는 ⌘S 가 없으므로 **저장 버튼이 유일한 저장 경로**다 — 지우지 말 것.
+  - 빈 슬롯은 `:empty` 로 감춘다(헤더 `gap` 이 빈 칸을 만들지 않게). 모바일에서는 슬롯 자체를
+    `display: none` 으로 못박아 회전 등으로 JS 판정이 늦어도 헤더가 붐비지 않게 한다.
+- **모바일 내비게이션**: 프로젝트는 슬라이드 드로어(`.left-sidebar.drawer-open` + 백드롭,
+  토글은 `ProjectSection` 소유). 목록↔메모는 `mobile-view-list`/`mobile-view-detail` 클래스로
+  전환하며 **선택 상태는 유지**한다. 앱바의 `← 목록` 은 콜백 prop 대신
+  `SHOW_MEMO_LIST_EVENT` 커스텀 이벤트로 알린다(이 파일이 `'use client'` 엔트리라 함수 prop 은
+  직렬화 경고를 낸다 — `insertMemoLink` 와 같은 이유).
+- **인라인 스타일 주의**: 데스크톱은 tasks 폭을 인라인(`style={{gridTemplateColumns}}`)으로 준다.
+  인라인은 미디어 쿼리를 이기므로 모바일에서는 JS 가 그 스타일을 빼고, CSS 도
+  `grid-template-columns: minmax(0,1fr) !important` 로 못박는다(최초 렌더 한 프레임 보호).
+  같은 이유로 "Tasks" 행의 여백은 인라인이 아니라 `.tasks-heading` 클래스다.
+- **터치 규칙**: 입력 글자는 16px 이상(그 미만이면 iOS 가 포커스 때 화면을 확대한다),
+  프로젝트/메모 행은 52~64px, 사이드바 hover 확장은 `@media (hover: none)` 에서 무효화한다
+  (터치에는 hover 가 없어 폭이 늘어날 방법이 없다). 라인 편집은 이미 단일 클릭으로
+  진입하므로(`LineView`) 탭으로 편집된다.
+- **검증 방법**: 인증 화면은 로컬 세션이 loopback 전용이라 헤드리스 브라우저로 열 수 없다.
+  대신 `global.css` 를 그대로 로드하는 정적 하니스로 375·390·768·769·1440px 을 실측했다
+  (가로 오버플로 0, 뷰 전환·드로어·슬롯 표시 상태). Tailwind preflight 가 없는 하니스에서는
+  `box-sizing: border-box` 를 직접 넣어야 실제와 같아진다.
+
 ## 4-Mode 운영 (2×2: 신선도 × 위치)
 
 todo 는 한 레포로 **2×2 = 4모드**를 돌린다. 축은 직교한다 —

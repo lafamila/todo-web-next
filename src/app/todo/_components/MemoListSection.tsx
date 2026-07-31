@@ -9,8 +9,9 @@ import { MemoInterface, ProjectRole, SortOption, UserInterface } from "@/lib/typ
 import { formatDate } from "@/lib/utils";
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import * as api from "@/lib/api";
-import { isTypingContext, MemoSection } from "./MemoSection";
+import { isTypingContext, MemoSection, SHOW_MEMO_LIST_EVENT } from "./MemoSection";
 import { SyncStatusIndicator } from './SyncStatusIndicator';
+import { useIsMobile } from '@/hooks/useIsMobile';
 
 const DEFAULT_PANE_WIDTH = 400;
 // Tasks (n) 헤더 + 멤버초대 버튼 라인이 줄바꿈되지 않는 최소폭
@@ -34,6 +35,9 @@ export default function MemoListSection() {
   const { user, features } = useAuth();
   const { findIssue } = useSync();
   const isAdmin = user?.isAdmin ?? false;
+  // 모바일은 목록/메모를 한 화면에 나란히 둘 수 없어 뷰를 전환한다 (선택 상태는 유지).
+  const isMobile = useIsMobile();
+  const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
 
   const [newMemoTitle, setNewMemoTitle] = useState('');
   // 정렬 방향 — 기본 오름차순. 활성 항목 재클릭 시 토글, 다른 항목 클릭 시 오름차순으로 리셋.
@@ -96,6 +100,23 @@ export default function MemoListSection() {
       setDetailFullscreen(false);
     }
   }, [selectedMemo]);
+
+  // 모바일 앱바의 "← 목록" (MemoSection 이 이벤트로 알린다)
+  useEffect(() => {
+    const backToList = () => setMobileView('list');
+    window.addEventListener(SHOW_MEMO_LIST_EVENT, backToList);
+    return () => window.removeEventListener(SHOW_MEMO_LIST_EVENT, backToList);
+  }, []);
+
+  // 데스크톱으로 넓어지면 두 영역이 함께 보이므로 뷰 상태를 초기화한다.
+  useEffect(() => {
+    if (!isMobile) setMobileView('list');
+  }, [isMobile]);
+
+  // 프로젝트를 바꾸면 그 프로젝트의 목록부터 보여준다.
+  useEffect(() => {
+    setMobileView('list');
+  }, [selectedProject?.id]);
 
   const handleOpenMemberModal = useCallback(async () => {
     if (!selectedProject) return;
@@ -302,6 +323,11 @@ export default function MemoListSection() {
   };
 
   const handleMemoClick = (memo: MemoInterface, e: React.MouseEvent) => {
+    if (isMobile && !e.metaKey && !e.ctrlKey) {
+      selectMemo(memo);
+      setMobileView('detail');
+      return;
+    }
     if (e.metaKey || e.ctrlKey) {
       e.preventDefault();
       // 멀티 선택 시작 시, 이미 단일 선택돼 있던 메모도 함께 포함한다
@@ -338,18 +364,28 @@ export default function MemoListSection() {
     <>
     <div className="content">
       <div
-        className={`main-container${detailFullscreen ? ' detail-fullscreen' : ''}`}
-        style={{ gridTemplateColumns: `${tasksPaneWidth}px 1fr` }}
+        className={`main-container${detailFullscreen ? ' detail-fullscreen' : ''}${
+          isMobile
+            ? mobileView === 'detail' || isMultiSelectMode
+              ? ' mobile-view-detail'
+              : ' mobile-view-list'
+            : ''
+        }`}
+        // 모바일은 단일 컬럼이라 폭 인라인 스타일을 주지 않는다 (인라인은 미디어 쿼리를 이긴다).
+        style={isMobile ? undefined : { gridTemplateColumns: `${tasksPaneWidth}px 1fr` }}
       >
         <div className="title-container">
           <span className={findIssue('projects', selectedProject.id) ? 'sync-issue-dim' : ''}>
             {selectedProject.name}
           </span>
           <div id="screen-share-buttons" />
+          {/* 데스크톱에서 MemoSection 이 상태·액션을 여기로 포털한다 (메모 영역 침범 방지) */}
+          <div id="memo-status-slot" className="memo-status-slot" />
           <SyncStatusIndicator />
         </div>
         <div className="main">
-          <div style={{ paddingTop: "40px" }} className="flex items-start justify-between">
+          {/* 상단 여백은 클래스로 둔다 — 인라인 스타일은 모바일 미디어 쿼리가 못 이긴다 */}
+          <div className="tasks-heading flex items-start justify-between">
             <div>
               <span style={{ fontWeight: "bold", fontSize: "20px" }}>Tasks</span>{" "}
               <span className="task-count">({memos.length})</span>
@@ -447,7 +483,7 @@ export default function MemoListSection() {
                     {memo.title}
                   </h3>
                   <div className="shrink-0 whitespace-nowrap text-right flex flex-col gap-1 text-xs text-gray-500 mr-2 ml-3">
-                    <span>생성: {formatDate(memo.createdAt)}</span>
+                    <span className="task-date-created">생성: {formatDate(memo.createdAt)}</span>
                     <span>편집: {formatDate(memo.updatedAt)}</span>
                   </div>
                 </div>

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '@/contexts/AppContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSync } from '@/contexts/SyncContext';
@@ -21,7 +22,18 @@ import {
   waitForMemoMergeApplied,
 } from '@/lib/api';
 import { useMemoSocket } from '@/hooks/useMemoSocket';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { MemoResolutionPanel } from './MemoResolutionPanel';
+
+/** 데스크톱에서 상태·액션 묶음을 올려 보낼 헤더(동기화 표시 라인)의 포털 자리. */
+const HEADER_SLOT_ID = 'memo-status-slot';
+
+/**
+ * 모바일 앱바의 "← 목록" 이 목록 뷰로 돌아가라고 알리는 이벤트.
+ * 콜백 prop 대신 이벤트를 쓰는 이유는 이 파일이 `'use client'` 엔트리라 함수 prop 이
+ * 직렬화 경고를 내기 때문이다 (같은 이유로 `insertMemoLink` 도 이벤트다).
+ */
+export const SHOW_MEMO_LIST_EVENT = 'todo:showMemoList';
 
 export const isTypingContext = (el: Element | null) => {
   if (!el) return false;
@@ -108,6 +120,10 @@ const shortcutHelp = [
 ];
 
 export function MemoSection() {
+  const isMobile = useIsMobile();
+  // 데스크톱: 상태·액션을 헤더 슬롯으로 포털해 에디터가 패널 전체 높이를 쓴다.
+  // 모바일: 헤더가 좁으므로 패널 상단의 앱바에 그대로 둔다(뒤로·저장이 여기 있어야 손이 닿는다).
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
   const {
     state: { selectedMemo, selectedProject, projects, memos },
     updateMemo,
@@ -125,6 +141,11 @@ export function MemoSection() {
     canMerge,
   } = useSync();
   const isAdmin = user?.isAdmin ?? false;
+
+  // 헤더 슬롯은 같은 트리(MemoListSection)가 렌더하므로 마운트 후에 존재한다.
+  useEffect(() => {
+    setHeaderSlot(document.getElementById(HEADER_SLOT_ID));
+  }, []);
 
   // Raw 모드 = 문서 전체를 하나의 textarea 로 다루는 escape hatch (멀티라인 선택/복사용).
   const [rawMode, setRawMode] = useState(false);
@@ -1022,62 +1043,95 @@ export function MemoSection() {
     return <div></div>;
   }
 
+  const isDirty = content !== originalContent;
+
+  const statusItems = (
+    <div className="memo-editor-toolbar-status" aria-live="polite">
+      {isDirty && <span className="memo-toolbar-unsaved">• 저장 안됨</span>}
+      {lockMessage && <span className="memo-toolbar-lock">{lockMessage}</span>}
+      {saveMessage && (
+        <span className="memo-toolbar-save-message">{saveMessage}</span>
+      )}
+      {publishMessage && (
+        <span className="memo-toolbar-publish-message">{publishMessage}</span>
+      )}
+    </div>
+  );
+
+  const publishActions = isAdmin && features.articles && (
+    <>
+      <button
+        type="button"
+        onClick={handlePublish}
+        disabled={isPublishing}
+        className="memo-toolbar-publish"
+      >
+        {isPublishing ? '게시 중...' : articleStatus ? `재게시 (v${articleStatus.publishedVersion})` : '게시'}
+      </button>
+      {articleStatus && (
+        <button
+          type="button"
+          onClick={handleUnpublish}
+          disabled={isPublishing}
+          className="memo-toolbar-unpublish"
+        >
+          {isPublishing ? '처리 중...' : '게시 취소'}
+        </button>
+      )}
+    </>
+  );
+
   return (
     <main className="detail min-h-0">
       <div className="h-full flex flex-col min-h-0">
-        <div className="memo-editor-toolbar">
-          <div className="memo-editor-toolbar-status" aria-live="polite">
-            {content !== originalContent && (
-              <span className="memo-toolbar-unsaved">• 저장 안됨</span>
-            )}
-            {lockMessage && (
-              <span className="memo-toolbar-lock">{lockMessage}</span>
-            )}
-            {saveMessage && (
-              <span className="memo-toolbar-save-message">{saveMessage}</span>
-            )}
-            {publishMessage && (
-              <span className="memo-toolbar-publish-message">{publishMessage}</span>
-            )}
+        {isMobile ? (
+          // 모바일 앱바 — 물리 키보드가 없으므로 저장은 버튼이 유일한 경로다.
+          <div className="memo-mobile-bar">
+            <button
+              type="button"
+              className="memo-mobile-back"
+              onClick={() => window.dispatchEvent(new Event(SHOW_MEMO_LIST_EVENT))}
+            >
+              ← 목록
+            </button>
+            {statusItems}
+            <div className="memo-mobile-actions">
+              {publishActions}
+              <button
+                type="button"
+                className="memo-mobile-save"
+                onClick={() => void handleSaveMemo()}
+                disabled={!isDirty}
+              >
+                저장
+              </button>
+            </div>
           </div>
-          <div className="memo-editor-toolbar-actions">
-            <span className="memo-toolbar-shortcut">
-              {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘S' : 'Ctrl+S'}로 저장
-            </span>
-            {rawMode && (
-              <span className="memo-toolbar-raw">
-                RAW 모드 · {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'}로 종료
-              </span>
-            )}
-            {isAdmin && features.articles && (
-              <>
-                <button
-                  type="button"
-                  onClick={handlePublish}
-                  disabled={isPublishing}
-                  className="memo-toolbar-publish"
-                >
-                  {isPublishing ? '게시 중...' : articleStatus ? `재게시 (v${articleStatus.publishedVersion})` : '게시'}
-                </button>
-                {articleStatus && (
-                  <button
-                    type="button"
-                    onClick={handleUnpublish}
-                    disabled={isPublishing}
-                    className="memo-toolbar-unpublish"
-                  >
-                    {isPublishing ? '처리 중...' : '게시 취소'}
-                  </button>
+        ) : (
+          headerSlot &&
+          createPortal(
+            <div className="memo-status-bar">
+              {statusItems}
+              <div className="memo-editor-toolbar-actions">
+                <span className="memo-toolbar-shortcut">
+                  {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘S' : 'Ctrl+S'}로 저장
+                </span>
+                {rawMode && (
+                  <span className="memo-toolbar-raw">
+                    RAW 모드 · {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'}로 종료
+                  </span>
                 )}
-              </>
-            )}
-          </div>
-        </div>
+                {publishActions}
+              </div>
+            </div>,
+            headerSlot,
+          )
+        )}
 
         <button
           type="button"
           onClick={() => setShowHelpModal(true)}
-          className="fixed bottom-4 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white text-lg font-bold text-gray-900 shadow-lg transition-colors hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-white/70"
+          className="memo-help-fab fixed bottom-4 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white text-lg font-bold text-gray-900 shadow-lg transition-colors hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-white/70"
           aria-label="에디터 도움말 열기"
           title="에디터 도움말"
         >
