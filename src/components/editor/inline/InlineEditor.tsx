@@ -272,7 +272,6 @@ export function InlineEditor({
                     : (language) => machine.setCodeGroupLanguage(group.open.id, language)
                 }
                 onSave={onSave}
-                height="200px"
                 readOnly={readOnly}
                 autoFocus={group.open.id === machine.pendingCodeFocusId}
                 onAutoFocused={machine.consumeCodeFocus}

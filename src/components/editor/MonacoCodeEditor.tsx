@@ -5,6 +5,13 @@ import { useEffect, useState } from 'react';
 import { CODE_LANGUAGES, resolveCodeLanguage } from '@/lib/codeFence';
 import { EDITOR_THEME } from '@/lib/constants';
 
+const MIN_EDITOR_HEIGHT = 120;
+
+function initialEditorHeight(value: string) {
+  const lineCount = value.split('\n').length;
+  return Math.max(MIN_EDITOR_HEIGHT, lineCount * 20);
+}
+
 const Editor = dynamic(() => import('@monaco-editor/react'), {
   ssr: false,
   loading: () => (
@@ -24,7 +31,6 @@ export interface MonacoCodeEditorProps {
    */
   onLanguageChange?: (language: string) => void;
   onSave?: () => void;
-  height?: string;
   readOnly?: boolean;
   /** 새로 만들어진 코드블록이면 마운트 직후 편집기로 포커스를 가져온다. */
   autoFocus?: boolean;
@@ -39,7 +45,6 @@ export function MonacoCodeEditor({
   onChange,
   onLanguageChange,
   onSave,
-  height = '300px',
   readOnly = false,
   autoFocus = false,
   onAutoFocused,
@@ -48,6 +53,7 @@ export function MonacoCodeEditor({
   // Monaco 에 없는 id 를 넘기면 하이라이팅이 조용히 꺼지므로 항상 canonical id 로 정규화한다.
   const resolvedLanguage = resolveCodeLanguage(language);
   const [localLanguage, setLocalLanguage] = useState(resolvedLanguage);
+  const [editorHeight, setEditorHeight] = useState(() => initialEditorHeight(value));
 
   // 문서 쪽 언어가 바뀌면(펜스 편집·되돌리기) uncontrolled 사용처의 선택도 따라가야 한다.
   useEffect(() => {
@@ -74,6 +80,14 @@ export function MonacoCodeEditor({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleEditorDidMount = (editor: any, monaco: any) => {
     setEditorInstance(editor);
+    const resizeToContent = (contentHeight = editor.getContentHeight()) => {
+      setEditorHeight(Math.max(MIN_EDITOR_HEIGHT, Math.ceil(contentHeight)));
+    };
+
+    resizeToContent();
+    editor.onDidContentSizeChange(
+      ({ contentHeight }: { contentHeight: number }) => resizeToContent(contentHeight)
+    );
     editor.onDidFocusEditorWidget(() => onFocusChange?.(true));
     editor.onDidBlurEditorWidget(() => onFocusChange?.(false));
     // Cmd+S (Mac) or Ctrl+S (Windows/Linux) to save
@@ -115,7 +129,7 @@ export function MonacoCodeEditor({
 
       {/* Editor */}
       <Editor
-        height={height}
+        height={`${editorHeight}px`}
         language={selectedLanguage}
         value={value}
         onChange={handleEditorChange}
@@ -128,6 +142,10 @@ export function MonacoCodeEditor({
           readOnly,
           scrollBeyondLastLine: false,
           automaticLayout: true,
+          scrollbar: {
+            vertical: 'hidden',
+            alwaysConsumeMouseWheel: false,
+          },
         }}
       />
     </div>

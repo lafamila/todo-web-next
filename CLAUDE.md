@@ -93,6 +93,8 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 - **코드펜스**: 펜스 라인만 라인 편집 대상이고 본문은 항상 Monaco 가 소유한다. 자동 렌더 없음.
   방향키 이동은 Monaco 본문 라인을 건너뛴다. 펜스 라인은 **비활성일 때 화면에서 감춰지고**
   (`.editor-line-fence-collapsed`, 높이 0) 방향키로 진입하면 다시 펼쳐져 편집·삭제할 수 있다.
+- **코드편집기 높이**: Monaco 는 본문의 실제 `contentHeight` 만큼 상한 없이 늘어난다. 최소 작업 높이만
+  유지하고 내부 세로 스크롤을 만들지 않으며, 긴 문서의 세로 스크롤은 메모 영역이 담당한다.
 - **펜스 문법과 언어** (`src/lib/codeFence.ts` 가 단일 소스 — `parseContent` 와 인라인 에디터가 공유한다):
   ` ``` `(기본 typescript) · ` ```java `(마크다운 표준, 기존 메모 호환) · `java``` `(언어를 앞에 쓰는 표기).
   세 표기 모두 **줄 전체**가 펜스여야 하며(들여쓰기·뒤따르는 문장 불가 — 설명문으로 쓴 줄을 보호한다),
