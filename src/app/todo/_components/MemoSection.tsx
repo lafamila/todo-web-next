@@ -11,7 +11,11 @@ import {
   type InlineEditorHandle,
   type MentionState,
 } from '@/components/editor/inline/InlineEditor';
-import type { ArticleInterface, SyncIssueInterface } from '@/lib/types';
+import type {
+  ArticleInterface,
+  MemoVersionInterface,
+  SyncIssueInterface,
+} from '@/lib/types';
 import {
   publishArticle,
   getMemoArticle,
@@ -23,7 +27,9 @@ import {
 } from '@/lib/api';
 import { useMemoSocket } from '@/hooks/useMemoSocket';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { shouldResetMemoEditorState } from '@/lib/memoVersionPolicy';
 import { MemoResolutionPanel } from './MemoResolutionPanel';
+import { MemoVersionBar } from './MemoVersionBar';
 
 /** 데스크톱에서 상태·액션 묶음을 올려 보낼 헤더(동기화 표시 라인)의 포털 자리. */
 const HEADER_SLOT_ID = 'memo-status-slot';
@@ -157,6 +163,8 @@ export function MemoSection() {
   const isEditingRef = useRef(false);
   const [remoteContent, setRemoteContent] = useState<string | null>(null);
   const [showRemoteCompare, setShowRemoteCompare] = useState(false);
+  const [viewedVersion, setViewedVersion] = useState<MemoVersionInterface | null>(null);
+  const initializedMemoIdRef = useRef<string | null>(null);
 
   const [content, setContent] = useState('');
   const [originalContent, setOriginalContent] = useState('');
@@ -368,7 +376,9 @@ export function MemoSection() {
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
 
   const isLockedByOther = Boolean(lockHolder);
-  const canEdit = leaseState === 'ready' && !isLockedByOther;
+  const isViewingVersion = viewedVersion !== null;
+  const canEdit =
+    !isViewingVersion && leaseState === 'ready' && !isLockedByOther;
 
   // pending 오버레이는 300ms 를 넘길 때만 보여준다 — 로컬/근거리 서버에서는 lease
   // 핸드셰이크가 수십 ms 에 끝나 매 클릭마다 배너가 번쩍이기 때문. 입력 차단
@@ -405,6 +415,14 @@ export function MemoSection() {
   }, [searchQuery]);
 
   useEffect(() => {
+    const nextMemoId = selectedMemo?.id ?? null;
+    if (
+      !shouldResetMemoEditorState(initializedMemoIdRef.current, nextMemoId)
+    ) {
+      return;
+    }
+    initializedMemoIdRef.current = nextMemoId;
+
     if (selectedMemo) {
       setContent(selectedMemo.content);
       setOriginalContent(selectedMemo.content);
@@ -416,10 +434,33 @@ export function MemoSection() {
       setSaveMessage(null);
       setRemoteContent(null);
       setShowRemoteCompare(false);
+      setViewedVersion(null);
       isEditingRef.current = false;
       pendingEditOffsetRef.current = null;
     }
   }, [selectedMemo]);
+
+  const handleVersionSelect = useCallback(
+    (version: MemoVersionInterface | null) => {
+      setViewedVersion(version);
+      setRawMode(false);
+      rawModeRef.current = false;
+      setShowMemoSearch(false);
+      setSearchQuery('');
+      pendingEditOffsetRef.current = null;
+      isEditingRef.current = false;
+      setSaveMessage(null);
+
+      if (version) {
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
+        releaseLock();
+      }
+    },
+    [releaseLock],
+  );
 
   // 현재 메모의 게시 상태 확인
   useEffect(() => {
@@ -442,6 +483,10 @@ export function MemoSection() {
 
   const handleSaveMemo = useCallback(async () => {
     if (!selectedMemo) return false;
+    if (isViewingVersion) {
+      setSaveMessage('과거 버전은 읽기 전용입니다. 현재 문서로 돌아온 뒤 저장하세요.');
+      return false;
+    }
     if (!canEdit) {
       setSaveMessage(
         leaseState === 'pending'
@@ -475,7 +520,15 @@ export function MemoSection() {
       );
       return false;
     }
-  }, [selectedMemo, canEdit, leaseState, requestLock, updateMemo, broadcastUpdate]);
+  }, [
+    selectedMemo,
+    isViewingVersion,
+    canEdit,
+    leaseState,
+    requestLock,
+    updateMemo,
+    broadcastUpdate,
+  ]);
 
   // 게시 / 재게시 핸들러
   const handlePublish = useCallback(async () => {
@@ -591,6 +644,7 @@ export function MemoSection() {
    */
   const enterRawModeForSelection = useCallback(
     (selection: 'all' | { anchor: number; focus: number }) => {
+      if (isViewingVersion) return;
       if (!canEdit) {
         requestLock();
         return;
@@ -605,7 +659,7 @@ export function MemoSection() {
       setSearchQuery('');
       holdLock();
     },
-    [canEdit, holdLock, requestLock],
+    [canEdit, holdLock, isViewingVersion, requestLock],
   );
 
   const handleSelectAll = useCallback(() => {
@@ -635,6 +689,7 @@ export function MemoSection() {
   const toggleRawMode = useCallback(() => {
     const next = !rawModeRef.current;
 
+    if (next && isViewingVersion) return;
     if (next && !canEdit) {
       requestLock();
       return;
@@ -651,7 +706,7 @@ export function MemoSection() {
     } else {
       scheduleLockRelease();
     }
-  }, [canEdit, holdLock, requestLock, scheduleLockRelease]);
+  }, [canEdit, holdLock, isViewingVersion, requestLock, scheduleLockRelease]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -684,6 +739,8 @@ export function MemoSection() {
       const isBackspace = e.key === 'Backspace';
       if (!isPrintable && !isEnter && !isBackspace) return;
 
+      if (isViewingVersion) return;
+
       // 다른 사용자가 편집 중이면 열지 않음
       if (!canEdit) {
         pendingEditOffsetRef.current = contentRef.current.length;
@@ -699,7 +756,15 @@ export function MemoSection() {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [canEdit, handleSaveMemo, holdLock, rawMode, requestLock, toggleRawMode]);
+  }, [
+    canEdit,
+    handleSaveMemo,
+    holdLock,
+    isViewingVersion,
+    rawMode,
+    requestLock,
+    toggleRawMode,
+  ]);
 
   const handleRawContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newContent = e.target.value;
@@ -871,6 +936,10 @@ export function MemoSection() {
   /** 체크박스 토글은 기존과 동일하게 즉시 서버에 반영한다. */
   const handlePersist = useCallback(
     async (next: string) => {
+      if (isViewingVersion) {
+        setSaveMessage('과거 버전은 읽기 전용입니다.');
+        return;
+      }
       if (!canEdit) {
         setSaveMessage('편집 잠금이 준비되기 전에는 체크박스를 변경할 수 없습니다.');
         requestLock();
@@ -889,7 +958,7 @@ export function MemoSection() {
         );
       }
     },
-    [canEdit, requestLock, updateMemo]
+    [canEdit, isViewingVersion, requestLock, updateMemo]
   );
 
   const handleInlineChange = useCallback((next: string) => {
@@ -899,10 +968,11 @@ export function MemoSection() {
 
   const handleReadOnlyEditIntent = useCallback(
     (documentOffset: number) => {
+      if (isViewingVersion) return;
       pendingEditOffsetRef.current = documentOffset;
       requestLock();
     },
-    [requestLock],
+    [isViewingVersion, requestLock],
   );
 
   const moveToNextIssue = useCallback(
@@ -1047,7 +1117,11 @@ export function MemoSection() {
 
   const statusItems = (
     <div className="memo-editor-toolbar-status" aria-live="polite">
-      {isDirty && <span className="memo-toolbar-unsaved">• 저장 안됨</span>}
+      {isDirty && (
+        <span className="memo-toolbar-unsaved">
+          • {isViewingVersion ? '현재 편집본 저장 안됨' : '저장 안됨'}
+        </span>
+      )}
       {lockMessage && <span className="memo-toolbar-lock">{lockMessage}</span>}
       {saveMessage && (
         <span className="memo-toolbar-save-message">{saveMessage}</span>
@@ -1101,7 +1175,7 @@ export function MemoSection() {
                 type="button"
                 className="memo-mobile-save"
                 onClick={() => void handleSaveMemo()}
-                disabled={!isDirty}
+                disabled={!isDirty || isViewingVersion}
               >
                 저장
               </button>
@@ -1113,9 +1187,13 @@ export function MemoSection() {
             <div className="memo-status-bar">
               {statusItems}
               <div className="memo-editor-toolbar-actions">
-                <span className="memo-toolbar-shortcut">
-                  {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘S' : 'Ctrl+S'}로 저장
-                </span>
+                {isViewingVersion ? (
+                  <span className="memo-toolbar-readonly">과거 버전 · 읽기 전용</span>
+                ) : (
+                  <span className="memo-toolbar-shortcut">
+                    {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘S' : 'Ctrl+S'}로 저장
+                  </span>
+                )}
                 {rawMode && (
                   <span className="memo-toolbar-raw">
                     RAW 모드 · {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'}로 종료
@@ -1137,6 +1215,18 @@ export function MemoSection() {
         >
           ?
         </button>
+
+        {features.memoVersionHistory &&
+          !actionableIssue &&
+          !(showRemoteCompare && remoteContent !== null) && (
+            <MemoVersionBar
+              memoId={selectedMemo.id}
+              currentUpdatedAt={selectedMemo.updatedAtUtc ?? selectedMemo.updatedAt}
+              refreshKey={selectedMemo.updatedAtUtc ?? String(selectedMemo.updatedAt)}
+              selectedVersion={viewedVersion}
+              onSelect={handleVersionSelect}
+            />
+          )}
 
         <div
           className={`memo-editor-shell${
@@ -1201,8 +1291,13 @@ export function MemoSection() {
               className="w-full min-h-0 h-full overflow-y-auto p-0 prose prose-sm max-w-none text-white"
             >
               <InlineEditor
+                key={
+                  viewedVersion
+                    ? `${selectedMemo.id}-version-${viewedVersion.version}`
+                    : `${selectedMemo.id}-current`
+                }
                 ref={inlineEditorRef}
-                value={content}
+                value={viewedVersion?.content ?? content}
                 onChange={handleInlineChange}
                 onPersist={handlePersist}
                 onSave={handleSaveMemo}
@@ -1213,14 +1308,17 @@ export function MemoSection() {
                 mentionActive={showMemoSearch}
                 onMentionKeyDown={handleMentionKeyDown}
                 readOnly={!canEdit}
-                onReadOnlyEditIntent={handleReadOnlyEditIntent}
+                onReadOnlyEditIntent={
+                  isViewingVersion ? undefined : handleReadOnlyEditIntent
+                }
               />
             </div>
           )}
           {((leaseState === 'pending' && pendingOverlayVisible) ||
             leaseState === 'denied') &&
             !actionableIssue &&
-            !showRemoteCompare && (
+            !showRemoteCompare &&
+            !isViewingVersion && (
               <div className={`memo-lease-overlay memo-lease-${leaseState}`}>
                 <strong>
                   {leaseState === 'pending'

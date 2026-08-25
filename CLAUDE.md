@@ -160,6 +160,11 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   normal-flow 툴바에 둔다. 항목별 해소 동작은 상태 팝오버가 아니라 위의 제목 클릭 경로가 담당한다.
   `/api/sync/issues` 는 관리자 전용이므로 비관리자는 합계만 보고 상세 확인·해소에 관리자 권한이
   필요하다는 안내를 받는다.
+- **로컬 버전 기록**: `/api/session/me.features.memoVersionHistory`가 참인 `dev-local`·`prod-local`에서만
+  메모 본문 상단에 버전 선택 바를 둔다. 과거 버전은 현재 편집 버퍼와 분리해 `InlineEditor`의 읽기 전용
+  모드로 렌더하고, 락 요청·저장·Raw 전환·체크박스 변경을 모두 막는다. 기존 헤더에는 저장·동기화 상태가
+  밀집돼 있으므로 버전 UI를 올리지 않고 `.memo-editor-shell` 앞의 normal-flow 행을 사용한다. 목록은
+  `?includeContent=false`로 metadata만 받고 선택한 본문만 상세 API로 지연 조회하며, 메모 전환 시 요청을 취소한다.
 - **`parseContent` 와의 관계**: `lib/utils.ts` 의 `parseContent` 는 `ArticleDetail` 이 계속 사용한다.
   신규 `classifyLine`/`buildLineGroups` 가 같은 판정을 유지하는지 개발 모드에서
   `assertClassifierMatchesParseContent` 가 감시한다(블록 종류·내용·checked·indent 를 대조).
@@ -254,6 +259,8 @@ todo 는 한 레포로 **2×2 = 4모드**를 돌린다. 축은 직교한다 —
   (dev-local·prod-local)은 숨기고 `*-prod`(dev-prod·prod-prod)는 표시한다 (2026-07-31 사용자 확정).
   dev-local 은 prod-local 의 거울이라 숨김 UX 까지 동일하며, 숨겨진 기능의 테스트는 dev-prod web(:30334)에서 한다.
   판정 자체는 API 가 내려주는 `features` 플래그(`src/lib/types.ts`)이며 web 은 그대로 따른다.
+- **메모 버전 선택 UI는 반대로 local 전용이다.** `memoVersionHistory`가 참인 `dev-local`·`prod-local`에만
+  표시하며, API 필드가 없는 구버전 서버에서는 fail-closed로 숨긴다.
 - **HTTPS/WSS 강제는 `deploy-todo-prod.sh` 의 검증이지 이 레포의 제약이 아니다.** 코드에도 Dockerfile 에도
   scheme 판정이 없다(빌드 인자는 "비어 있지 않을 것"만 검사). prod-local 빌드는 그 스크립트를 거치지 않으므로
   http/ws 값으로 정상 빌드·동작한다 (2026-07-30 실측 검증).

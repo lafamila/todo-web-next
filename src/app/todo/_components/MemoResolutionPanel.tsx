@@ -104,9 +104,14 @@ export function MemoResolutionPanel({
           api.getMemo(memo.id),
           versionNumber !== null
             ? api.getMemoVersion(memo.id, versionNumber)
-            : api.getMemoVersions(memo.id).then((versions) =>
-                versions.find((item) => item.note?.startsWith('충돌')),
-              ),
+            : api.getMemoVersions(memo.id).then((versions) => {
+                const summary = versions.find((item) =>
+                  item.note?.startsWith('충돌'),
+                );
+                return summary
+                  ? api.getMemoVersion(memo.id, summary.version)
+                  : undefined;
+              }),
         ]);
         if (!version) throw new Error('보존된 충돌 버전을 찾을 수 없습니다.');
         if (!cancelled) {

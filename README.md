@@ -45,6 +45,9 @@ npm run start   # production 서버 (--port 3034)
 **dev 는 페어다.** dev-local ↔ dev-prod 가 상시 동기화되므로, dev-local 에서 만든 메모가
 dev-prod web(`:30334`)에 뜨는지 눈으로 확인할 수 있다 — sync 기능을 개발하는 축소판 실토폴로지다.
 
+메모의 과거 버전을 선택해 읽기 전용으로 보는 화면은 개인 복제본 기능이므로
+`dev-local`·`prod-local`에서만 표시된다. 운영 `prod-prod` 웹에는 표시되지 않는다.
+
 **prod-local 은 프로덕션 빌드**라 소스를 고쳐도 화면이 바뀌지 않는다. 코드 확인은 dev 페어에서 하고,
 반영은 `git push` → prod-prod 배포 → `todoctl local update` 순서를 탄다.
 container 내부 port 는 어느 모드나 `3034` 다.

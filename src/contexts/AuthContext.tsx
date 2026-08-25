@@ -17,6 +17,8 @@ const DEFAULT_FEATURES: FeatureFlagsInterface = {
   screenShare: true,
   articles: true,
   memberInvite: true,
+  // 구버전 API나 원격 prod에서 로컬 전용 표면이 잘못 나타나지 않게 fail-closed 한다.
+  memoVersionHistory: false,
 };
 
 interface AuthContextType {

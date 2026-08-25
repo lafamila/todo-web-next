@@ -75,3 +75,12 @@ export function shouldRetryJoinResponse(
       snapshot.attemptCount < MAX_LOCK_RESPONSE_ATTEMPTS,
   );
 }
+
+/** 취소되거나 다른 메모로 이동한 뒤 늦게 도착한 grant는 소유권으로 받아들이지 않는다. */
+export function shouldAcceptLockGrant(
+  currentMemoId: string | null,
+  grantedMemoId: string,
+  editIntent: boolean,
+): boolean {
+  return Boolean(editIntent && currentMemoId === grantedMemoId);
+}

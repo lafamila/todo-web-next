@@ -276,7 +276,8 @@ export function InlineEditor({
                 autoFocus={group.open.id === machine.pendingCodeFocusId}
                 onAutoFocused={machine.consumeCodeFocus}
                 // 코드편집기에 커서가 있는 동안도 "편집 중" — 락이 6초 뒤 풀리면 안 된다.
-                onFocusChange={onEditingChange}
+                // 과거 버전처럼 read-only인 Monaco 포커스는 편집 의도/락이 아니다.
+                onFocusChange={readOnly ? undefined : onEditingChange}
               />
               {group.close && (
                 <LineView

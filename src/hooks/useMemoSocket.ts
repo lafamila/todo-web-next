@@ -12,6 +12,7 @@ import {
   shouldRetryLockResponse,
   shouldEmitLockRequest,
   shouldRenewLease,
+  shouldAcceptLockGrant,
 } from '@/lib/memoLeasePolicy';
 
 interface MemoLockInfo {
@@ -435,9 +436,27 @@ export function useMemoSocket({
       generation?: number;
       renewAfterMs?: number;
     }) => {
-      if (data.memoId !== currentMemoIdRef.current) return;
+      if (
+        !shouldAcceptLockGrant(
+          currentMemoIdRef.current,
+          data.memoId,
+          editIntentRef.current,
+        )
+      ) {
+        // releaseLock/메모 전환 뒤 늦게 온 grant. 서버에 남겨 두면 read-only
+        // 버전 보기 중 다른 클라이언트의 편집까지 막으므로 즉시 반납한다.
+        socket.emit('unlockMemo', { memoId: data.memoId });
+        clearMemoLease(data.memoId);
+        if (data.memoId === currentMemoIdRef.current) {
+          ownsLockRef.current = false;
+          lockRequestMemoRef.current = null;
+          stopLockResponseWatchdog();
+          lockAttemptCount = 0;
+          setLeaseState('idle');
+        }
+        return;
+      }
       ownsLockRef.current = true;
-      editIntentRef.current = true;
       lockRequestMemoRef.current = null;
       stopLockResponseWatchdog();
       lockAttemptCount = 0;
@@ -636,16 +655,20 @@ export function useMemoSocket({
     const socket = socketRef.current;
     stopLockResponseWatchdogRef.current();
     stopRenewalRef.current();
-    if (!socket || !currentMemoIdRef.current) return;
     const memoId = currentMemoIdRef.current;
     const wasOwner = ownsLockRef.current;
     ownsLockRef.current = false;
     editIntentRef.current = false;
     lockRequestMemoRef.current = null;
+    if (!memoId) {
+      setLockHolder(null);
+      setLeaseState('idle');
+      return;
+    }
     clearMemoLease(memoId);
     setLockHolder(null);
     setLeaseState('idle');
-    if (wasOwner) socket.emit('unlockMemo', { memoId });
+    if (socket && wasOwner) socket.emit('unlockMemo', { memoId });
   }, []);
 
   const broadcastUpdate = useCallback((content: string, title?: string) => {

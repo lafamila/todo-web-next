@@ -82,14 +82,17 @@ export interface SyncStatusInterface {
   running?: boolean;
 }
 
-export interface MemoVersionInterface {
+export interface MemoVersionSummaryInterface {
   id: string;
   memoId: string;
-  content: string;
   version: number;
   note: string | null;
   createdAt: string;
   updatedAtUtc: string | null;
+}
+
+export interface MemoVersionInterface extends MemoVersionSummaryInterface {
+  content: string;
 }
 
 export interface MemoMergeResultInterface {
@@ -201,6 +204,8 @@ export interface FeatureFlagsInterface {
   screenShare: boolean;
   articles: boolean;
   memberInvite: boolean;
+  /** 노트북의 `*-local` 스택에서만 제공하는 과거 메모 읽기 화면. */
+  memoVersionHistory: boolean;
 }
 
 export type TodoPermission = "owner" | "admin" | "user" | "visitor";

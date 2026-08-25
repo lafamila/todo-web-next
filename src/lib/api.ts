@@ -14,6 +14,7 @@ import type {
   MemoInterface,
   MemoLeaseInterface,
   MemoMergeResultInterface,
+  MemoVersionSummaryInterface,
   MemoVersionInterface,
   ProjectInterface,
   ProjectMergeResultInterface,
@@ -357,10 +358,13 @@ export async function resolveSyncIssues(issueIds: string[]): Promise<{
   );
 }
 
-export async function getMemoVersions(id: string): Promise<MemoVersionInterface[]> {
-  return fetchJson<MemoVersionInterface[]>(
-    `/memos/${id}/versions`,
-    undefined,
+export async function getMemoVersions(
+  id: string,
+  signal?: AbortSignal,
+): Promise<MemoVersionSummaryInterface[]> {
+  return fetchJson<MemoVersionSummaryInterface[]>(
+    `/memos/${id}/versions?includeContent=false`,
+    { signal },
     "메모 버전 목록을 불러오지 못했습니다.",
   );
 }
@@ -368,10 +372,11 @@ export async function getMemoVersions(id: string): Promise<MemoVersionInterface[
 export async function getMemoVersion(
   id: string,
   version: number,
+  signal?: AbortSignal,
 ): Promise<MemoVersionInterface> {
   return fetchJson<MemoVersionInterface>(
     `/memos/${id}/versions/${version}`,
-    undefined,
+    { signal },
     "보존된 메모 버전을 불러오지 못했습니다.",
   );
 }

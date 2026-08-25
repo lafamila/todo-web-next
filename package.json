@@ -6,7 +6,8 @@
     "dev": "next dev --port 3034",
     "build": "next build",
     "start": "next start --port 3034",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --experimental-strip-types src/lib/memoLeasePolicy.test.ts src/lib/memoVersionPolicy.test.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

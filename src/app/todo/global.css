@@ -172,7 +172,8 @@ body {
 }
 
 .memo-status-bar .memo-toolbar-shortcut,
-.memo-status-bar .memo-toolbar-raw {
+.memo-status-bar .memo-toolbar-raw,
+.memo-status-bar .memo-toolbar-readonly {
   color: #6b7280;
 }
 
@@ -279,6 +280,14 @@ body {
   white-space: nowrap;
 }
 
+.memo-toolbar-readonly {
+  border: 1px solid #d4d4d4;
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
 .memo-toolbar-publish,
 .memo-toolbar-unpublish {
   border-radius: 999px;
@@ -307,6 +316,69 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* 로컬 전용 버전 기록 — 헤더 상태/동기화 표시와 겹치지 않는 본문 normal-flow 행. */
+.memo-version-bar {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border: 1px solid #343434;
+  border-radius: 7px;
+  background: #171717;
+  color: #d1d5db;
+  font-size: 12px;
+}
+
+.memo-version-bar label {
+  flex: 0 0 auto;
+  color: #9ca3af;
+  font-weight: 600;
+}
+
+.memo-version-bar select {
+  min-width: 0;
+  width: min(440px, 52vw);
+  height: 28px;
+  border: 1px solid #525252;
+  border-radius: 5px;
+  padding: 0 28px 0 8px;
+  background: #262626;
+  color: #f3f4f6;
+  font-size: 12px;
+}
+
+.memo-version-bar select:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.memo-version-status {
+  min-width: 0;
+  overflow: hidden;
+  color: #9ca3af;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memo-version-bar button {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: 1px solid #737373;
+  border-radius: 5px;
+  padding: 5px 9px;
+  color: #f3f4f6;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.memo-version-bar button:hover {
+  background: #303030;
 }
 
 /* 미해결 sync_issues 가 가리키는 제목 전용 토큰. 아이콘/배지는 추가하지 않는다. */
@@ -1128,6 +1200,21 @@ html.viewport-resizing .project-secret {
 
   .memo-mobile-bar {
     display: flex;
+  }
+
+  .memo-version-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .memo-version-bar select {
+    flex: 1 1 180px;
+    width: auto;
+  }
+
+  .memo-version-status {
+    flex: 1 1 auto;
   }
 
   /* 상태·액션은 앱바가 갖는다. JS 가 포털을 옮기는 사이(회전 등)에도 헤더가 붐비지 않게 못박는다. */
