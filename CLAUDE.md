@@ -154,6 +154,26 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   입장 확인을 받은 후 요청한다. canonical `memoLocked` 이벤트를 받으면 기존 토큰과 활성 라인을 즉시
   폐기하며, `ready` 상태의 중복 요청은 pending 으로 되돌리지 않는다. REST 저장은 해당 소켓에서 받은
   `X-Memo-Lease-Token` 을 붙이며 저장 실패를 화면에 표시한다.
+- **코드블록 포커스와 lease 수명**: 라인 textarea 활성 상태와 Monaco 포커스는 서로 독립된 source다.
+  `InlineEditor`가 둘을 OR로 집계하고 합산 상태가 실제로 바뀔 때만 `MemoSection`에 알린다. line→Monaco
+  인계 중 effect 순서가 뒤집혀도 같은 task의 false는 유예해 Monaco focus가 이를 취소하며, read-only 전환과
+  unmount는 source를 명시적으로 reset한다. Monaco listener는 최신 callback ref를 사용하고 dispose한다.
+- **기기 초안과 서버 저장 coordinator**: 일반 입력은 서버 자동 저장하지 않고 350ms debounce로 IndexedDB에만
+  보존한다. namespace는 origin+userId+memoId+document-memory pageId이며 auth/lease token은 절대 저장하지 않는다.
+  `sessionStorage` id는 duplicate/window.open에서 복제되므로 key에 쓰지 않는다. 탭 숨김·pagehide 때도
+  best-effort 즉시 flush하지만 브라우저가 unload 작업 완료를 보장하지 않으므로 주 보호선은 350ms debounce와
+  수동 저장 직전 await flush다. ⌘/Ctrl+S와 체크박스 즉시 저장은 같은 coordinator를
+  지나며, lease 부재/만료는 재획득 후 재시도하고 네트워크/503은 capped exponential backoff+jitter로 재시도한다.
+  401/403/404는 자동 중단한다. 저장은 optional `baseRevision` CAS를 사용하고 `memo_content_conflict`면 자동 PUT을
+  멈춘 뒤 기존 `MemoResolutionPanel`에서 기기 초안과 현재 서버 내용을 비교한다. 저장 성공 시에도 요청 이후
+  새 입력의 `localRevision`이 더 크면 최신 draft를 삭제하지 않는다. 재진입 시 같은-base 초안은 복구/폐기를
+  명시적으로 묻고, 다른-base 초안은 곧바로 비교 화면을 연다. 다른 탭/page의 draft record는 삭제하지 않고,
+  명시적 폐기·원격 적용·저장 완료를 source localRevision+accepted serverRevision tombstone으로 기록한다.
+  source나 server revision이 바뀌면 tombstone을 폐기해 후보를 다시 보여준다. clean socket 갱신도 `getMemo`로
+  본문+revision을 함께 확인하고 이전 GET은 AbortController+request sequence로 취소한 뒤 같은 editor epoch가
+  계속 clean일 때만 채택한다. 외부 draft를 현재 page key로 복사할 때 원 source lineage를 own record metadata에
+  같이 저장해 메모 이동·reload 뒤의 저장/폐기도 원 source tombstone을 정확히 가리킨다. 이 보호는 4개
+  TODO_MODE 모두에서 동작한다.
 - **헤더 동기화 상태**: 프로젝트 헤더의 작은 표시는 `enabled=false`를 `로컬 전용`, online client만
   `동기화됨`, server를 `수신 대기`로 구분한다. client 상세에는 실제 `peerUrl`, 마지막 성공 시각,
   대기 변경 수와 미해결 문제 수를 보여준다. 저장·게시 액션은 헤더에 fixed로 겹치지 않고 편집 패널의

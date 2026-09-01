@@ -46,6 +46,23 @@ export function leaseStateAfterConnectionLoss(
   return editIntent ? "denied" : "idle";
 }
 
+/** React render의 leaseState가 아직 ready여도 ref 소유권이 지워졌다면 PUT을 막는다. */
+export function canSubmitMemoSave(input: {
+  ownsLock: boolean;
+  currentMemoId: string | null;
+  expectedMemoId: string;
+}): boolean {
+  return input.ownsLock && input.currentMemoId === input.expectedMemoId;
+}
+
+export type LockDenialKind = "terminal" | "retryable" | "locked";
+
+export function classifyLockDenial(displayName: string): LockDenialKind {
+  if (displayName === "접근 권한 없음") return "terminal";
+  if (displayName.startsWith("동기화 서버")) return "retryable";
+  return "locked";
+}
+
 export function shouldRenewLease(
   connected: boolean,
   ownsLock: boolean,

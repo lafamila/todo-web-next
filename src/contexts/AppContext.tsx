@@ -6,6 +6,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
   type ReactNode,
 } from 'react';
 import type {
@@ -19,6 +20,7 @@ import type {
   SortOption,
 } from '@/lib/types';
 import * as api from '@/lib/api';
+import { selectionAfterMemoSaveIfCurrent } from '@/lib/memoSelectionPolicy';
 import { useAuth } from './AuthContext';
 
 const initialState: TodoAppStateInterface = {
@@ -39,6 +41,7 @@ const AppContext = createContext<TodoAppContextTypeInterface | undefined>(undefi
 export function AppProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated, user } = useAuth();
   const [state, setState] = useState<TodoAppStateInterface>(initialState);
+  const selectionEpochRef = useRef(0);
 
   const refreshProjects = useCallback(async () => {
     try {
@@ -65,6 +68,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Project Actions
   const selectProject = useCallback(async (project: ProjectInterface) => {
+    selectionEpochRef.current += 1;
     try {
       setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
@@ -154,6 +158,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Memo Actions
   const selectMemo = useCallback(async (memo: MemoInterface) => {
+    selectionEpochRef.current += 1;
     try {
       setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
@@ -222,25 +227,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const updateMemo = useCallback(
-    async (content: string) => {
+    async (content: string, baseRevision?: string): Promise<MemoInterface> => {
       if (!state.selectedMemo) {
         setState((prev) => ({
           ...prev,
           error: '메모를 먼저 선택해주세요.',
         }));
-        return;
+        throw new Error('메모를 먼저 선택해주세요.');
       }
 
       try {
-        const updatedMemo = await api.updateMemo(state.selectedMemo.id, content);
+        const saveSelectionEpoch = selectionEpochRef.current;
+        const updatedMemo = await api.updateMemo(
+          state.selectedMemo.id,
+          content,
+          baseRevision,
+        );
 
         setState((prev) => ({
           ...prev,
-          selectedMemo: updatedMemo,
+          selectedMemo: selectionAfterMemoSaveIfCurrent(
+            prev.selectedMemo,
+            updatedMemo,
+            saveSelectionEpoch,
+            selectionEpochRef.current,
+          ),
           memos: prev.memos.map((memo) =>
             memo.id === updatedMemo.id ? updatedMemo : memo
           ),
         }));
+        return updatedMemo;
        } catch (error) {
         setState((prev) => ({
           ...prev,

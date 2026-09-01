@@ -335,6 +335,73 @@ body {
   font-size: 12px;
 }
 
+/* IndexedDB 기기 초안 상태/복구 — 혼잡한 헤더가 아닌 본문 normal-flow 행. */
+.memo-draft-banner {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border: 1px solid #3f3f46;
+  border-radius: 7px;
+  background: #18181b;
+  color: #d4d4d8;
+  font-size: 12px;
+}
+
+.memo-draft-banner > div:first-child {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.memo-draft-banner strong {
+  color: #fafafa;
+}
+
+.memo-draft-banner span {
+  color: #a1a1aa;
+}
+
+.memo-draft-recovery,
+.memo-draft-conflict {
+  border-color: #b45309;
+  background: #2b2115;
+}
+
+.memo-draft-error {
+  border-color: #b91c1c;
+  background: #2a1717;
+}
+
+.memo-draft-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.memo-draft-actions button {
+  min-height: 28px;
+  border: 1px solid #71717a;
+  border-radius: 5px;
+  padding: 3px 9px;
+  color: #fafafa;
+  cursor: pointer;
+}
+
+.memo-draft-failure-surface {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
 .memo-version-bar label {
   flex: 0 0 auto;
   color: #9ca3af;
@@ -1135,6 +1202,20 @@ html.viewport-resizing .project-secret {
     display: none;
   }
 
+  /* 선택 메모가 없어 detail이 숨겨진 상태에서도 이전 메모 draft 실패는 복사할 수 있어야 한다. */
+  .main-container.mobile-view-list .detail.memo-draft-failure-surface:not(:empty) {
+    position: absolute;
+    z-index: 60;
+    top: calc(var(--mobile-header-height) + 8px);
+    right: 8px;
+    left: 8px;
+    display: flex;
+    width: auto;
+    height: auto;
+    max-height: calc(100dvh - var(--mobile-header-height) - 16px);
+    padding: 0;
+  }
+
   .main-container.mobile-view-detail .main {
     display: none;
   }
@@ -1215,6 +1296,22 @@ html.viewport-resizing .project-secret {
 
   .memo-version-status {
     flex: 1 1 auto;
+  }
+
+  .memo-draft-banner {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 7px;
+    margin-bottom: 6px;
+  }
+
+  .memo-draft-actions {
+    width: 100%;
+  }
+
+  .memo-draft-actions button {
+    flex: 1 1 0;
+    min-height: 36px;
   }
 
   /* 상태·액션은 앱바가 갖는다. JS 가 포털을 옮기는 사이(회전 등)에도 헤더가 붐비지 않게 못박는다. */

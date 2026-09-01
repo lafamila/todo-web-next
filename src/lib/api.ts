@@ -41,6 +41,7 @@ interface ApiErrorDetailShape {
   code?: string;
   message?: string;
   existingMemoId?: string;
+  current?: MemoInterface;
 }
 
 interface ApiErrorShape {
@@ -53,12 +54,14 @@ interface ApiErrorShape {
 export class ApiError extends Error {
   status: number;
   code?: string;
+  current?: MemoInterface;
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(message: string, status: number, code?: string, current?: MemoInterface) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.current = current;
     Object.setPrototypeOf(this, ApiError.prototype);
   }
 }
@@ -85,7 +88,7 @@ async function parseError(response: Response, fallback: string): Promise<ApiErro
     errorData?.message ??
     fallback;
 
-  return new ApiError(message, response.status, code);
+  return new ApiError(message, response.status, code, structuredDetail?.current);
 }
 
 async function fetchJson<T>(
@@ -309,11 +312,15 @@ export async function createMemo(
   return response.json() as Promise<MemoInterface>;
 }
 
-export async function getMemo(id: string): Promise<MemoInterface> {
-  return fetchJson<MemoInterface>(`/memos/${id}`, undefined, "Failed to fetch memo");
+export async function getMemo(id: string, signal?: AbortSignal): Promise<MemoInterface> {
+  return fetchJson<MemoInterface>(`/memos/${id}`, { signal }, "Failed to fetch memo");
 }
 
-export async function updateMemo(id: string, content: string): Promise<MemoInterface> {
+export async function updateMemo(
+  id: string,
+  content: string,
+  baseRevision?: string,
+): Promise<MemoInterface> {
   const lease = memoLeaseTokens.get(id);
   return fetchJson<MemoInterface>(
     `/memos/${id}`,
@@ -322,7 +329,10 @@ export async function updateMemo(id: string, content: string): Promise<MemoInter
       headers: lease
         ? { "X-Memo-Lease-Token": lease.leaseToken }
         : undefined,
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({
+        content,
+        ...(baseRevision ? { baseRevision } : {}),
+      }),
     },
     "Failed to update memo",
   );

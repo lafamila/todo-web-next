@@ -17,6 +17,8 @@ import type {
   SyncIssueInterface,
 } from '@/lib/types';
 import {
+  ApiError,
+  clearMemoLease,
   publishArticle,
   getMemoArticle,
   deleteArticle,
@@ -28,11 +30,73 @@ import {
 import { useMemoSocket } from '@/hooks/useMemoSocket';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { shouldResetMemoEditorState } from '@/lib/memoVersionPolicy';
+import { classifyLockDenial } from '@/lib/memoLeasePolicy';
 import { MemoResolutionPanel } from './MemoResolutionPanel';
 import { MemoVersionBar } from './MemoVersionBar';
+import {
+  classifySaveFailure,
+  decideDraftRecovery,
+  retryDelayMs,
+  selectDraftCandidate,
+  rebaseQueuedSaveRevision,
+  canAdoptFetchedRemote,
+  nextDraftRevision,
+  shouldResumePendingSave,
+  isCurrentEditorRequest,
+  enqueueFailedDraftSnapshot,
+  evaluateDraftDismissals,
+  makeDraftDismissalKey,
+  decideRemoteRefreshAfterFetch,
+  isLatestRemoteRefreshRequest,
+  sourceLineageForDraft,
+  type MemoDraftRecord,
+  type DraftDismissalAction,
+} from '@/lib/memoDraftPolicy';
+import {
+  currentMemoDraftKey,
+  deleteMemoDraftIfRevision,
+  getMemoDraftTabId,
+  listMemoDrafts,
+  loadMemoDraft,
+  putMemoDraft,
+  deleteMemoDraftDismissals,
+  listMemoDraftDismissals,
+  putMemoDraftDismissal,
+} from '@/lib/memoDraftStore';
 
 /** 데스크톱에서 상태·액션 묶음을 올려 보낼 헤더(동기화 표시 라인)의 포털 자리. */
 const HEADER_SLOT_ID = 'memo-status-slot';
+const DRAFT_FLUSH_DELAY_MS = 350;
+const MAX_AUTOMATIC_SAVE_RETRIES = 8;
+const MAX_LEASE_SAVE_RETRIES = 2;
+
+type DraftStatus =
+  | 'idle'
+  | 'local-saved'
+  | 'lock-wait'
+  | 'retrying'
+  | 'conflict'
+  | 'error';
+
+interface PendingMemoSave {
+  memoId: string;
+  editorEpoch: number;
+  content: string;
+  baseRevision?: string;
+  localRevision: number;
+  retryCount: number;
+  leaseRetryCount: number;
+  allowConflict: boolean;
+  draftStored: boolean;
+  resolve: (saved: boolean) => void;
+}
+
+interface FailedDraftSnapshot {
+  memoId: string;
+  title: string;
+  content: string;
+  error: string;
+}
 
 /**
  * 모바일 앱바의 "← 목록" 이 목록 뷰로 돌아가라고 알리는 이벤트.
@@ -164,7 +228,19 @@ export function MemoSection() {
   const [remoteContent, setRemoteContent] = useState<string | null>(null);
   const [showRemoteCompare, setShowRemoteCompare] = useState(false);
   const [viewedVersion, setViewedVersion] = useState<MemoVersionInterface | null>(null);
+  const isViewingVersion = viewedVersion !== null;
   const initializedMemoIdRef = useRef<string | null>(null);
+  const editorEpochRef = useRef(0);
+  const [draftStatus, setDraftStatus] = useState<DraftStatus>('idle');
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [recoveryDraft, setRecoveryDraft] = useState<MemoDraftRecord | null>(null);
+  const [draftConflictActive, setDraftConflictActive] = useState(false);
+  const [failedDraftSnapshots, setFailedDraftSnapshots] =
+    useState<FailedDraftSnapshot[]>([]);
+  const draftConflictSourceRef = useRef<MemoDraftRecord | null>(null);
+  const recoveredDraftSourceRef = useRef<MemoDraftRecord | null>(null);
+  const remoteRefreshSequenceRef = useRef(0);
+  const remoteRefreshAbortRef = useRef<AbortController | null>(null);
 
   const [content, setContent] = useState('');
   const [originalContent, setOriginalContent] = useState('');
@@ -173,6 +249,14 @@ export function MemoSection() {
   const contentRef = useRef<string>('');
   const originalContentRef = useRef<string>('');
   const pendingEditOffsetRef = useRef<number | null>(null);
+  const baseRevisionRef = useRef<string | undefined>(undefined);
+  const localRevisionRef = useRef(0);
+  const draftCreatedAtRef = useRef(0);
+  const draftFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSaveRef = useRef<PendingMemoSave | null>(null);
+  const saveInFlightRef = useRef(false);
+  const saveRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resumePendingSaveRef = useRef<() => void>(() => {});
   const currentIssue =
     selectedMemo &&
     findIssue('memos', selectedMemo.id);
@@ -187,10 +271,15 @@ export function MemoSection() {
     leaseState,
     requestLock,
     releaseLock,
+    hasCurrentLease,
     broadcastUpdate,
   } = useMemoSocket({
     memoId: selectedMemo?.id ?? null,
     onContentUpdated: (newContent: string) => {
+      const refreshSequence = remoteRefreshSequenceRef.current + 1;
+      remoteRefreshSequenceRef.current = refreshSequence;
+      remoteRefreshAbortRef.current?.abort();
+      remoteRefreshAbortRef.current = null;
       if (
         actionableIssue ||
         isEditingRef.current ||
@@ -200,10 +289,69 @@ export function MemoSection() {
         setRemoteContent(newContent);
         return;
       }
-      setContent(newContent);
-      contentRef.current = newContent;
-      setOriginalContent(newContent);
-      originalContentRef.current = newContent;
+      const refreshMemoId = selectedMemo?.id;
+      if (!refreshMemoId) return;
+      const refreshEditorEpoch = editorEpochRef.current;
+      const controller = new AbortController();
+      remoteRefreshAbortRef.current = controller;
+      void getMemo(refreshMemoId, controller.signal)
+        .then((fresh) => {
+          const isCurrentRequest =
+            isLatestRemoteRefreshRequest(
+              refreshSequence,
+              remoteRefreshSequenceRef.current,
+            ) &&
+            isCurrentEditorRequest({
+              expectedMemoId: refreshMemoId,
+              expectedEpoch: refreshEditorEpoch,
+              currentMemoId: initializedMemoIdRef.current,
+              currentEpoch: editorEpochRef.current,
+            });
+          const decision = decideRemoteRefreshAfterFetch({
+            isCurrentRequest,
+            hasDirtyBuffer:
+              isEditingRef.current ||
+              rawModeRef.current ||
+              contentRef.current !== originalContentRef.current,
+          });
+          if (decision === 'ignore') return;
+          if (decision === 'compare') {
+            setRemoteContent(fresh.content);
+            return;
+          }
+          setContent(fresh.content);
+          contentRef.current = fresh.content;
+          setOriginalContent(fresh.content);
+          originalContentRef.current = fresh.content;
+          baseRevisionRef.current = fresh.revision;
+        })
+        .catch(() => {
+          if (
+            controller.signal.aborted ||
+            !isLatestRemoteRefreshRequest(
+              refreshSequence,
+              remoteRefreshSequenceRef.current,
+            )
+          ) return;
+          if (
+            !isCurrentEditorRequest({
+              expectedMemoId: refreshMemoId,
+              expectedEpoch: refreshEditorEpoch,
+              currentMemoId: initializedMemoIdRef.current,
+              currentEpoch: editorEpochRef.current,
+            })
+          ) return;
+          // revision을 모르는 채 clean buffer로 채택하지 않는다. 사용자가 비교하도록 보존한다.
+          setRemoteContent(newContent);
+        })
+        .finally(() => {
+          if (
+            isLatestRemoteRefreshRequest(
+              refreshSequence,
+              remoteRefreshSequenceRef.current,
+            )
+          ) remoteRefreshAbortRef.current = null;
+        });
     },
     onLocked: (info) => {
       // Another user locked the memo
@@ -211,14 +359,53 @@ export function MemoSection() {
     },
     onUnlocked: () => {
       setLockMessage(null);
+      if (pendingSaveRef.current) window.setTimeout(requestLock, 0);
     },
     onLockDenied: (displayName: string) => {
+      const denialKind = classifyLockDenial(displayName);
       setLockMessage(
-        displayName === '접근 권한 없음' ||
-          displayName.startsWith('동기화 서버')
+        denialKind !== 'locked'
           ? displayName
           : `${displayName}님이 수정중입니다`,
       );
+      if (denialKind === 'terminal') {
+        if (saveRetryTimerRef.current) {
+          clearTimeout(saveRetryTimerRef.current);
+          saveRetryTimerRef.current = null;
+        }
+        const pending = pendingSaveRef.current;
+        pendingSaveRef.current = null;
+        pending?.resolve(false);
+        setDraftStatus('error');
+        setDraftError(displayName);
+        setSaveMessage(`${displayName} · 기기 초안은 유지됩니다.`);
+      } else if (denialKind === 'retryable' && pendingSaveRef.current) {
+        const pending = pendingSaveRef.current;
+        if (pending.leaseRetryCount < MAX_LEASE_SAVE_RETRIES) {
+          pendingSaveRef.current = {
+            ...pending,
+            leaseRetryCount: pending.leaseRetryCount + 1,
+          };
+          const delay = retryDelayMs(pending.leaseRetryCount);
+          setDraftStatus(pending.draftStored ? 'retrying' : 'error');
+          setSaveMessage(
+            pending.draftStored
+              ? '편집 잠금 서버 재시도 중 · 기기 초안 보관됨'
+              : '편집 잠금 재시도 중 · 기기 임시저장 실패로 내용 복사가 필요합니다.',
+          );
+          if (saveRetryTimerRef.current) clearTimeout(saveRetryTimerRef.current);
+          saveRetryTimerRef.current = setTimeout(() => {
+            saveRetryTimerRef.current = null;
+            requestLock();
+          }, delay);
+        } else {
+          pendingSaveRef.current = null;
+          pending.resolve(false);
+          setDraftStatus('error');
+          setDraftError(displayName);
+          setSaveMessage('편집 잠금 서버 재시도 한도를 초과했습니다. 기기 초안을 확인하세요.');
+        }
+      }
       setRawMode(false);
       rawModeRef.current = false;
     },
@@ -230,6 +417,91 @@ export function MemoSection() {
       ]);
     },
   });
+
+  const ownDraftKey = useCallback(
+    (memoId: string) => (user ? currentMemoDraftKey(user.id, memoId) : null),
+    [user],
+  );
+
+  const flushDraft = useCallback(
+    async (
+      snapshotContent = contentRef.current,
+      snapshotLocalRevision = localRevisionRef.current,
+    ): Promise<boolean> => {
+      if (!selectedMemo || !user || isViewingVersion) return true;
+      const key = ownDraftKey(selectedMemo.id);
+      if (!key) return false;
+
+      if (draftFlushTimerRef.current) {
+        clearTimeout(draftFlushTimerRef.current);
+        draftFlushTimerRef.current = null;
+      }
+
+      try {
+        if (snapshotContent === originalContentRef.current) {
+          const existing = await loadMemoDraft(key);
+          if (existing) {
+            await deleteMemoDraftIfRevision(key, existing.localRevision);
+          }
+          if (!pendingSaveRef.current) setDraftStatus('idle');
+          return true;
+        }
+
+        const now = Date.now();
+        const sourceLineage = sourceLineageForDraft(
+          recoveredDraftSourceRef.current ?? draftConflictSourceRef.current,
+          key,
+        );
+        const record: MemoDraftRecord = {
+          key,
+          origin: window.location.origin,
+          userId: user.id,
+          memoId: selectedMemo.id,
+          tabId: getMemoDraftTabId(),
+          baseRevision: baseRevisionRef.current ?? null,
+          baseContent: originalContentRef.current,
+          draftContent: snapshotContent,
+          localRevision: snapshotLocalRevision,
+          createdAt: draftCreatedAtRef.current,
+          updatedAt: now,
+          retryCount: pendingSaveRef.current?.retryCount ?? 0,
+          lastError: draftError,
+          ...(sourceLineage ? { sourceLineage } : {}),
+        };
+        await putMemoDraft(record);
+        if (!pendingSaveRef.current && !draftConflictActive) {
+          setDraftStatus('local-saved');
+        }
+        setDraftError(null);
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '기기 임시저장에 실패했습니다.';
+        setDraftStatus('error');
+        setDraftError(message);
+        return false;
+      }
+    },
+    [draftConflictActive, draftError, isViewingVersion, ownDraftKey, selectedMemo, user],
+  );
+
+  const scheduleDraftFlush = useCallback(() => {
+    if (draftFlushTimerRef.current) clearTimeout(draftFlushTimerRef.current);
+    draftFlushTimerRef.current = setTimeout(() => {
+      draftFlushTimerRef.current = null;
+      void flushDraft();
+    }, DRAFT_FLUSH_DELAY_MS);
+  }, [flushDraft]);
+
+  const applyContentMutation = useCallback(
+    (next: string) => {
+      if (next === contentRef.current) return;
+      localRevisionRef.current = nextDraftRevision(localRevisionRef.current);
+      setContent(next);
+      contentRef.current = next;
+      scheduleDraftFlush();
+    },
+    [scheduleDraftFlush],
+  );
 
   const focusTextareaToEnd = () => {
     requestAnimationFrame(() => {
@@ -367,8 +639,77 @@ export function MemoSection() {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
+      if (draftFlushTimerRef.current) clearTimeout(draftFlushTimerRef.current);
+      if (saveRetryTimerRef.current) clearTimeout(saveRetryTimerRef.current);
+      remoteRefreshAbortRef.current?.abort();
+      pendingSaveRef.current?.resolve(false);
     };
   }, []);
+
+  // 탭 숨김/종료 직전에는 debounce를 기다리지 않고 현재 버퍼를 IndexedDB에 넘긴다.
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') void flushDraft();
+    };
+    window.addEventListener('pagehide', handleVisibility);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('pagehide', handleVisibility);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [flushDraft]);
+
+  // 메모/계정 전환은 이전 메모 debounce가 실행되기 전에 컴포넌트가 재사용될 수 있으므로
+  // cleanup에서 이전 identity와 snapshot으로 직접 보존한다.
+  const selectedMemoId = selectedMemo?.id;
+  const selectedMemoTitle = selectedMemo?.title;
+  const draftUserId = user?.id;
+  useEffect(() => {
+    if (!selectedMemoId || !selectedMemoTitle || !draftUserId) return;
+    const memoId = selectedMemoId;
+    const userId = draftUserId;
+    const key = currentMemoDraftKey(userId, memoId);
+    const origin = window.location.origin;
+    const tabId = getMemoDraftTabId();
+    return () => {
+      if (draftFlushTimerRef.current) clearTimeout(draftFlushTimerRef.current);
+      const draftContent = contentRef.current;
+      const baseContent = originalContentRef.current;
+      if (draftContent === baseContent) return;
+      const sourceLineage = sourceLineageForDraft(
+        recoveredDraftSourceRef.current ?? draftConflictSourceRef.current,
+        key,
+      );
+      void putMemoDraft({
+        key,
+        origin,
+        userId,
+        memoId,
+        tabId,
+        baseRevision: baseRevisionRef.current ?? null,
+        baseContent,
+        draftContent,
+        localRevision: localRevisionRef.current,
+        createdAt: draftCreatedAtRef.current,
+        updatedAt: Date.now(),
+        retryCount: pendingSaveRef.current?.retryCount ?? 0,
+        lastError: null,
+        ...(sourceLineage ? { sourceLineage } : {}),
+      }).catch((error) => {
+        const message =
+          error instanceof Error ? error.message : 'IndexedDB 임시저장에 실패했습니다.';
+        console.error('Failed to preserve memo draft during memo switch:', error);
+        setFailedDraftSnapshots((current) =>
+          enqueueFailedDraftSnapshot(current, {
+            memoId,
+            title: selectedMemoTitle,
+            content: draftContent,
+            error: message,
+          }),
+        );
+      });
+    };
+  }, [draftUserId, selectedMemoId, selectedMemoTitle]);
 
   const [showMemoSearch, setShowMemoSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -376,7 +717,6 @@ export function MemoSection() {
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
 
   const isLockedByOther = Boolean(lockHolder);
-  const isViewingVersion = viewedVersion !== null;
   const canEdit =
     !isViewingVersion && leaseState === 'ready' && !isLockedByOther;
 
@@ -422,8 +762,19 @@ export function MemoSection() {
       return;
     }
     initializedMemoIdRef.current = nextMemoId;
+    editorEpochRef.current += 1;
+    remoteRefreshSequenceRef.current += 1;
+    remoteRefreshAbortRef.current?.abort();
+    remoteRefreshAbortRef.current = null;
 
     if (selectedMemo) {
+      if (saveRetryTimerRef.current) {
+        clearTimeout(saveRetryTimerRef.current);
+        saveRetryTimerRef.current = null;
+      }
+      pendingSaveRef.current?.resolve(false);
+      pendingSaveRef.current = null;
+      saveInFlightRef.current = false;
       setContent(selectedMemo.content);
       setOriginalContent(selectedMemo.content);
       contentRef.current = selectedMemo.content;
@@ -437,8 +788,108 @@ export function MemoSection() {
       setViewedVersion(null);
       isEditingRef.current = false;
       pendingEditOffsetRef.current = null;
+      baseRevisionRef.current = selectedMemo.revision;
+      localRevisionRef.current = 0;
+      draftCreatedAtRef.current = Date.now();
+      setRecoveryDraft(null);
+      setDraftConflictActive(false);
+      draftConflictSourceRef.current = null;
+      recoveredDraftSourceRef.current = null;
+      setDraftStatus('idle');
+      setDraftError(null);
+
+      if (user) {
+        const loadingMemoId = selectedMemo.id;
+        const loadingEditorEpoch = editorEpochRef.current;
+        void Promise.all([
+          listMemoDrafts(window.location.origin, user.id, selectedMemo.id),
+          listMemoDraftDismissals(window.location.origin, user.id, selectedMemo.id),
+        ])
+          .then(async ([loadedDrafts, dismissals]) => {
+            const isStillCurrent = () =>
+              isCurrentEditorRequest({
+                expectedMemoId: loadingMemoId,
+                expectedEpoch: loadingEditorEpoch,
+                currentMemoId: initializedMemoIdRef.current,
+                currentEpoch: editorEpochRef.current,
+              });
+            if (!isStillCurrent()) return;
+            const currentKey = currentMemoDraftKey(user.id, selectedMemo.id);
+            const evaluated = evaluateDraftDismissals(
+              loadedDrafts,
+              dismissals,
+              selectedMemo.revision ?? null,
+            );
+            if (evaluated.staleDismissalKeys.length > 0) {
+              await deleteMemoDraftDismissals(evaluated.staleDismissalKeys);
+              if (!isStillCurrent()) return;
+            }
+            const remaining: MemoDraftRecord[] = [];
+            for (const draft of evaluated.candidates) {
+              if (!isStillCurrent()) return;
+              const decision = decideDraftRecovery(
+                draft,
+                selectedMemo.content,
+                selectedMemo.revision ?? null,
+              );
+              if (decision === 'cleanup') {
+                if (draft.key === currentKey) {
+                  await deleteMemoDraftIfRevision(draft.key, draft.localRevision);
+                  if (!isStillCurrent()) return;
+                }
+              } else {
+                remaining.push(draft);
+              }
+            }
+            if (
+              remaining.length === 0 ||
+              !isStillCurrent() ||
+              localRevisionRef.current !== 0 ||
+              contentRef.current !== originalContentRef.current
+            ) {
+              return;
+            }
+            // 현재 탭 초안이 있으면 그것이 이 탭의 canonical 후보다. 없을 때만
+            // 다른 탭의 최신 후보를 보여 주며, 로드 단계에서는 절대 이동/삭제하지 않는다.
+            const latest = selectDraftCandidate(remaining, currentKey);
+            if (!latest) return;
+            const decision = decideDraftRecovery(
+              latest,
+              selectedMemo.content,
+              selectedMemo.revision ?? null,
+            );
+            draftCreatedAtRef.current = latest.createdAt;
+            if (decision === 'offer-recovery') {
+              setRecoveryDraft(latest);
+              return;
+            }
+
+            localRevisionRef.current = latest.localRevision;
+            setContent(latest.draftContent);
+            contentRef.current = latest.draftContent;
+            setRemoteContent(selectedMemo.content);
+            setShowRemoteCompare(true);
+            setDraftConflictActive(true);
+            draftConflictSourceRef.current = latest;
+            setDraftStatus('conflict');
+          })
+          .catch((error) => {
+            if (
+              !isCurrentEditorRequest({
+                expectedMemoId: loadingMemoId,
+                expectedEpoch: loadingEditorEpoch,
+                currentMemoId: initializedMemoIdRef.current,
+                currentEpoch: editorEpochRef.current,
+              })
+            ) return;
+            setDraftStatus('error');
+            setDraftError(
+              error instanceof Error ? error.message : '기기 초안을 불러오지 못했습니다.',
+            );
+          });
+      }
     }
-  }, [selectedMemo]);
+  }, [selectedMemo, user]);
 
   const handleVersionSelect = useCallback(
     (version: MemoVersionInterface | null) => {
@@ -481,54 +932,299 @@ export function MemoSection() {
     originalContentRef.current = originalContent;
   }, [originalContent]);
 
-  const handleSaveMemo = useCallback(async () => {
-    if (!selectedMemo) return false;
-    if (isViewingVersion) {
-      setSaveMessage('과거 버전은 읽기 전용입니다. 현재 문서로 돌아온 뒤 저장하세요.');
-      return false;
+  // 같은 메모의 목록 metadata가 sync refresh로 갱신될 수 있다. 깨끗한 버퍼에서만
+  // 최신 CAS 기준을 받아들이고, dirty/draft-conflict 중에는 편집의 base를 보존한다.
+  const selectedMemoRevision = selectedMemo?.revision;
+  useEffect(() => {
+    if (!selectedMemoId || initializedMemoIdRef.current !== selectedMemoId) return;
+    if (draftConflictActive || contentRef.current !== originalContentRef.current) return;
+    baseRevisionRef.current = selectedMemoRevision;
+  }, [draftConflictActive, selectedMemoId, selectedMemoRevision]);
+
+  const processPendingSave = useCallback(async () => {
+    const pending = pendingSaveRef.current;
+    if (!pending || saveInFlightRef.current) return;
+    if (!selectedMemo || selectedMemo.id !== pending.memoId || isViewingVersion) {
+      pendingSaveRef.current = null;
+      pending.resolve(false);
+      return;
     }
-    if (!canEdit) {
+    if (draftConflictActive && !pending.allowConflict) {
+      setDraftStatus('conflict');
+      pendingSaveRef.current = null;
+      pending.resolve(false);
+      return;
+    }
+    if (
+      !shouldResumePendingSave(leaseState, isLockedByOther) ||
+      !hasCurrentLease(pending.memoId)
+    ) {
+      setDraftStatus(pending.draftStored ? 'lock-wait' : 'error');
       setSaveMessage(
-        leaseState === 'pending'
-          ? '편집 잠금을 확인하는 중입니다. 잠시 후 다시 저장하세요.'
-          : '편집 잠금을 확보하지 못해 저장할 수 없습니다.',
+        pending.draftStored
+          ? '편집 잠금 대기 중 · 내용은 이 기기에 임시 저장됨'
+          : '편집 잠금 대기 중 · 기기 임시저장에 실패해 내용 복사가 필요합니다.',
       );
       requestLock();
-      return false;
+      return;
     }
 
-    const latest = contentRef.current;
-    const original = originalContentRef.current;
-
-    if (latest === original) {
-      console.log('변경사항이 없어 저장하지 않습니다.');
-      return true;
+    if (saveRetryTimerRef.current) {
+      clearTimeout(saveRetryTimerRef.current);
+      saveRetryTimerRef.current = null;
     }
+    pendingSaveRef.current = null;
+    saveInFlightRef.current = true;
 
     try {
-      await updateMemo(latest);
-      setOriginalContent(latest);
-      originalContentRef.current = latest;
-      broadcastUpdate(latest);
-      setSaveMessage('저장되었습니다.');
+      const updated = await updateMemo(pending.content, pending.baseRevision);
+      if (
+        initializedMemoIdRef.current !== pending.memoId ||
+        editorEpochRef.current !== pending.editorEpoch
+      ) {
+        pending.resolve(false);
+        return;
+      }
+
+      baseRevisionRef.current = updated.revision ?? baseRevisionRef.current;
+      pendingSaveRef.current = rebaseQueuedSaveRevision<PendingMemoSave>(
+        pendingSaveRef.current,
+        pending.memoId,
+        updated.revision,
+      );
+      setOriginalContent(pending.content);
+      originalContentRef.current = pending.content;
+      broadcastUpdate(pending.content);
+
+      const key = ownDraftKey(pending.memoId);
+      setDraftError(null);
+      try {
+        if (key) {
+          await deleteMemoDraftIfRevision(key, pending.localRevision);
+        }
+        const recoveredSource = recoveredDraftSourceRef.current;
+        if (recoveredSource) {
+          const sourceLineage = key
+            ? sourceLineageForDraft(recoveredSource, key)
+            : null;
+          if (sourceLineage) {
+            await putMemoDraftDismissal({
+              key: makeDraftDismissalKey(sourceLineage.sourceKey),
+              sourceKey: sourceLineage.sourceKey,
+              sourceLocalRevision: sourceLineage.sourceLocalRevision,
+              acceptedServerRevision: updated.revision ?? null,
+              origin: sourceLineage.origin,
+              userId: sourceLineage.userId,
+              memoId: sourceLineage.memoId,
+              action: 'saved',
+              createdAt: Date.now(),
+            });
+          }
+          recoveredDraftSourceRef.current = null;
+        }
+
+        if (localRevisionRef.current === pending.localRevision) {
+          setDraftStatus('idle');
+        } else {
+          // 저장 요청 뒤 입력된 내용은 새 base revision 위에 다시 보존한다.
+          const stored = await flushDraft(contentRef.current, localRevisionRef.current);
+          setDraftStatus(stored ? 'local-saved' : 'error');
+        }
+      } catch (draftCleanupError) {
+        const message =
+          draftCleanupError instanceof Error
+            ? draftCleanupError.message
+            : '저장된 기기 초안을 정리하지 못했습니다.';
+        setDraftStatus('error');
+        setDraftError(message);
+      }
+      setSaveMessage('서버에 저장되었습니다.');
       window.setTimeout(() => setSaveMessage(null), 3000);
-      return true;
+      pending.resolve(true);
     } catch (error) {
       console.error('Failed to save memo:', error);
-      setSaveMessage(
-        error instanceof Error ? `저장 실패: ${error.message}` : '저장에 실패했습니다.',
-      );
-      return false;
+      const failure = classifySaveFailure(error);
+
+      if (failure === 'conflict') {
+        const queued = pendingSaveRef.current as PendingMemoSave | null;
+        queued?.resolve(false);
+        pendingSaveRef.current = null;
+        const current = error instanceof ApiError ? error.current : undefined;
+        if (current) {
+          baseRevisionRef.current = current.revision;
+          setRemoteContent(current.content);
+          setShowRemoteCompare(true);
+          setDraftConflictActive(true);
+          setDraftStatus('conflict');
+          setSaveMessage('원격 변경이 있어 자동 저장하지 않았습니다. 내용을 비교하세요.');
+        } else {
+          setDraftStatus('error');
+          setDraftError('원격 변경 내용을 가져오지 못했습니다. 다시 시도하세요.');
+        }
+        pending.resolve(false);
+      } else if (failure === 'lease' && pending.leaseRetryCount < MAX_LEASE_SAVE_RETRIES) {
+        if (pendingSaveRef.current) {
+          pending.resolve(false);
+        } else {
+          pendingSaveRef.current = {
+            ...pending,
+            leaseRetryCount: pending.leaseRetryCount + 1,
+          };
+        }
+        clearMemoLease(pending.memoId);
+        releaseLock();
+        setDraftStatus(pending.draftStored ? 'lock-wait' : 'error');
+        setSaveMessage('편집 잠금을 다시 확보한 뒤 자동으로 저장합니다.');
+        saveRetryTimerRef.current = setTimeout(() => {
+          saveRetryTimerRef.current = null;
+          requestLock();
+        }, 0);
+      } else if (
+        failure === 'retryable' &&
+        pending.retryCount < MAX_AUTOMATIC_SAVE_RETRIES
+      ) {
+        const nextPending = { ...pending, retryCount: pending.retryCount + 1 };
+        if (pendingSaveRef.current) {
+          pending.resolve(false);
+        } else {
+          pendingSaveRef.current = nextPending;
+        }
+        const delay = retryDelayMs(pending.retryCount);
+        setDraftStatus(pending.draftStored ? 'retrying' : 'error');
+        setSaveMessage(
+          pending.draftStored
+            ? '서버 저장 재시도 중 · 기기 초안 보관됨'
+            : '서버 저장 재시도 중 · 기기 임시저장 실패로 내용 복사가 필요합니다.',
+        );
+        saveRetryTimerRef.current = setTimeout(() => {
+          saveRetryTimerRef.current = null;
+          resumePendingSaveRef.current();
+        }, delay);
+      } else {
+        const queued = pendingSaveRef.current as PendingMemoSave | null;
+        queued?.resolve(false);
+        pendingSaveRef.current = null;
+        setDraftStatus('error');
+        const message = error instanceof Error ? error.message : '서버에 저장하지 못했습니다.';
+        setDraftError(message);
+        setSaveMessage(`서버 저장 실패: ${message}`);
+        pending.resolve(false);
+      }
+    } finally {
+      saveInFlightRef.current = false;
+      if (pendingSaveRef.current && !saveRetryTimerRef.current) {
+        // 다음 task에서 최신 callback과 synchronous ownership gate로만 이어 간다.
+        window.setTimeout(() => resumePendingSaveRef.current(), 0);
+      }
     }
   }, [
-    selectedMemo,
-    isViewingVersion,
-    canEdit,
-    leaseState,
-    requestLock,
-    updateMemo,
     broadcastUpdate,
+    draftConflictActive,
+    flushDraft,
+    hasCurrentLease,
+    isLockedByOther,
+    isViewingVersion,
+    leaseState,
+    ownDraftKey,
+    releaseLock,
+    requestLock,
+    selectedMemo,
+    updateMemo,
   ]);
+
+  useEffect(() => {
+    resumePendingSaveRef.current = () => {
+      void processPendingSave();
+    };
+  }, [processPendingSave]);
+
+  useEffect(() => {
+    if (leaseState === 'ready') resumePendingSaveRef.current();
+  }, [leaseState]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    resumePendingSaveRef.current();
+  }, [isConnected]);
+
+  useEffect(() => {
+    const resume = () => {
+      if (saveRetryTimerRef.current) {
+        clearTimeout(saveRetryTimerRef.current);
+        saveRetryTimerRef.current = null;
+      }
+      resumePendingSaveRef.current();
+    };
+    const visible = () => {
+      if (document.visibilityState === 'visible') resume();
+    };
+    window.addEventListener('online', resume);
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      window.removeEventListener('online', resume);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, []);
+
+  const queueMemoSave = useCallback(
+    async (nextContent: string, allowConflict = false): Promise<boolean> => {
+      if (!selectedMemo) return false;
+      if (isViewingVersion) {
+        setSaveMessage('과거 버전은 읽기 전용입니다. 현재 문서로 돌아온 뒤 저장하세요.');
+        return false;
+      }
+      if (draftConflictActive && !allowConflict) {
+        setDraftStatus('conflict');
+        setSaveMessage('원격 변경을 비교한 뒤 저장 내용을 선택하세요.');
+        return false;
+      }
+      if (nextContent === originalContentRef.current) return true;
+
+      const snapshotLocalRevision = localRevisionRef.current;
+      const draftStored = await flushDraft(nextContent, snapshotLocalRevision);
+
+      return new Promise<boolean>((resolve) => {
+        const existing = pendingSaveRef.current;
+        if (existing) existing.resolve(false);
+        pendingSaveRef.current = {
+          memoId: selectedMemo.id,
+          editorEpoch: editorEpochRef.current,
+          content: nextContent,
+          baseRevision: baseRevisionRef.current,
+          localRevision: snapshotLocalRevision,
+          retryCount: 0,
+          leaseRetryCount: 0,
+          allowConflict,
+          draftStored,
+          resolve,
+        };
+        if (leaseState !== 'ready' || isLockedByOther) {
+          setDraftStatus(draftStored ? 'lock-wait' : 'error');
+          setSaveMessage(
+            draftStored
+              ? '편집 잠금 대기 중 · 확보되면 자동 저장합니다.'
+              : '기기 임시저장에 실패했습니다. 잠금 대기 중이며 내용 복사를 권장합니다.',
+          );
+          requestLock();
+        }
+        window.setTimeout(() => resumePendingSaveRef.current(), 0);
+      });
+    },
+    [
+      draftConflictActive,
+      flushDraft,
+      isLockedByOther,
+      isViewingVersion,
+      leaseState,
+      requestLock,
+      selectedMemo,
+    ],
+  );
+
+  const handleSaveMemo = useCallback(
+    async () => queueMemoSave(contentRef.current),
+    [queueMemoSave],
+  );
 
   // 게시 / 재게시 핸들러
   const handlePublish = useCallback(async () => {
@@ -611,8 +1307,7 @@ export function MemoSection() {
         newCursorPos = currentCursorPos + linkText.length;
       }
 
-      setContent(newContent);
-      contentRef.current = newContent;
+      applyContentMutation(newContent);
 
       setTimeout(() => {
         if (textareaRef.current) {
@@ -621,7 +1316,7 @@ export function MemoSection() {
         }
       }, 0);
     },
-    [selectedProject]
+    [applyContentMutation, selectedProject]
   );
 
   useEffect(() => {
@@ -770,8 +1465,7 @@ export function MemoSection() {
     const newContent = e.target.value;
     const cursorPos = e.target.selectionStart;
 
-    setContent(newContent);
-    contentRef.current = newContent;
+    applyContentMutation(newContent);
 
     const textBeforeCursor = newContent.substring(0, cursorPos);
     const lastAtIndex = textBeforeCursor.lastIndexOf('@');
@@ -845,10 +1539,10 @@ export function MemoSection() {
 
   const handleRawKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      scheduleLockRelease();
+      holdLock();
       handleMentionKeyDown(e);
     },
-    [handleMentionKeyDown, scheduleLockRelease]
+    [handleMentionKeyDown, holdLock]
   );
 
   /**
@@ -940,31 +1634,15 @@ export function MemoSection() {
         setSaveMessage('과거 버전은 읽기 전용입니다.');
         return;
       }
-      if (!canEdit) {
-        setSaveMessage('편집 잠금이 준비되기 전에는 체크박스를 변경할 수 없습니다.');
-        requestLock();
-        return;
-      }
-      try {
-        await updateMemo(next);
-        setOriginalContent(next);
-        originalContentRef.current = next;
-      } catch (error) {
-        console.error('Failed to update checkbox:', error);
-        setSaveMessage(
-          error instanceof Error
-            ? `체크박스 저장 실패: ${error.message}`
-            : '체크박스를 저장하지 못했습니다.',
-        );
-      }
+      await queueMemoSave(next);
     },
-    [canEdit, isViewingVersion, requestLock, updateMemo]
+    [isViewingVersion, queueMemoSave]
   );
 
-  const handleInlineChange = useCallback((next: string) => {
-    setContent(next);
-    contentRef.current = next;
-  }, []);
+  const handleInlineChange = useCallback(
+    (next: string) => applyContentMutation(next),
+    [applyContentMutation],
+  );
 
   const handleReadOnlyEditIntent = useCallback(
     (documentOffset: number) => {
@@ -974,6 +1652,12 @@ export function MemoSection() {
     },
     [isViewingVersion, requestLock],
   );
+
+  const handleReadOnlyCodeEditIntent = useCallback(() => {
+    if (isViewingVersion) return;
+    pendingEditOffsetRef.current = null;
+    requestLock();
+  }, [isViewingVersion, requestLock]);
 
   const moveToNextIssue = useCallback(
     async (resolvedIssue: SyncIssueInterface) => {
@@ -1008,6 +1692,45 @@ export function MemoSection() {
     [issues, projects, selectMemo, selectProject, selectedProject],
   );
 
+  const cleanupDraftConflictSource = useCallback(async (
+    action: DraftDismissalAction,
+    acceptedServerRevision: string | null,
+  ) => {
+    const source = draftConflictSourceRef.current;
+    if (!source) return;
+    const currentKey = selectedMemo ? ownDraftKey(selectedMemo.id) : null;
+    const sourceLineage = currentKey
+      ? sourceLineageForDraft(source, currentKey)
+      : null;
+    if (currentKey && source.key === currentKey) {
+      await deleteMemoDraftIfRevision(source.key, source.localRevision);
+    }
+    if (sourceLineage) {
+      await putMemoDraftDismissal({
+        key: makeDraftDismissalKey(sourceLineage.sourceKey),
+        sourceKey: sourceLineage.sourceKey,
+        sourceLocalRevision: sourceLineage.sourceLocalRevision,
+        acceptedServerRevision,
+        origin: sourceLineage.origin,
+        userId: sourceLineage.userId,
+        memoId: sourceLineage.memoId,
+        action,
+        createdAt: Date.now(),
+      });
+    }
+    draftConflictSourceRef.current = null;
+  }, [ownDraftKey, selectedMemo]);
+
+  const cleanupOwnDraft = useCallback(async () => {
+    if (!selectedMemo) return;
+    const key = ownDraftKey(selectedMemo.id);
+    if (!key) return;
+    const stored = await loadMemoDraft(key);
+    if (stored) await deleteMemoDraftIfRevision(key, stored.localRevision);
+    setDraftStatus('idle');
+    setDraftError(null);
+  }, [ownDraftKey, selectedMemo]);
+
   const handleResolveOnly = useCallback(async (winnerContent: string) => {
     if (actionableIssue) {
       setContent(winnerContent);
@@ -1015,62 +1738,79 @@ export function MemoSection() {
       setOriginalContent(winnerContent);
       originalContentRef.current = winnerContent;
       setRemoteContent(null);
+      await cleanupOwnDraft();
       await resolveIssues([actionableIssue.id]);
       await moveToNextIssue(actionableIssue);
       return;
     }
     if (remoteContent !== null) {
-      if (leaseState !== 'ready') {
-        requestLock();
-        throw new Error('편집 잠금이 아직 준비되지 않았습니다.');
-      }
       // 원격 변경보다 현재 버퍼를 선택했으므로 실제 서버 메모에도 그 선택을 기록한다.
-      await updateMemo(winnerContent);
+      const saved = await queueMemoSave(winnerContent, true);
+      if (!saved) throw new Error('서버 저장을 완료하지 못했습니다. 기기 초안은 보존됩니다.');
       setContent(winnerContent);
       contentRef.current = winnerContent;
-      setOriginalContent(winnerContent);
-      originalContentRef.current = winnerContent;
-      broadcastUpdate(winnerContent);
       setRemoteContent(null);
       setShowRemoteCompare(false);
+      setDraftConflictActive(false);
+      await cleanupDraftConflictSource('saved', baseRevisionRef.current ?? null);
     }
   }, [
     actionableIssue,
-    broadcastUpdate,
-    leaseState,
+    cleanupDraftConflictSource,
+    cleanupOwnDraft,
     moveToNextIssue,
+    queueMemoSave,
     remoteContent,
-    requestLock,
     resolveIssues,
-    updateMemo,
   ]);
 
   const handleSaveResolved = useCallback(
     async (nextContent: string) => {
       if (!selectedMemo) return;
-      if (leaseState !== 'ready') {
-        requestLock();
-        throw new Error('편집 잠금이 아직 준비되지 않았습니다.');
-      }
-
       if (!actionableIssue && remoteContent !== null && nextContent === remoteContent) {
+        const requestMemoId = selectedMemo.id;
+        const requestEditorEpoch = editorEpochRef.current;
+        const fresh = await getMemo(requestMemoId);
+        if (
+          !isCurrentEditorRequest({
+            expectedMemoId: requestMemoId,
+            expectedEpoch: requestEditorEpoch,
+            currentMemoId: initializedMemoIdRef.current,
+            currentEpoch: editorEpochRef.current,
+          })
+        ) return;
+        if (!canAdoptFetchedRemote(nextContent, fresh.content)) {
+          setRemoteContent(fresh.content);
+          setDraftStatus('conflict');
+          throw new Error('선택하는 동안 서버 내용이 다시 변경되었습니다. 최신 내용을 비교하세요.');
+        }
+        baseRevisionRef.current = fresh.revision;
         setContent(nextContent);
         contentRef.current = nextContent;
         setOriginalContent(nextContent);
         originalContentRef.current = nextContent;
         setRemoteContent(null);
         setShowRemoteCompare(false);
+        setDraftConflictActive(false);
+        const key = ownDraftKey(selectedMemo.id);
+        if (key) {
+          const stored = await loadMemoDraft(key);
+          if (stored) await deleteMemoDraftIfRevision(key, stored.localRevision);
+        }
+        await cleanupDraftConflictSource('remote', fresh.revision ?? null);
+        setDraftStatus('idle');
+        await refreshCurrentProject();
         return;
       }
 
-      await updateMemo(nextContent);
+      const saved = await queueMemoSave(nextContent, true);
+      if (!saved) throw new Error('서버 저장을 완료하지 못했습니다. 기기 초안은 보존됩니다.');
       setContent(nextContent);
       contentRef.current = nextContent;
-      setOriginalContent(nextContent);
-      originalContentRef.current = nextContent;
-      broadcastUpdate(nextContent);
       setRemoteContent(null);
       setShowRemoteCompare(false);
+      setDraftConflictActive(false);
+      await cleanupDraftConflictSource('saved', baseRevisionRef.current ?? null);
       if (actionableIssue) {
         await resolveIssues([actionableIssue.id]);
         await moveToNextIssue(actionableIssue);
@@ -1078,14 +1818,14 @@ export function MemoSection() {
     },
     [
       actionableIssue,
-      broadcastUpdate,
-      leaseState,
+      cleanupDraftConflictSource,
       moveToNextIssue,
+      ownDraftKey,
+      queueMemoSave,
       remoteContent,
-      requestLock,
+      refreshCurrentProject,
       resolveIssues,
       selectedMemo,
-      updateMemo,
     ],
   );
 
@@ -1109,11 +1849,120 @@ export function MemoSection() {
     [canMerge, refreshSync, selectMemo, selectProject, selectedProject],
   );
 
+  const handleRecoverDraft = useCallback(async () => {
+    if (!recoveryDraft) return;
+    const currentKey = selectedMemo ? ownDraftKey(selectedMemo.id) : null;
+    const previousRecoveredSource = recoveredDraftSourceRef.current;
+    recoveredDraftSourceRef.current = currentKey &&
+      sourceLineageForDraft(recoveryDraft, currentKey)
+        ? recoveryDraft
+        : null;
+    localRevisionRef.current = Math.max(
+      localRevisionRef.current,
+      recoveryDraft.localRevision,
+    );
+    applyContentMutation(recoveryDraft.draftContent);
+    const recoveredRevision = localRevisionRef.current;
+    const copied = await flushDraft(recoveryDraft.draftContent, recoveredRevision);
+    if (!copied) {
+      recoveredDraftSourceRef.current = previousRecoveredSource;
+      return;
+    }
+    setRecoveryDraft(null);
+    setDraftStatus('local-saved');
+    setSaveMessage('기기 초안을 복구했습니다. 서버 저장 전까지 이 기기에 보관됩니다.');
+  }, [applyContentMutation, flushDraft, ownDraftKey, recoveryDraft, selectedMemo]);
+
+  const handleDiscardDraft = useCallback(async () => {
+    if (!recoveryDraft) return;
+    const currentKey = selectedMemo ? ownDraftKey(selectedMemo.id) : null;
+    const sourceLineage = currentKey
+      ? sourceLineageForDraft(recoveryDraft, currentKey)
+      : null;
+    if (currentKey && recoveryDraft.key === currentKey) {
+      await deleteMemoDraftIfRevision(recoveryDraft.key, recoveryDraft.localRevision);
+    }
+    if (sourceLineage) {
+      await putMemoDraftDismissal({
+        key: makeDraftDismissalKey(sourceLineage.sourceKey),
+        sourceKey: sourceLineage.sourceKey,
+        sourceLocalRevision: sourceLineage.sourceLocalRevision,
+        acceptedServerRevision: baseRevisionRef.current ?? null,
+        origin: sourceLineage.origin,
+        userId: sourceLineage.userId,
+        memoId: sourceLineage.memoId,
+        action: 'discard',
+        createdAt: Date.now(),
+      });
+    }
+    setRecoveryDraft(null);
+    setDraftStatus('idle');
+    setDraftError(null);
+  }, [ownDraftKey, recoveryDraft, selectedMemo]);
+
+  const handleRetrySave = useCallback(() => {
+    if (contentRef.current === originalContentRef.current) {
+      void flushDraft();
+      return;
+    }
+    void queueMemoSave(contentRef.current);
+  }, [flushDraft, queueMemoSave]);
+
+  const handleCopyDraft = useCallback(async (draftContent?: string) => {
+    try {
+      await navigator.clipboard.writeText(draftContent ?? contentRef.current);
+      setSaveMessage('현재 메모 내용을 클립보드에 복사했습니다.');
+    } catch {
+      setSaveMessage('자동 복사에 실패했습니다. Raw 모드에서 전체 내용을 복사하세요.');
+    }
+  }, []);
+
+  const failedDraftWarnings = failedDraftSnapshots.map((snapshot) => (
+    <section
+      key={snapshot.memoId}
+      className="memo-draft-banner memo-draft-error"
+      aria-live="assertive"
+    >
+      <div>
+        <strong>이전 메모 임시저장 실패 · {snapshot.title}</strong>
+        <span>{snapshot.error}</span>
+      </div>
+      <div className="memo-draft-actions">
+        <button type="button" onClick={() => void handleCopyDraft(snapshot.content)}>
+          이전 내용 복사
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            setFailedDraftSnapshots((current) =>
+              current.filter((item) => item.memoId !== snapshot.memoId),
+            )
+          }
+        >
+          닫기
+        </button>
+      </div>
+    </section>
+  ));
+
   if (!selectedProject || !selectedMemo) {
-    return <div></div>;
+    return <div className="detail memo-draft-failure-surface">{failedDraftWarnings}</div>;
   }
 
   const isDirty = content !== originalContent;
+
+  const draftStatusLabel =
+    draftStatus === 'local-saved'
+      ? '이 기기에 임시 저장됨'
+      : draftStatus === 'lock-wait'
+        ? '편집 잠금 대기 · 기기 초안 보관 중'
+        : draftStatus === 'retrying'
+          ? '서버 저장 재시도 중 · 기기 초안 보관됨'
+          : draftStatus === 'conflict'
+            ? '원격 변경 비교 필요 · 자동 저장 중지'
+            : draftStatus === 'error'
+              ? '임시저장 또는 서버 저장 실패'
+              : null;
 
   const statusItems = (
     <div className="memo-editor-toolbar-status" aria-live="polite">
@@ -1228,6 +2077,44 @@ export function MemoSection() {
             />
           )}
 
+        {failedDraftWarnings}
+
+        {recoveryDraft && (
+          <section className="memo-draft-banner memo-draft-recovery" aria-live="polite">
+            <div>
+              <strong>저장되지 않은 기기 초안이 있습니다</strong>
+              <span>
+                {new Date(recoveryDraft.updatedAt).toLocaleString()}에 보존된 초안입니다.
+                서버 내용은 사용자가 선택하기 전까지 바꾸지 않습니다.
+              </span>
+            </div>
+            <div className="memo-draft-actions">
+              <button type="button" onClick={() => void handleRecoverDraft()}>복구</button>
+              <button type="button" onClick={() => void handleDiscardDraft()}>폐기</button>
+            </div>
+          </section>
+        )}
+
+        {!recoveryDraft && draftStatusLabel && (
+          <section
+            className={`memo-draft-banner memo-draft-${draftStatus}`}
+            aria-live="polite"
+          >
+            <div>
+              <strong>{draftStatusLabel}</strong>
+              {draftError && <span>{draftError}</span>}
+            </div>
+            {(draftStatus === 'error' || draftStatus === 'lock-wait') && (
+              <div className="memo-draft-actions">
+                <button type="button" onClick={handleRetrySave}>다시 시도</button>
+                {draftStatus === 'error' && (
+                  <button type="button" onClick={() => void handleCopyDraft()}>내용 복사</button>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
         <div
           className={`memo-editor-shell${
             remoteContent !== null && !showRemoteCompare
@@ -1266,8 +2153,14 @@ export function MemoSection() {
               onEditingEnd={scheduleLockRelease}
               onRequestWrite={requestLock}
               onClose={
-                !actionableIssue ? () => setShowRemoteCompare(false) : undefined
+                !actionableIssue && !draftConflictActive
+                  ? () => setShowRemoteCompare(false)
+                  : undefined
               }
+              compareTitle={draftConflictActive ? '기기 초안과 원격 변경 비교' : undefined}
+              leftTitle={draftConflictActive ? '이 기기에 보존된 초안' : undefined}
+              rightTitle={draftConflictActive ? '현재 서버 내용' : undefined}
+              onManualChange={applyContentMutation}
             />
           ) : rawMode ? (
             <div className="w-full min-h-0 h-full overflow-y-auto relative">
@@ -1280,6 +2173,8 @@ export function MemoSection() {
                 onMouseUp={handleRawMouseUp}
                 onCopy={handleRawCopy}
                 onCut={handleRawCut}
+                onFocus={holdLock}
+                onBlur={scheduleLockRelease}
                 disabled={!canEdit}
                 className="memo-raw-input w-full h-full p-0 resize-none focus:outline-none"
                 placeholder=""
@@ -1310,6 +2205,9 @@ export function MemoSection() {
                 readOnly={!canEdit}
                 onReadOnlyEditIntent={
                   isViewingVersion ? undefined : handleReadOnlyEditIntent
+                }
+                onReadOnlyCodeEditIntent={
+                  isViewingVersion ? undefined : handleReadOnlyCodeEditIntent
                 }
               />
             </div>

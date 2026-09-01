@@ -27,6 +27,8 @@ export interface MemoInterface {
   createdAt: Date | string;
   updatedAt: Date | string;
   updatedAtUtc?: string | null;
+  /** CAS 저장용 서버 revision. 구버전 API 호환을 위해 optional이다. */
+  revision?: string;
 }
 
 export interface MemoLeaseInterface {
@@ -237,7 +239,7 @@ export interface TodoAppContextTypeInterface {
   verifyProjectPassword: (projectId: string, password: string) => Promise<boolean>;
   selectMemo: (memo: MemoInterface) => Promise<void>;
   createMemo: (title: string) => Promise<void>;
-  updateMemo: (content: string) => Promise<void>;
+  updateMemo: (content: string, baseRevision?: string) => Promise<MemoInterface>;
   setSortOption: (option: SortOption) => void;
   toggleSelectMemo: (memoId: string) => void;
   clearSelectedMemos: () => void;

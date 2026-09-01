@@ -1,11 +1,14 @@
 'use client';
 
-import React, { useEffect, useImperativeHandle, useRef } from 'react';
+import React, { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { MonacoCodeEditor } from '@/components/editor/MonacoCodeEditor';
 import { assertClassifierMatchesParseContent } from './classifyLine';
 import { LineView } from './LineView';
 import { useLineStateMachine, type MentionState } from './useLineStateMachine';
 import { lineCaretToDocumentOffset } from '@/lib/editorIntent';
+import {
+  createEditorActivityTracker,
+} from '@/lib/editorActivity';
 
 export type { MentionState };
 
@@ -36,6 +39,7 @@ export interface InlineEditorProps {
   onSelectRange?: (anchor: number, focus: number) => void;
   readOnly?: boolean;
   onReadOnlyEditIntent?: (documentOffset: number) => void;
+  onReadOnlyCodeEditIntent?: () => void;
 }
 
 /**
@@ -57,12 +61,26 @@ export function InlineEditor({
   onSelectRange,
   readOnly = false,
   onReadOnlyEditIntent,
+  onReadOnlyCodeEditIntent,
 }: InlineEditorProps) {
+  const [activityTracker] = useState(() =>
+    createEditorActivityTracker((active) => onEditingChange?.(active)),
+  );
+  useEffect(() => {
+    activityTracker.setOnChange((active) => onEditingChange?.(active));
+  }, [activityTracker, onEditingChange]);
+
+  useEffect(() => () => activityTracker.dispose(), [activityTracker]);
+
+  useEffect(() => {
+    if (readOnly) activityTracker.reset();
+  }, [activityTracker, readOnly]);
+
   const machine = useLineStateMachine({
     value,
     onChange,
     onPersist,
-    onEditingChange,
+    onEditingChange: (active) => activityTracker.update('line', active),
     onMentionChange,
     mentionActive,
     onMentionKeyDown,
@@ -72,6 +90,14 @@ export function InlineEditor({
   });
 
   const { activeLineId, activeMode, flashLineId, groups } = machine;
+
+  // 새 코드블록은 라인을 먼저 deactivate한 뒤 Monaco chunk/instance가 준비되기를 기다린다.
+  // 이 인계 의도 자체를 Monaco source로 선점해 로딩이 한 task보다 길어도 false가 새지 않게 한다.
+  useEffect(() => {
+    if (!readOnly && machine.pendingCodeFocusId !== null) {
+      activityTracker.update('monaco', true);
+    }
+  }, [activityTracker, machine.pendingCodeFocusId, readOnly]);
 
   const surfaceRef = useRef<HTMLDivElement>(null);
   /** 드래그 중인지 — document mouseup 이 남의 선택까지 승격하지 않게 하는 게이트. */
@@ -277,7 +303,12 @@ export function InlineEditor({
                 onAutoFocused={machine.consumeCodeFocus}
                 // 코드편집기에 커서가 있는 동안도 "편집 중" — 락이 6초 뒤 풀리면 안 된다.
                 // 과거 버전처럼 read-only인 Monaco 포커스는 편집 의도/락이 아니다.
-                onFocusChange={readOnly ? undefined : onEditingChange}
+                onFocusChange={
+                  readOnly
+                    ? undefined
+                    : (focused) => activityTracker.update('monaco', focused)
+                }
+                onReadOnlyEditIntent={onReadOnlyCodeEditIntent}
               />
               {group.close && (
                 <LineView

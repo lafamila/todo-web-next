@@ -13,6 +13,7 @@ import {
   shouldEmitLockRequest,
   shouldRenewLease,
   shouldAcceptLockGrant,
+  canSubmitMemoSave,
 } from '@/lib/memoLeasePolicy';
 
 interface MemoLockInfo {
@@ -35,6 +36,7 @@ interface UseMemoSocketReturn {
   leaseState: MemoLeaseState;
   requestLock: () => void;
   releaseLock: () => void;
+  hasCurrentLease: (memoId: string) => boolean;
   broadcastUpdate: (content: string, title?: string) => void;
 }
 
@@ -671,6 +673,16 @@ export function useMemoSocket({
     if (socket && wasOwner) socket.emit('unlockMemo', { memoId });
   }, []);
 
+  const hasCurrentLease = useCallback(
+    (expectedMemoId: string) =>
+      canSubmitMemoSave({
+        ownsLock: ownsLockRef.current,
+        currentMemoId: currentMemoIdRef.current,
+        expectedMemoId,
+      }),
+    [],
+  );
+
   const broadcastUpdate = useCallback((content: string, title?: string) => {
     const socket = socketRef.current;
     if (!socket || !currentMemoIdRef.current) return;
@@ -687,6 +699,7 @@ export function useMemoSocket({
     leaseState,
     requestLock,
     releaseLock,
+    hasCurrentLease,
     broadcastUpdate,
   };
 }

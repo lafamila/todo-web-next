@@ -29,6 +29,10 @@ interface MemoResolutionPanelProps {
   onEditingStart?: () => void;
   onEditingEnd?: () => void;
   onRequestWrite?: () => void;
+  compareTitle?: string;
+  leftTitle?: string;
+  rightTitle?: string;
+  onManualChange?: (content: string) => void;
 }
 
 export function MemoResolutionPanel({
@@ -47,6 +51,10 @@ export function MemoResolutionPanel({
   onEditingStart,
   onEditingEnd,
   onRequestWrite,
+  compareTitle,
+  leftTitle: leftTitleOverride,
+  rightTitle: rightTitleOverride,
+  onManualChange,
 }: MemoResolutionPanelProps) {
   const isDuplicate = issue?.kind === 'duplicate_memo';
   const isRemoteCompare = !issue && remoteContent !== undefined;
@@ -181,12 +189,12 @@ export function MemoResolutionPanel({
     return <div className="memo-resolution-loading">비교 내용을 불러오는 중...</div>;
   }
 
-  const leftTitle = isDuplicate ? databaseMemo?.title ?? memo.title : '현재 내용';
-  const rightTitle = isDuplicate
+  const leftTitle = leftTitleOverride ?? (isDuplicate ? databaseMemo?.title ?? memo.title : '현재 내용');
+  const rightTitle = rightTitleOverride ?? (isDuplicate
     ? peerMemo?.title ?? '상대 메모'
     : isRemoteCompare
       ? '원격에서 도착한 내용'
-      : preserved?.note ?? '보존된 충돌 버전';
+      : preserved?.note ?? '보존된 충돌 버전');
 
   return (
     <section className="memo-resolution" aria-label="동기화 문제 해소">
@@ -196,7 +204,7 @@ export function MemoResolutionPanel({
             {isDuplicate
               ? '중복 메모 정리'
               : isRemoteCompare
-                ? '원격 변경 비교'
+                ? compareTitle ?? '원격 변경 비교'
                 : '충돌 내용 선택'}
           </strong>
           <p>
@@ -278,6 +286,7 @@ export function MemoResolutionPanel({
               onChange={(event) => {
                 manualTouchedRef.current = true;
                 setManualContent(event.target.value);
+                onManualChange?.(event.target.value);
               }}
               disabled={!canWrite || isSaving}
               onKeyDown={(event) => {
