@@ -47,19 +47,180 @@ body {
 .title-container {
   grid-column: 1 / 3;
   border-bottom: 1px solid var(--black);
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(100px, 0.8fr) minmax(240px, 1.4fr) minmax(160px, 1fr);
   align-items: center;
   gap: 12px;
   padding: 0px 20px;
 }
 
-.title-container>span {
+.title-project-name {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.title-project-name > span {
+  display: block;
   font-size: 36px;
   font-weight: bold;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.title-actions {
+  min-width: 0;
+  max-height: 78px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+/* 프로젝트 최신 메모 검색 — 프로젝트 제목 행의 VS Code 스타일 command bar. */
+.project-memo-search {
+  position: relative;
+  /* 결과는 본문 위로 띄우되 프로젝트 사이드바/모바일 드로어(998+) 아래에 둔다. */
+  z-index: 90;
+  min-width: 0;
+  width: 100%;
+}
+
+.project-memo-search-input-wrap {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #5f5f5f;
+  border-radius: 6px;
+  padding: 0 8px;
+  background: #2b2b2b;
+  color: #d4d4d4;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+}
+
+.project-memo-search-input-wrap:focus-within {
+  border-color: #007acc;
+  box-shadow: 0 0 0 1px #007acc;
+}
+
+.project-memo-search-input-wrap svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.6;
+}
+
+.project-memo-search-input-wrap input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #f3f4f6;
+  font-size: 13px;
+}
+
+.project-memo-search-input-wrap input::placeholder {
+  color: #a3a3a3;
+}
+
+.project-memo-search-input-wrap input::-webkit-search-cancel-button {
+  cursor: pointer;
+  filter: invert(1);
+  opacity: 0.65;
+}
+
+.project-memo-search-input-wrap kbd {
+  flex: 0 0 auto;
+  border: 1px solid #656565;
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: #b8b8b8;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.project-memo-search-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  max-height: min(56vh, 480px);
+  overflow-y: auto;
+  border: 1px solid #555;
+  border-radius: 7px;
+  background: #252526;
+  color: #d4d4d4;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.38);
+}
+
+.project-memo-search-result {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 0;
+  border-bottom: 1px solid #383838;
+  padding: 9px 11px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-memo-search-result:hover,
+.project-memo-search-result.selected {
+  background: #094771;
+}
+
+.project-memo-search-result strong {
+  overflow: hidden;
+  color: #f5f5f5;
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-memo-search-snippet {
+  display: block;
+  overflow: hidden;
+  color: #b8b8b8;
+  font-size: 12px;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+
+.project-memo-search-result mark {
+  border-radius: 2px;
+  padding: 0 1px;
+  background: #f5d76e;
+  color: #171717;
+  font-weight: 700;
+}
+
+.project-memo-search-state,
+.project-memo-search-total {
+  padding: 12px;
+  color: #b8b8b8;
+  font-size: 12px;
+  text-align: center;
+}
+
+.project-memo-search-error {
+  color: #fca5a5;
+}
+
+.project-memo-search-total {
+  border-top: 1px solid #454545;
+  padding: 7px 10px;
+  text-align: right;
 }
 
 
@@ -1185,12 +1346,37 @@ html.viewport-resizing .project-secret {
 
   .title-container {
     grid-column: 1;
-    gap: 8px;
-    padding: 0 12px 0 56px; /* 좌측 고정 드로어 토글 자리 */
+    grid-template-columns: minmax(0, 0.45fr) minmax(110px, 1.5fr) auto;
+    gap: 4px;
+    padding: 0 6px 0 52px; /* 좌측 고정 드로어 토글 자리 */
   }
 
-  .title-container>span {
+  .title-project-name > span {
     font-size: 18px;
+  }
+
+  .title-actions {
+    gap: 6px;
+  }
+
+  .project-memo-search-input-wrap {
+    height: 34px;
+  }
+
+  .project-memo-search-input-wrap input {
+    font-size: 16px; /* iOS 포커스 확대 방지 */
+  }
+
+  .project-memo-search-input-wrap kbd {
+    display: none;
+  }
+
+  .project-memo-search-dropdown {
+    position: fixed;
+    top: calc(var(--mobile-header-height) - 2px);
+    right: 8px;
+    left: 8px;
+    max-height: min(62dvh, 520px);
   }
 
   .main,
@@ -1353,8 +1539,13 @@ html.viewport-resizing .project-secret {
 }
 
 @media (max-width: 480px) {
-  .title-container>span {
+  .title-project-name > span {
     font-size: 16px;
+  }
+
+  .project-memo-search-input-wrap {
+    gap: 5px;
+    padding: 0 6px;
   }
 
   /* 좁은 화면에서는 목록의 날짜 두 줄이 제목을 밀어낸다 — 최근 편집만 남긴다 */

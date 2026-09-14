@@ -31,6 +31,25 @@ export interface MemoInterface {
   revision?: string;
 }
 
+export interface SearchTextSegmentInterface {
+  text: string;
+  match: boolean;
+}
+
+export interface ProjectMemoSearchResultInterface {
+  memoId: string;
+  title: string;
+  score: number;
+  titleSegments: SearchTextSegmentInterface[];
+  snippetSegments: SearchTextSegmentInterface[];
+}
+
+export interface ProjectMemoSearchResponseInterface {
+  query: string;
+  total: number;
+  results: ProjectMemoSearchResultInterface[];
+}
+
 export interface MemoLeaseInterface {
   memoId: string;
   leaseToken: string;
@@ -237,7 +256,7 @@ export interface TodoAppContextTypeInterface {
   selectProject: (project: ProjectInterface) => Promise<void>;
   createProject: (data: CreateProjectRequestInterface) => Promise<void>;
   verifyProjectPassword: (projectId: string, password: string) => Promise<boolean>;
-  selectMemo: (memo: MemoInterface) => Promise<void>;
+  selectMemo: (memo: MemoInterface) => Promise<boolean>;
   createMemo: (title: string) => Promise<void>;
   updateMemo: (content: string, baseRevision?: string) => Promise<MemoInterface>;
   setSortOption: (option: SortOption) => void;

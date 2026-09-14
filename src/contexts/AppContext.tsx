@@ -20,7 +20,10 @@ import type {
   SortOption,
 } from '@/lib/types';
 import * as api from '@/lib/api';
-import { selectionAfterMemoSaveIfCurrent } from '@/lib/memoSelectionPolicy';
+import {
+  canAdoptMemoSelection,
+  selectionAfterMemoSaveIfCurrent,
+} from '@/lib/memoSelectionPolicy';
 import { useAuth } from './AuthContext';
 
 const initialState: TodoAppStateInterface = {
@@ -42,6 +45,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated, user } = useAuth();
   const [state, setState] = useState<TodoAppStateInterface>(initialState);
   const selectionEpochRef = useRef(0);
+  const intendedProjectIdRef = useRef<string | null>(null);
+  const committedProjectIdRef = useRef<string | null>(null);
 
   const refreshProjects = useCallback(async () => {
     try {
@@ -62,17 +67,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (isAuthenticated && user?.permission !== 'visitor') {
       Promise.resolve().then(refreshProjects);
     } else {
+      intendedProjectIdRef.current = null;
+      committedProjectIdRef.current = null;
+      selectionEpochRef.current += 1;
       Promise.resolve().then(() => setState(initialState));
     }
   }, [isAuthenticated, refreshProjects, user?.permission]);
 
   // Project Actions
   const selectProject = useCallback(async (project: ProjectInterface) => {
-    selectionEpochRef.current += 1;
+    const requestEpoch = ++selectionEpochRef.current;
+    intendedProjectIdRef.current = project.id;
     try {
       setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
       const memos = await api.getProjectMemos(project.id);
+
+      if (requestEpoch !== selectionEpochRef.current) return;
+      committedProjectIdRef.current = project.id;
 
       setState((prev) => ({
         ...prev,
@@ -84,6 +96,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         isLoading: false,
       }));
      } catch {
+      if (requestEpoch !== selectionEpochRef.current) return;
+      intendedProjectIdRef.current = committedProjectIdRef.current;
       setState((prev) => ({
         ...prev,
         error: '메모 목록을 불러오는데 실패했습니다.',
@@ -157,25 +171,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   // Memo Actions
-  const selectMemo = useCallback(async (memo: MemoInterface) => {
-    selectionEpochRef.current += 1;
+  const selectMemo = useCallback(async (memo: MemoInterface): Promise<boolean> => {
+    if (memo.projectId !== intendedProjectIdRef.current) return false;
+    const requestEpoch = ++selectionEpochRef.current;
     try {
       setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
       const fullMemo = await api.getMemo(memo.id);
 
-      setState((prev) => ({
-        ...prev,
-        selectedMemo: fullMemo,
-        selectedMemoIds: [],
-        isLoading: false,
-      }));
+      if (!canAdoptMemoSelection(
+        fullMemo.projectId,
+        intendedProjectIdRef.current,
+        requestEpoch,
+        selectionEpochRef.current,
+      )) return false;
+
+      setState((prev) => {
+        if (prev.selectedProject?.id !== fullMemo.projectId) return prev;
+        return {
+          ...prev,
+          selectedMemo: fullMemo,
+          selectedMemoIds: [],
+          isLoading: false,
+        };
+      });
+      return true;
      } catch {
+      if (requestEpoch !== selectionEpochRef.current) return false;
       setState((prev) => ({
         ...prev,
         error: '메모를 불러오는데 실패했습니다.',
         isLoading: false,
       }));
+      return false;
     }
   }, []);
 

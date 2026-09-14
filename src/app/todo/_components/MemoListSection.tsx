@@ -12,6 +12,8 @@ import * as api from "@/lib/api";
 import { isTypingContext, MemoSection, SHOW_MEMO_LIST_EVENT } from "./MemoSection";
 import { SyncStatusIndicator } from './SyncStatusIndicator';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { isMemberManagementShortcut } from '@/lib/projectSearchPolicy';
+import { ProjectMemoSearch } from './ProjectMemoSearch';
 
 const DEFAULT_PANE_WIDTH = 400;
 // Tasks (n) 헤더 + 멤버초대 버튼 라인이 줄바꿈되지 않는 최소폭
@@ -127,7 +129,7 @@ export default function MemoListSection() {
     await loadMembers(selectedProject.id);
   }, [selectedProject, loadMembers]);
 
-  // Keyboard shortcuts: Cmd+Shift+X (focus memo input), Cmd+P (open member modal)
+  // Keyboard shortcuts: Cmd+Shift+X (focus memo input), Cmd+Shift+O (open member modal)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!selectedProject) return;
@@ -138,7 +140,7 @@ export default function MemoListSection() {
         newTaskInputRef.current?.focus();
       }
 
-      if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
+      if (isMemberManagementShortcut(e)) {
         if (isAdmin && features.memberInvite) {
           e.preventDefault();
           e.stopPropagation();
@@ -344,6 +346,24 @@ export default function MemoListSection() {
     }
   };
 
+  const handleSearchResultSelect = useCallback(async (memoId: string) => {
+    const projectId = selectedProject?.id;
+    if (!projectId) throw new Error('프로젝트가 선택되지 않았습니다.');
+    const fetchedMemo = await api.getMemo(memoId);
+    if (fetchedMemo.projectId !== projectId) {
+      throw new Error('검색 결과가 현재 프로젝트에 속하지 않습니다.');
+    }
+    const opened = await selectMemo(fetchedMemo);
+    if (!opened) throw new Error('프로젝트가 전환되어 검색 결과를 열지 않았습니다.');
+    if (isMobile) setMobileView('detail');
+  }, [isMobile, selectMemo, selectedProject?.id]);
+
+  const handleSearchShortcutFocus = useCallback(() => {
+    setDetailFullscreen(false);
+    setShowMemberModal(false);
+    setShowSuggestions(false);
+  }, []);
+
   const handleBulkDelete = async () => {
     if (selectedMemoIds.length === 0) return;
 
@@ -375,13 +395,23 @@ export default function MemoListSection() {
         style={isMobile ? undefined : { gridTemplateColumns: `${tasksPaneWidth}px 1fr` }}
       >
         <div className="title-container">
-          <span className={findIssue('projects', selectedProject.id) ? 'sync-issue-dim' : ''}>
-            {selectedProject.name}
-          </span>
-          <div id="screen-share-buttons" />
-          {/* 데스크톱에서 MemoSection 이 상태·액션을 여기로 포털한다 (메모 영역 침범 방지) */}
-          <div id="memo-status-slot" className="memo-status-slot" />
-          <SyncStatusIndicator />
+          <div className="title-project-name">
+            <span className={findIssue('projects', selectedProject.id) ? 'sync-issue-dim' : ''}>
+              {selectedProject.name}
+            </span>
+          </div>
+          <ProjectMemoSearch
+            key={selectedProject.id}
+            projectId={selectedProject.id}
+            onSelectMemo={handleSearchResultSelect}
+            onShortcutFocus={handleSearchShortcutFocus}
+          />
+          <div className="title-actions">
+            <div id="screen-share-buttons" />
+            {/* 데스크톱에서 MemoSection 이 상태·액션을 여기로 포털한다 (메모 영역 침범 방지) */}
+            <div id="memo-status-slot" className="memo-status-slot" />
+            <SyncStatusIndicator />
+          </div>
         </div>
         <div className="main">
           {/* 상단 여백은 클래스로 둔다 — 인라인 스타일은 모바일 미디어 쿼리가 못 이긴다 */}

@@ -17,6 +17,7 @@ import type {
   MemoVersionSummaryInterface,
   MemoVersionInterface,
   ProjectInterface,
+  ProjectMemoSearchResponseInterface,
   ProjectMergeResultInterface,
   ProjectMemberInterface,
   ProjectRole,
@@ -273,6 +274,20 @@ export async function getProjectMemos(projectId: string): Promise<MemoInterface[
     `/projects/${projectId}/memos`,
     undefined,
     "Failed to fetch memos",
+  );
+}
+
+export async function searchProjectMemos(
+  projectId: string,
+  query: string,
+  limit = 20,
+  signal?: AbortSignal,
+): Promise<ProjectMemoSearchResponseInterface> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  return fetchJson<ProjectMemoSearchResponseInterface>(
+    `/projects/${projectId}/memos/search?${params.toString()}`,
+    { signal },
+    "프로젝트 메모를 검색하지 못했습니다.",
   );
 }
 
