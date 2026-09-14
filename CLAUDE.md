@@ -187,7 +187,8 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   `titleSegments`·`snippetSegments`를 text/`mark`로만 렌더하며 HTML을 주입하지 않는다. 결과는 관련도 순을
   그대로 유지하고 Arrow/Enter/Escape를 지원한다. Cmd/Ctrl+Shift+P는 검색창으로, Cmd/Ctrl+Shift+O는
   관리자 멤버 관리로 이동한다. 모바일에서 결과 선택은 기존 목록→detail 전환을 그대로 사용한다.
-  검색창은 기본 숨김이며 단축키로 표시한다. 값이나 포커스가 있으면 유지하고, 빈 값으로 포커스가
+  모바일(768px 이하)은 검색창을 항상 표시하고 입력 가능하게 유지한다. 데스크톱은 기본 숨김이며
+  단축키로 표시한다. 값이나 포커스가 있으면 유지하고, 빈 값으로 포커스가
   빠진 뒤 1초가 지나면 숨긴다(재포커스로 취소). 표시/숨김은 180ms opacity/이동 전환이며 숨김 시작부터
   inert/aria-hidden, 완료 뒤 hidden을 적용한다. reduced-motion이면 전환과 추가 대기 없이 숨긴다.
   데스크톱 제목 행은 본문의 Tasks/편집기 grid track을 subgrid로 공유한다. 검색창은 편집기 본문 inset
@@ -196,6 +197,9 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   2열 헤더와 viewport 기준 dropdown을 유지하며 fixed 기준이 바뀌지 않게 opacity만 전환한다.
 - **화면공유 액션 위치**: `#screen-share-buttons` portal은 Tasks 행 우측 액션 그룹에서 멤버 관리
   버튼 왼쪽에 위치한다. 기존 screenShare/memberInvite feature flag와 공유 동작은 유지한다.
+- **모달·정렬 기본값**: 공통 Modal은 z-index 1300으로 모바일 메뉴(1001)와 전체화면 편집기(1200)보다
+  위에 표시된다. 메모는 생성일 최신순(desc)이 기본이며, 날짜 기준을 바꾸면 최신순, 이름은 오름차순으로
+  시작한다. 같은 기준 재클릭은 기존처럼 방향을 토글한다.
 - **TODO 컨트롤 테마**: `.todo-workspace` 범위에서 버튼 radius 4px를 통일하고 주요 액션은
   `.todo-action-button`의 높이 34px·검정/흰색 스타일을 공유한다. secondary는 흰 바탕/중립 테두리,
   멤버 아이콘은 currentColor SVG다. 색상은 상태 표시에만 빨강/초록/파랑을 쓰고 검색 강조도 흑백으로

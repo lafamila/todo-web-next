@@ -5,6 +5,7 @@ import type {
   SearchTextSegmentInterface,
 } from '@/lib/types';
 import * as api from '@/lib/api';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import {
   isProjectSearchShortcut,
   isImeKeyEvent,
@@ -56,6 +57,7 @@ export function ProjectMemoSearch({
   onSelectMemo,
   onShortcutFocus,
 }: ProjectMemoSearchProps) {
+  const isMobile = useIsMobile();
   const listboxId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -75,6 +77,7 @@ export function ProjectMemoSearch({
   const [isVisible, setIsVisible] = useState(false);
   const [hasFocus, setHasFocus] = useState(false);
   const [isPresent, setIsPresent] = useState(false);
+  const showSearch = isMobile || isVisible;
 
   const invalidatePendingSearch = useCallback(() => {
     abortRef.current?.abort();
@@ -116,7 +119,7 @@ export function ProjectMemoSearch({
   }, [invalidatePendingSearch, projectId]);
 
   useEffect(() => {
-    if (isVisible) {
+    if (showSearch) {
       setIsPresent(true);
       return;
     }
@@ -127,10 +130,10 @@ export function ProjectMemoSearch({
     }
     const timer = window.setTimeout(() => setIsPresent(false), SEARCH_TRANSITION_MS);
     return () => window.clearTimeout(timer);
-  }, [isPresent, isVisible]);
+  }, [isPresent, showSearch]);
 
   useEffect(() => {
-    if (!isVisible || hasFocus || query.length > 0) return;
+    if (isMobile || !isVisible || hasFocus || query.length > 0) return;
     const timer = window.setTimeout(() => {
       // 포커스/입력 이벤트와 같은 프레임에 만료되어도 현재 DOM 상태를 우선한다.
       if (document.activeElement === inputRef.current || inputRef.current?.value) return;
@@ -138,7 +141,7 @@ export function ProjectMemoSearch({
       setIsVisible(false);
     }, EMPTY_SEARCH_HIDE_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [close, hasFocus, isVisible, query]);
+  }, [close, hasFocus, isMobile, isVisible, query]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -289,10 +292,10 @@ export function ProjectMemoSearch({
     <div
       className="project-memo-search"
       ref={rootRef}
-      hidden={!isVisible && !isPresent}
-      data-visible={isVisible}
-      aria-hidden={!isVisible}
-      inert={!isVisible}
+      hidden={!showSearch && !isPresent}
+      data-visible={showSearch}
+      aria-hidden={!showSearch}
+      inert={!showSearch}
     >
       <div className="project-memo-search-input-wrap">
         <svg aria-hidden="true" viewBox="0 0 20 20">

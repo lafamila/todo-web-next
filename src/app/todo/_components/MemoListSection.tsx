@@ -42,8 +42,8 @@ export default function MemoListSection() {
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
 
   const [newMemoTitle, setNewMemoTitle] = useState('');
-  // 정렬 방향 — 기본 오름차순. 활성 항목 재클릭 시 토글, 다른 항목 클릭 시 오름차순으로 리셋.
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  // 날짜는 최신순이 기본. 이름은 오름차순이며, 활성 항목 재클릭 시 방향을 토글한다.
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   // tasks 영역 폭 (경계 드래그로 조절, localStorage 유지)
   const [tasksPaneWidth, setTasksPaneWidth] = useState(DEFAULT_PANE_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -205,7 +205,7 @@ export default function MemoListSection() {
     await removeMember(selectedProject.id, userId);
   }, [selectedProject, removeMember]);
 
-  // Sort memos — 기본 날짜(생성) 오름차순, 방향 토글 지원
+  // Sort memos — 기본 날짜(생성) 내림차순, 방향 토글 지원
   const sortedMemos = useMemo(() => {
     const sorted = [...memos];
     const dir = sortDirection === 'asc' ? 1 : -1;
@@ -231,7 +231,7 @@ export default function MemoListSection() {
       setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
     } else {
       setSortOption(value);
-      setSortDirection('asc');
+      setSortDirection(value === 'name' ? 'asc' : 'desc');
     }
   };
 
