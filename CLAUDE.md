@@ -188,9 +188,19 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   그대로 유지하고 Arrow/Enter/Escape를 지원한다. Cmd/Ctrl+Shift+P는 검색창으로, Cmd/Ctrl+Shift+O는
   관리자 멤버 관리로 이동한다. 모바일에서 결과 선택은 기존 목록→detail 전환을 그대로 사용한다.
   검색창은 기본 숨김이며 단축키로 표시한다. 값이나 포커스가 있으면 유지하고, 빈 값으로 포커스가
-  빠진 뒤 1초가 지나면 숨긴다(재포커스로 취소). 숨겨지면 제목 행은 제목과 상태의 2열로 돌아간다.
+  빠진 뒤 1초가 지나면 숨긴다(재포커스로 취소). 표시/숨김은 180ms opacity/이동 전환이며 숨김 시작부터
+  inert/aria-hidden, 완료 뒤 hidden을 적용한다. reduced-motion이면 전환과 추가 대기 없이 숨긴다.
+  데스크톱 제목 행은 본문의 Tasks/편집기 grid track을 subgrid로 공유한다. 검색창은 편집기 본문 inset
+  10px에 정렬하고 최대 700px에서 우측 액션을 제외한 공간으로 축소된다. Tasks 폭은 편집기 최소 240px을
+  남기도록 제한하고, 좁은 편집기 헤더(380px 이하)는 검색/액션을 두 줄로 배치한다. 모바일은 별도
+  2열 헤더와 viewport 기준 dropdown을 유지하며 fixed 기준이 바뀌지 않게 opacity만 전환한다.
 - **화면공유 액션 위치**: `#screen-share-buttons` portal은 Tasks 행 우측 액션 그룹에서 멤버 관리
   버튼 왼쪽에 위치한다. 기존 screenShare/memberInvite feature flag와 공유 동작은 유지한다.
+- **TODO 컨트롤 테마**: `.todo-workspace` 범위에서 버튼 radius 4px를 통일하고 주요 액션은
+  `.todo-action-button`의 높이 34px·검정/흰색 스타일을 공유한다. secondary는 흰 바탕/중립 테두리,
+  멤버 아이콘은 currentColor SVG다. 색상은 상태 표시에만 빨강/초록/파랑을 쓰고 검색 강조도 흑백으로
+  렌더한다. 어두운 모바일 툴바의 primary에는 중립 테두리를 주며, 공유 상태로 Tasks 액션이 줄바꿈돼도
+  첫 grid row가 실제 높이를 수용한다. Monaco 내부 UI와 다른 페이지의 공통 Button 외관은 바꾸지 않는다.
 - **로컬 버전 기록**: `/api/session/me.features.memoVersionHistory`가 참인 `dev-local`·`prod-local`에서만
   메모 본문 상단에 버전 선택 바를 둔다. 과거 버전은 현재 편집 버퍼와 분리해 `InlineEditor`의 읽기 전용
   모드로 렌더하고, 락 요청·저장·Raw 전환·체크박스 변경을 모두 막는다. 기존 헤더에는 저장·동기화 상태가

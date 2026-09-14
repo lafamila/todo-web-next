@@ -27,7 +27,7 @@ export function SyncStatusIndicator() {
     <div className="sync-status">
       <button
         type="button"
-        className={`sync-status-summary sync-status-${displayState}`}
+        className={`sync-status-summary sync-status-${displayState} todo-action-button todo-action-button--secondary`}
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
       >

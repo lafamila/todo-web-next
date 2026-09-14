@@ -40,6 +40,8 @@ export function Button({
       onClick={onClick}
       disabled={disabled}
       className={cn(
+        'ui-button',
+        `ui-button--${variant}`,
         baseStyles,
         variantStyles[variant],
         sizeStyles[size],

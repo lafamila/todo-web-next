@@ -1988,7 +1988,7 @@ export function MemoSection() {
         type="button"
         onClick={handlePublish}
         disabled={isPublishing}
-        className="memo-toolbar-publish"
+        className="memo-toolbar-publish todo-action-button"
       >
         {isPublishing ? '게시 중...' : articleStatus ? `재게시 (v${articleStatus.publishedVersion})` : '게시'}
       </button>
@@ -1997,7 +1997,7 @@ export function MemoSection() {
           type="button"
           onClick={handleUnpublish}
           disabled={isPublishing}
-          className="memo-toolbar-unpublish"
+          className="memo-toolbar-unpublish todo-action-button todo-action-button--secondary"
         >
           {isPublishing ? '처리 중...' : '게시 취소'}
         </button>
@@ -2013,7 +2013,7 @@ export function MemoSection() {
           <div className="memo-mobile-bar">
             <button
               type="button"
-              className="memo-mobile-back"
+              className="memo-mobile-back todo-action-button todo-action-button--secondary"
               onClick={() => window.dispatchEvent(new Event(SHOW_MEMO_LIST_EVENT))}
             >
               ← 목록
@@ -2023,7 +2023,7 @@ export function MemoSection() {
               {publishActions}
               <button
                 type="button"
-                className="memo-mobile-save"
+                className="memo-mobile-save todo-action-button"
                 onClick={() => void handleSaveMemo()}
                 disabled={!isDirty || isViewingVersion}
               >
@@ -2059,7 +2059,7 @@ export function MemoSection() {
         <button
           type="button"
           onClick={() => setShowHelpModal(true)}
-          className="memo-help-fab fixed bottom-4 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white text-lg font-bold text-gray-900 shadow-lg transition-colors hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-white/70"
+          className="memo-help-fab todo-action-button fixed bottom-4 right-4 z-40 flex h-12 w-12 items-center justify-center text-lg font-bold shadow-lg"
           aria-label="에디터 도움말 열기"
           title="에디터 도움말"
         >

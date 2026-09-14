@@ -78,7 +78,7 @@ export default function MemoListSection() {
   const startPaneResize = (e: React.PointerEvent) => {
     e.preventDefault();
     const startX = e.clientX;
-    const startWidth = tasksPaneWidth;
+    const startWidth = e.currentTarget.closest('.main')?.getBoundingClientRect().width ?? tasksPaneWidth;
     setIsResizing(true);
     document.body.style.userSelect = 'none';
     const onMove = (ev: PointerEvent) => {
@@ -392,7 +392,9 @@ export default function MemoListSection() {
             : ''
         }`}
         // 모바일은 단일 컬럼이라 폭 인라인 스타일을 주지 않는다 (인라인은 미디어 쿼리를 이긴다).
-        style={isMobile ? undefined : { gridTemplateColumns: `${tasksPaneWidth}px 1fr` }}
+        style={isMobile ? undefined : {
+          gridTemplateColumns: `min(${tasksPaneWidth}px, max(${MIN_PANE_WIDTH}px, calc(100% - 240px))) minmax(0, 1fr)`,
+        }}
       >
         <div className="title-container">
           <div className="title-project-name">
@@ -400,16 +402,18 @@ export default function MemoListSection() {
               {selectedProject.name}
             </span>
           </div>
-          <ProjectMemoSearch
-            key={selectedProject.id}
-            projectId={selectedProject.id}
-            onSelectMemo={handleSearchResultSelect}
-            onShortcutFocus={handleSearchShortcutFocus}
-          />
-          <div className="title-actions">
-            {/* 데스크톱에서 MemoSection 이 상태·액션을 여기로 포털한다 (메모 영역 침범 방지) */}
-            <div id="memo-status-slot" className="memo-status-slot" />
-            <SyncStatusIndicator />
+          <div className="title-editor-controls">
+            <ProjectMemoSearch
+              key={selectedProject.id}
+              projectId={selectedProject.id}
+              onSelectMemo={handleSearchResultSelect}
+              onShortcutFocus={handleSearchShortcutFocus}
+            />
+            <div className="title-actions">
+              {/* 편집기와 같은 열 안에서 검색창 오른쪽에 저장·동기화 상태를 둔다. */}
+              <div id="memo-status-slot" className="memo-status-slot" />
+              <SyncStatusIndicator />
+            </div>
           </div>
         </div>
         <div className="main">
@@ -424,10 +428,14 @@ export default function MemoListSection() {
               {isAdmin && features.memberInvite && (
                 <button
                   onClick={handleOpenMemberModal}
-                  className="px-2 py-1 text-sm bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors"
-                  title="멤버 관리"
+                  className="todo-action-button todo-action-button--icon"
+                  aria-label="멤버 관리"
+                  title="멤버 관리 (⌘⇧O)"
                 >
-                  👥
+                  <svg className="todo-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="9" cy="8" r="3" />
+                    <path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M21 20v-2a6 6 0 0 0-4-5.65" />
+                  </svg>
                 </button>
               )}
             </div>
@@ -539,7 +547,7 @@ export default function MemoListSection() {
                   <button
                     onClick={handleBulkDelete}
                     disabled={isDeleting}
-                    className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="todo-action-button"
                   >
                     {isDeleting ? '삭제 중...' : '삭제'}
                   </button>

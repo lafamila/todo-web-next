@@ -1,6 +1,13 @@
 :root {
   --white: #ffffff;
   --black: #171717;
+  --todo-control-height: 34px;
+  --todo-control-radius: 4px;
+  --todo-control-border: #d4d4d4;
+  --todo-muted: #737373;
+  --todo-status-danger: #dc2626;
+  --todo-status-success: #16a34a;
+  --todo-status-info: #2563eb;
   /* 20px icon + 20px horizontal padding on each side */
   --left-sidebar-width: max(5vw, 60px);
   --left-sidebar-width-expanded: max(25vw, calc(var(--left-sidebar-width) + 40px));
@@ -12,6 +19,101 @@ html,
 body {
   max-width: 100vw;
   /* overflow-x: hidden; */
+}
+
+.todo-workspace button:not(.monaco-editor button) {
+  border-radius: var(--todo-control-radius);
+}
+
+.todo-action-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--todo-control-height);
+  min-height: var(--todo-control-height);
+  padding: 0 12px;
+  border: 1px solid var(--black);
+  border-radius: var(--todo-control-radius);
+  background: var(--black);
+  color: var(--white);
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.todo-action-button:hover:not(:disabled),
+.todo-workspace .ui-button--primary:hover:not(:disabled) {
+  background: #333;
+}
+
+.todo-action-button.todo-action-button--secondary {
+  background: var(--white);
+  border-color: var(--todo-control-border);
+  color: var(--black);
+}
+
+.todo-action-button.todo-action-button--secondary:hover:not(:disabled),
+.todo-workspace .ui-button--secondary:hover:not(:disabled) {
+  background: #f0f0f0;
+  border-color: #a3a3a3;
+}
+
+.todo-action-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.todo-action-button:focus-visible {
+  outline: 2px solid var(--todo-muted);
+  outline-offset: 2px;
+}
+
+.todo-action-button.todo-action-button--icon {
+  width: var(--todo-control-height);
+  padding: 0;
+}
+
+.todo-action-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.todo-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.todo-status-dot--info { background: var(--todo-status-info); }
+.todo-status-dot--success { background: var(--todo-status-success); }
+.todo-status-dot--danger { background: var(--todo-status-danger); }
+
+.todo-workspace .ui-button--primary {
+  background: var(--black);
+  color: var(--white);
+}
+
+.todo-workspace .ui-button--secondary {
+  background: #f0f0f0;
+  color: var(--black);
+}
+
+.todo-action-button.memo-help-fab {
+  width: 48px;
+  height: 48px;
+  background: var(--white);
+  border-color: var(--todo-control-border);
+  color: var(--black);
+}
+
+.memo-mobile-bar .todo-action-button:not(.todo-action-button--secondary) {
+  border-color: var(--todo-muted);
 }
 
 body {
@@ -45,22 +147,35 @@ body {
 }
 
 .title-container {
+  position: relative;
+  /* 검색 container의 stacking context를 본문 위, 모달/사이드바 아래에 둔다. */
+  z-index: 35;
   grid-column: 1 / 3;
   border-bottom: 1px solid var(--black);
   display: grid;
-  grid-template-columns: minmax(100px, 0.8fr) minmax(240px, 1.4fr) minmax(160px, 1fr);
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: 12px;
-  padding: 0px 20px;
+  gap: 0;
+  padding: 0;
 }
 
 .title-project-name {
+  grid-column: 1;
+  padding: 0 20px;
   min-width: 0;
   overflow: hidden;
 }
 
-.title-container:has(.project-memo-search[hidden]) {
-  grid-template-columns: minmax(0, 1fr) auto;
+.title-editor-controls {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  row-gap: 4px;
+  min-width: 0;
+  padding: 0 10px;
+  container: todo-editor-header / inline-size;
 }
 
 .title-project-name > span {
@@ -74,12 +189,27 @@ body {
 }
 
 .title-actions {
+  margin-left: auto;
+  flex: 0 1 auto;
+  max-width: 100%;
   min-width: 0;
   max-height: 78px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 8px;
+}
+
+@media (min-width: 769px) {
+  @container todo-editor-header (max-width: 380px) {
+    .project-memo-search:not([hidden]),
+    .title-actions {
+      flex-basis: 100%;
+    }
+    .memo-toolbar-shortcut {
+      display: none;
+    }
+  }
 }
 
 /* 프로젝트 최신 메모 검색 — 프로젝트 제목 행의 VS Code 스타일 command bar. */
@@ -88,7 +218,27 @@ body {
   /* 결과는 본문 위로 띄우되 프로젝트 사이드바/모바일 드로어(998+) 아래에 둔다. */
   z-index: 90;
   min-width: 0;
+  flex: 1 1 0;
+  max-width: 700px;
   width: 100%;
+  opacity: 1;
+  transform: none;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.project-memo-search[data-visible="true"] {
+  animation: project-search-reveal 180ms ease-out;
+}
+
+.project-memo-search[data-visible="false"] {
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+}
+
+@keyframes project-search-reveal {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .project-memo-search[hidden] {
@@ -110,21 +260,22 @@ body {
 }
 
 .project-memo-search-input-wrap {
-  height: 32px;
+  height: var(--todo-control-height);
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid #5f5f5f;
-  border-radius: 6px;
+  border: 1px solid var(--todo-control-border);
+  border-radius: var(--todo-control-radius);
   padding: 0 8px;
-  background: #2b2b2b;
-  color: #d4d4d4;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  background: #f5f5f5;
+  color: var(--todo-muted);
+  transition: background-color 140ms ease, border-color 140ms ease;
 }
 
 .project-memo-search-input-wrap:focus-within {
-  border-color: #007acc;
-  box-shadow: 0 0 0 1px #007acc;
+  border-color: var(--todo-muted);
+  background: var(--white);
+  box-shadow: 0 0 0 1px var(--todo-muted);
 }
 
 .project-memo-search-input-wrap svg {
@@ -143,26 +294,26 @@ body {
   border: 0;
   outline: 0;
   background: transparent;
-  color: #f3f4f6;
+  color: var(--black);
   font-size: 13px;
 }
 
 .project-memo-search-input-wrap input::placeholder {
-  color: #a3a3a3;
+  color: var(--todo-muted);
 }
 
 .project-memo-search-input-wrap input::-webkit-search-cancel-button {
   cursor: pointer;
-  filter: invert(1);
+  filter: grayscale(1);
   opacity: 0.65;
 }
 
 .project-memo-search-input-wrap kbd {
   flex: 0 0 auto;
-  border: 1px solid #656565;
-  border-radius: 4px;
+  border: 1px solid var(--todo-control-border);
+  border-radius: var(--todo-control-radius);
   padding: 1px 5px;
-  color: #b8b8b8;
+  color: var(--todo-muted);
   font-family: inherit;
   font-size: 10px;
   line-height: 16px;
@@ -175,11 +326,11 @@ body {
   left: 0;
   max-height: min(56vh, 480px);
   overflow-y: auto;
-  border: 1px solid #555;
-  border-radius: 7px;
-  background: #252526;
-  color: #d4d4d4;
-  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.38);
+  border: 1px solid var(--todo-control-border);
+  border-radius: var(--todo-control-radius);
+  background: var(--white);
+  color: var(--black);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.14);
 }
 
 .project-memo-search-result {
@@ -188,7 +339,7 @@ body {
   flex-direction: column;
   gap: 3px;
   border: 0;
-  border-bottom: 1px solid #383838;
+  border-bottom: 1px solid #e5e5e5;
   padding: 9px 11px;
   background: transparent;
   color: inherit;
@@ -198,12 +349,12 @@ body {
 
 .project-memo-search-result:hover,
 .project-memo-search-result.selected {
-  background: #094771;
+  background: #ededed;
 }
 
 .project-memo-search-result strong {
   overflow: hidden;
-  color: #f5f5f5;
+  color: var(--black);
   font-size: 13px;
   line-height: 18px;
   text-overflow: ellipsis;
@@ -213,7 +364,7 @@ body {
 .project-memo-search-snippet {
   display: block;
   overflow: hidden;
-  color: #b8b8b8;
+  color: #525252;
   font-size: 12px;
   line-height: 17px;
   overflow-wrap: anywhere;
@@ -222,25 +373,25 @@ body {
 .project-memo-search-result mark {
   border-radius: 2px;
   padding: 0 1px;
-  background: #f5d76e;
-  color: #171717;
+  background: var(--black);
+  color: var(--white);
   font-weight: 700;
 }
 
 .project-memo-search-state,
 .project-memo-search-total {
   padding: 12px;
-  color: #b8b8b8;
+  color: var(--todo-muted);
   font-size: 12px;
   text-align: center;
 }
 
 .project-memo-search-error {
-  color: #fca5a5;
+  color: var(--todo-status-danger);
 }
 
 .project-memo-search-total {
-  border-top: 1px solid #454545;
+  border-top: 1px solid #e5e5e5;
   padding: 7px 10px;
   text-align: right;
 }
@@ -252,7 +403,7 @@ body {
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-rows: 80px 60px auto minmax(0, 1fr);
+  grid-template-rows: minmax(80px, max-content) 60px auto minmax(0, 1fr);
   padding: 0 20px;
 }
 
@@ -338,12 +489,12 @@ body {
 }
 
 .memo-status-bar .memo-toolbar-unsaved {
-  color: #c2410c;
+  color: var(--todo-status-danger);
 }
 
 .memo-status-bar .memo-toolbar-lock {
-  background: #fef3c7;
-  color: #92400e;
+  background: #f5f5f5;
+  color: var(--todo-status-info);
 }
 
 .memo-status-bar .memo-toolbar-save-message {
@@ -407,13 +558,13 @@ body {
 }
 
 .memo-mobile-save {
-  background: #2563eb;
+  background: var(--black);
   color: white;
 }
 
 .memo-mobile-save:disabled {
-  background: #374151;
-  color: #9ca3af;
+  background: var(--black);
+  color: var(--white);
   cursor: not-allowed;
 }
 
@@ -432,14 +583,14 @@ body {
 }
 
 .memo-toolbar-unsaved {
-  color: #fb923c;
+  color: #f87171;
 }
 
 .memo-toolbar-lock {
   border-radius: 4px;
   padding: 3px 6px;
   background: #303030;
-  color: #fde68a;
+  color: #60a5fa;
 }
 
 .memo-toolbar-save-message {
@@ -465,7 +616,7 @@ body {
 
 .memo-toolbar-readonly {
   border: 1px solid #d4d4d4;
-  border-radius: 999px;
+  border-radius: var(--todo-control-radius);
   padding: 2px 7px;
   color: #9ca3af;
   white-space: nowrap;
@@ -473,18 +624,18 @@ body {
 
 .memo-toolbar-publish,
 .memo-toolbar-unpublish {
-  border-radius: 999px;
-  padding: 4px 10px;
+  border-radius: var(--todo-control-radius);
+  padding: 0 12px;
   color: white;
   cursor: pointer;
 }
 
 .memo-toolbar-publish {
-  background: #2563eb;
+  background: var(--black);
 }
 
 .memo-toolbar-unpublish {
-  background: #dc2626;
+  background: var(--white);
 }
 
 .memo-toolbar-publish:disabled,
@@ -649,7 +800,7 @@ body {
   align-items: center;
   gap: 5px;
   border: 1px solid #d4d4d4;
-  border-radius: 999px;
+  border-radius: var(--todo-control-radius);
   background: transparent;
   color: #555;
   padding: 5px 9px;
@@ -661,27 +812,28 @@ body {
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: #22c55e;
+  background: var(--todo-status-success);
+  flex: 0 0 auto;
 }
 
 .sync-status-offline .sync-status-dot {
-  background: #9ca3af;
+  background: var(--todo-status-danger);
 }
 
 .sync-status-local .sync-status-dot {
-  background: #64748b;
+  background: var(--todo-muted);
 }
 
 .sync-status-server .sync-status-dot {
-  background: #3b82f6;
+  background: var(--todo-status-info);
 }
 
 .sync-status-paused .sync-status-dot {
-  background: #f59e0b;
+  background: var(--todo-status-info);
 }
 
 .sync-status-blocked .sync-status-dot {
-  background: #ef4444;
+  background: var(--todo-status-danger);
 }
 
 .sync-status-detail {
@@ -725,10 +877,10 @@ body {
   top: 8px;
   left: 50%;
   transform: translateX(-50%);
-  border: 1px solid #f59e0b;
-  border-radius: 999px;
-  background: #2f2718;
-  color: #fde68a;
+  border: 1px solid var(--todo-status-info);
+  border-radius: var(--todo-control-radius);
+  background: var(--black);
+  color: #60a5fa;
   padding: 6px 12px;
   font-size: 12px;
   cursor: pointer;
@@ -1368,10 +1520,18 @@ html.viewport-resizing .project-secret {
 
   .title-container {
     grid-column: 1;
-    grid-template-columns: minmax(0, 0.45fr) minmax(110px, 1.5fr) auto;
+    grid-template-columns: minmax(0, 0.45fr) minmax(0, 1.5fr);
     gap: 4px;
     padding: 0 6px 0 52px; /* 좌측 고정 드로어 토글 자리 */
   }
+
+  .title-container:has(.project-memo-search[hidden]) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .title-project-name { padding: 0; }
+
+  .title-editor-controls { padding: 0; gap: 6px; flex-wrap: nowrap; container-type: normal; }
 
   .title-project-name > span {
     font-size: 18px;
@@ -1399,6 +1559,26 @@ html.viewport-resizing .project-secret {
     right: 8px;
     left: 8px;
     max-height: min(62dvh, 520px);
+  }
+
+  /* transform은 fixed dropdown의 기준을 바꾸므로 모바일에서는 opacity만 전환한다. */
+  .project-memo-search,
+  .project-memo-search[data-visible="false"] {
+    transform: none;
+  }
+
+  .project-memo-search[data-visible="true"] {
+    animation-name: project-search-reveal-mobile;
+  }
+
+  @keyframes project-search-reveal-mobile {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .todo-action-button.memo-help-fab {
+    width: 40px;
+    height: 40px;
   }
 
   .main,
@@ -1557,6 +1737,16 @@ html.viewport-resizing .project-secret {
 
   .sync-status-detail {
     width: min(280px, calc(100vw - 24px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-memo-search,
+  .project-memo-search-input-wrap {
+    transition: none;
+  }
+  .project-memo-search[data-visible="true"] {
+    animation: none;
   }
 }
 

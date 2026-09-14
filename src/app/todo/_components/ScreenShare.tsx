@@ -356,9 +356,10 @@ export default function ScreenShare() {
               type="button"
               onClick={() => void handleStartShare()}
               disabled={isStartingShare}
-              className="rounded-md border border-gray-600 bg-gray-900 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="todo-action-button"
             >
-              {isStartingShare ? '공유 준비 중...' : '화면 공유'}
+              {isStartingShare && <span className="todo-status-dot todo-status-dot--info" aria-hidden />}
+              {isStartingShare ? '연결 중' : '화면 공유'}
             </button>
           )}
 
@@ -366,8 +367,9 @@ export default function ScreenShare() {
             <button
               type="button"
               onClick={handleJoinViewer}
-              className="rounded-md border border-emerald-500 bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-700"
+              className="todo-action-button"
             >
+              <span className="todo-status-dot todo-status-dot--success" aria-hidden />
               참가하기
             </button>
           )}
@@ -376,8 +378,9 @@ export default function ScreenShare() {
             <button
               type="button"
               onClick={() => void handleStopShare()}
-              className="rounded-md border border-red-500 bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-red-700"
+              className="todo-action-button"
             >
+              <span className="todo-status-dot todo-status-dot--success" aria-hidden />
               공유 중지
             </button>
           )}
@@ -412,7 +415,7 @@ export default function ScreenShare() {
                 type="button"
                 onClick={handleFullScreen}
                 onMouseDown={(e) => e.stopPropagation()}
-                className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                className="todo-action-button todo-action-button--secondary"
               >
                 전체화면
               </button>
@@ -420,7 +423,7 @@ export default function ScreenShare() {
                 type="button"
                 onClick={handleExitViewer}
                 onMouseDown={(e) => e.stopPropagation()}
-                className="rounded border border-red-500/50 px-2 py-1 text-xs text-red-200 hover:bg-red-500/20"
+                className="todo-action-button todo-action-button--secondary"
               >
                 나가기
               </button>

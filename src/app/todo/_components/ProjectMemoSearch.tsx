@@ -21,6 +21,8 @@ import {
 const SEARCH_DEBOUNCE_MS = 220;
 const SEARCH_LIMIT = 20;
 const EMPTY_SEARCH_HIDE_DELAY_MS = 1000;
+// CSS의 project-search-reveal 및 opacity 전환과 같은 지속 시간.
+const SEARCH_TRANSITION_MS = 180;
 
 interface ProjectMemoSearchProps {
   projectId: string;
@@ -72,6 +74,7 @@ export function ProjectMemoSearch({
   const [isNavigating, setIsNavigating] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [hasFocus, setHasFocus] = useState(false);
+  const [isPresent, setIsPresent] = useState(false);
 
   const invalidatePendingSearch = useCallback(() => {
     abortRef.current?.abort();
@@ -107,9 +110,24 @@ export function ProjectMemoSearch({
     setIsLoading(false);
     setIsNavigating(false);
     setIsVisible(false);
+    setIsPresent(false);
     setHasFocus(false);
     setError('');
   }, [invalidatePendingSearch, projectId]);
+
+  useEffect(() => {
+    if (isVisible) {
+      setIsPresent(true);
+      return;
+    }
+    if (!isPresent) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setIsPresent(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setIsPresent(false), SEARCH_TRANSITION_MS);
+    return () => window.clearTimeout(timer);
+  }, [isPresent, isVisible]);
 
   useEffect(() => {
     if (!isVisible || hasFocus || query.length > 0) return;
@@ -268,7 +286,14 @@ export function ProjectMemoSearch({
     : undefined;
 
   return (
-    <div className="project-memo-search" ref={rootRef} hidden={!isVisible}>
+    <div
+      className="project-memo-search"
+      ref={rootRef}
+      hidden={!isVisible && !isPresent}
+      data-visible={isVisible}
+      aria-hidden={!isVisible}
+      inert={!isVisible}
+    >
       <div className="project-memo-search-input-wrap">
         <svg aria-hidden="true" viewBox="0 0 20 20">
           <circle cx="8.5" cy="8.5" r="5.5" />

@@ -106,7 +106,7 @@ function TodoHomeContent() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="todo-workspace min-h-screen">
       <ProjectSection />
       <MemoListSection />
       {features.screenShare && <ScreenShare />}
