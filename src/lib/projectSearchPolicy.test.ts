@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   isMemberManagementShortcut,
   isProjectSearchShortcut,
+  isImeKeyEvent,
   moveSearchSelection,
 } from './projectSearchPolicy.ts';
 import type { ShortcutEventLike } from './projectSearchPolicy.ts';
@@ -14,6 +15,13 @@ const shortcut = (overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike
   shiftKey: true,
   altKey: false,
   ...overrides,
+});
+
+test('IME confirmation keys never select a search result, including Safari keyCode 229', () => {
+  assert.equal(isImeKeyEvent({ isComposing: true }), true);
+  assert.equal(isImeKeyEvent({ isComposing: false }, true), true);
+  assert.equal(isImeKeyEvent({ isComposing: false, keyCode: 229 }), true);
+  assert.equal(isImeKeyEvent({ isComposing: false, keyCode: 13 }), false);
 });
 
 test('project search accepts Cmd/Ctrl+Shift+P regardless of shifted key casing', () => {

@@ -59,6 +59,10 @@ body {
   overflow: hidden;
 }
 
+.title-container:has(.project-memo-search[hidden]) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .title-project-name > span {
   display: block;
   font-size: 36px;
@@ -85,6 +89,24 @@ body {
   z-index: 90;
   min-width: 0;
   width: 100%;
+}
+
+.project-memo-search[hidden] {
+  display: none;
+}
+
+.tasks-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: 8px;
+  min-width: 0;
+}
+
+#screen-share-buttons:empty {
+  display: none;
 }
 
 .project-memo-search-input-wrap {

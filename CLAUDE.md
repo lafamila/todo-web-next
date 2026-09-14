@@ -182,10 +182,15 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   필요하다는 안내를 받는다.
 - **프로젝트 최신 메모 검색**: 프로젝트 제목 행의 command bar는 현재 프로젝트의 저장된 최신 메모만
   `/api/projects/{projectId}/memos/search`로 조회한다. 220ms debounce와 AbortController/request sequence로
-  프로젝트 전환·역순 응답을 차단하고, IME 조합 중에는 요청·Enter 이동을 보류한다. 서버가 내려준
+  프로젝트 전환·역순 응답을 차단한다. 한글 조합 중에도 현재 입력값으로 220ms debounce 검색하고,
+  IME 상태와 keyCode 229는 Enter·방향키의 결과 선택만 막는다(조합 완료까지 검색을 미루지 않는다). 서버가 내려준
   `titleSegments`·`snippetSegments`를 text/`mark`로만 렌더하며 HTML을 주입하지 않는다. 결과는 관련도 순을
   그대로 유지하고 Arrow/Enter/Escape를 지원한다. Cmd/Ctrl+Shift+P는 검색창으로, Cmd/Ctrl+Shift+O는
   관리자 멤버 관리로 이동한다. 모바일에서 결과 선택은 기존 목록→detail 전환을 그대로 사용한다.
+  검색창은 기본 숨김이며 단축키로 표시한다. 값이나 포커스가 있으면 유지하고, 빈 값으로 포커스가
+  빠진 뒤 1초가 지나면 숨긴다(재포커스로 취소). 숨겨지면 제목 행은 제목과 상태의 2열로 돌아간다.
+- **화면공유 액션 위치**: `#screen-share-buttons` portal은 Tasks 행 우측 액션 그룹에서 멤버 관리
+  버튼 왼쪽에 위치한다. 기존 screenShare/memberInvite feature flag와 공유 동작은 유지한다.
 - **로컬 버전 기록**: `/api/session/me.features.memoVersionHistory`가 참인 `dev-local`·`prod-local`에서만
   메모 본문 상단에 버전 선택 바를 둔다. 과거 버전은 현재 편집 버퍼와 분리해 `InlineEditor`의 읽기 전용
   모드로 렌더하고, 락 요청·저장·Raw 전환·체크박스 변경을 모두 막는다. 기존 헤더에는 저장·동기화 상태가

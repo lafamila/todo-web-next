@@ -9,12 +9,16 @@ export interface ShortcutEventLike {
   keyCode?: number;
 }
 
+export const isImeKeyEvent = (
+  event: Pick<ShortcutEventLike, 'isComposing' | 'keyCode'>,
+  composing = false,
+): boolean => composing || Boolean(event.isComposing) || event.keyCode === 229;
+
 const isPrimaryShiftShortcut = (event: ShortcutEventLike, key: string): boolean =>
   (event.metaKey || event.ctrlKey) &&
   event.shiftKey &&
   !event.altKey &&
-  !event.isComposing &&
-  event.keyCode !== 229 &&
+  !isImeKeyEvent(event) &&
   (event.code === `Key${key.toUpperCase()}` || event.key.toLowerCase() === key);
 
 export const isProjectSearchShortcut = (event: ShortcutEventLike): boolean =>

@@ -7,6 +7,7 @@ import type {
 import * as api from '@/lib/api';
 import {
   isProjectSearchShortcut,
+  isImeKeyEvent,
   moveSearchSelection,
 } from '@/lib/projectSearchPolicy';
 import {
@@ -19,6 +20,7 @@ import {
 
 const SEARCH_DEBOUNCE_MS = 220;
 const SEARCH_LIMIT = 20;
+const EMPTY_SEARCH_HIDE_DELAY_MS = 1000;
 
 interface ProjectMemoSearchProps {
   projectId: string;
@@ -58,21 +60,36 @@ export function ProjectMemoSearch({
   const abortRef = useRef<AbortController | null>(null);
   const requestSequenceRef = useRef(0);
   const navigationInFlightRef = useRef(false);
+  const composingRef = useRef(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<ProjectMemoSearchResultInterface[]>([]);
   const [total, setTotal] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isComposing, setIsComposing] = useState(false);
   const [error, setError] = useState('');
   const [refreshSequence, setRefreshSequence] = useState(0);
   const [isNavigating, setIsNavigating] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+  const [hasFocus, setHasFocus] = useState(false);
 
   const invalidatePendingSearch = useCallback(() => {
     abortRef.current?.abort();
     requestSequenceRef.current += 1;
   }, []);
+
+  const updateQuery = (nextQuery: string) => {
+    if (nextQuery === query) return;
+    invalidatePendingSearch();
+    setQuery(nextQuery);
+    setResults([]);
+    setTotal(0);
+    setSelectedIndex(0);
+    setError('');
+    setIsLoading(nextQuery.trim().length > 0);
+    setIsOpen(true);
+    setIsVisible(true);
+  };
 
   const close = useCallback(() => {
     invalidatePendingSearch();
@@ -81,6 +98,7 @@ export function ProjectMemoSearch({
 
   useEffect(() => {
     invalidatePendingSearch();
+    composingRef.current = false;
     setQuery('');
     setResults([]);
     setTotal(0);
@@ -88,8 +106,21 @@ export function ProjectMemoSearch({
     setIsOpen(false);
     setIsLoading(false);
     setIsNavigating(false);
+    setIsVisible(false);
+    setHasFocus(false);
     setError('');
   }, [invalidatePendingSearch, projectId]);
+
+  useEffect(() => {
+    if (!isVisible || hasFocus || query.length > 0) return;
+    const timer = window.setTimeout(() => {
+      // 포커스/입력 이벤트와 같은 프레임에 만료되어도 현재 DOM 상태를 우선한다.
+      if (document.activeElement === inputRef.current || inputRef.current?.value) return;
+      close();
+      setIsVisible(false);
+    }, EMPTY_SEARCH_HIDE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [close, hasFocus, isVisible, query]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -107,6 +138,7 @@ export function ProjectMemoSearch({
       onShortcutFocus?.();
       invalidatePendingSearch();
       setIsOpen(true);
+      setIsVisible(true);
       if (query.trim()) {
         setResults([]);
         setTotal(0);
@@ -129,7 +161,9 @@ export function ProjectMemoSearch({
     const sequence = ++requestSequenceRef.current;
     const normalizedQuery = query.trim();
 
-    if (!normalizedQuery || isComposing) {
+    // 한글 마지막 음절은 입력을 멈춰도 조합 중일 수 있다. 검색은 현재 값으로
+    // debounce하고, IME 상태는 아래 키보드 결과 선택을 막는 데만 사용한다.
+    if (!normalizedQuery) {
       setResults([]);
       setTotal(0);
       setSelectedIndex(0);
@@ -174,7 +208,7 @@ export function ProjectMemoSearch({
       window.clearTimeout(timer);
       abortRef.current?.abort();
     };
-  }, [isComposing, projectId, query, refreshSequence]);
+  }, [projectId, query, refreshSequence]);
 
   useEffect(() => {
     const activeOption = results[selectedIndex]
@@ -202,7 +236,7 @@ export function ProjectMemoSearch({
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.nativeEvent.isComposing || isComposing) return;
+    if (isImeKeyEvent(event.nativeEvent, composingRef.current)) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       setIsOpen(true);
@@ -234,7 +268,7 @@ export function ProjectMemoSearch({
     : undefined;
 
   return (
-    <div className="project-memo-search" ref={rootRef}>
+    <div className="project-memo-search" ref={rootRef} hidden={!isVisible}>
       <div className="project-memo-search-input-wrap">
         <svg aria-hidden="true" viewBox="0 0 20 20">
           <circle cx="8.5" cy="8.5" r="5.5" />
@@ -255,17 +289,11 @@ export function ProjectMemoSearch({
           value={query}
           placeholder="프로젝트 메모 검색"
           onChange={(event) => {
-            const nextQuery = event.target.value;
-            invalidatePendingSearch();
-            setQuery(nextQuery);
-            setResults([]);
-            setTotal(0);
-            setSelectedIndex(0);
-            setError('');
-            setIsLoading(!isComposing && nextQuery.trim().length > 0);
-            setIsOpen(true);
+            updateQuery(event.target.value);
           }}
           onFocus={() => {
+            setHasFocus(true);
+            setIsVisible(true);
             setIsOpen(true);
             if (query.trim()) {
               invalidatePendingSearch();
@@ -277,13 +305,13 @@ export function ProjectMemoSearch({
               setRefreshSequence((current) => current + 1);
             }
           }}
+          onBlur={() => setHasFocus(false)}
           onCompositionStart={() => {
-            invalidatePendingSearch();
-            setIsComposing(true);
+            composingRef.current = true;
           }}
-          onCompositionEnd={() => {
-            setIsComposing(false);
-            if (query.trim()) setIsLoading(true);
+          onCompositionEnd={(event) => {
+            composingRef.current = false;
+            updateQuery(event.currentTarget.value);
           }}
           onKeyDown={handleKeyDown}
         />

@@ -407,7 +407,6 @@ export default function MemoListSection() {
             onShortcutFocus={handleSearchShortcutFocus}
           />
           <div className="title-actions">
-            <div id="screen-share-buttons" />
             {/* 데스크톱에서 MemoSection 이 상태·액션을 여기로 포털한다 (메모 영역 침범 방지) */}
             <div id="memo-status-slot" className="memo-status-slot" />
             <SyncStatusIndicator />
@@ -420,15 +419,18 @@ export default function MemoListSection() {
               <span style={{ fontWeight: "bold", fontSize: "20px" }}>Tasks</span>{" "}
               <span className="task-count">({memos.length})</span>
             </div>
-            {isAdmin && features.memberInvite && (
-              <button
-                onClick={handleOpenMemberModal}
-                className="px-2 py-1 text-sm bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors"
-                title="멤버 관리"
-              >
-                👥
-              </button>
-            )}
+            <div className="tasks-heading-actions">
+              <div id="screen-share-buttons" />
+              {isAdmin && features.memberInvite && (
+                <button
+                  onClick={handleOpenMemberModal}
+                  className="px-2 py-1 text-sm bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors"
+                  title="멤버 관리"
+                >
+                  👥
+                </button>
+              )}
+            </div>
           </div>
           <div className="new-task-container" style={{ position: 'relative' }}>
             <Input
