@@ -271,6 +271,7 @@ export function MemoSection() {
     lockHolder,
     leaseState,
     requestLock,
+    retryLock,
     releaseLock,
     hasCurrentLease,
     broadcastUpdate,
@@ -1660,6 +1661,12 @@ export function MemoSection() {
     requestLock();
   }, [isViewingVersion, requestLock]);
 
+  const handleReadOnlyCheckboxIntent = useCallback(() => {
+    if (isViewingVersion) return;
+    pendingEditOffsetRef.current = null;
+    holdLock();
+  }, [holdLock, isViewingVersion]);
+
   const moveToNextIssue = useCallback(
     async (resolvedIssue: SyncIssueInterface) => {
       const currentIndex = issues.findIndex((item) => item.id === resolvedIssue.id);
@@ -2210,6 +2217,9 @@ export function MemoSection() {
                 onReadOnlyCodeEditIntent={
                   isViewingVersion ? undefined : handleReadOnlyCodeEditIntent
                 }
+                onReadOnlyCheckboxIntent={
+                  isViewingVersion ? undefined : handleReadOnlyCheckboxIntent
+                }
               />
             </div>
           )}
@@ -2234,7 +2244,7 @@ export function MemoSection() {
                       : `${lockHolder.displayName}님이 수정 중입니다.`
                     : '입력과 저장은 안전한 편집 잠금을 확보한 뒤 사용할 수 있습니다.'}
                 </span>
-                <button type="button" onClick={requestLock}>
+                <button type="button" onClick={retryLock}>
                   다시 시도
                 </button>
               </div>

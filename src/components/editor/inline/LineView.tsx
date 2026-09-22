@@ -51,6 +51,7 @@ export interface LineViewProps {
   readOnly: boolean;
   onActivate: (lineId: number, caret: number | null) => void;
   onReadOnlyEditIntent?: (lineId: number, caret: number) => void;
+  onReadOnlyCheckboxIntent?: (lineId: number) => void;
   onToggleCheckbox: (lineId: number) => void;
   /** 활성 라인에만 전달된다. */
   handlers?: LineHandlers;
@@ -66,6 +67,7 @@ function LineViewImpl({
   readOnly,
   onActivate,
   onReadOnlyEditIntent,
+  onReadOnlyCheckboxIntent,
   onToggleCheckbox,
   handlers,
   textareaRef,
@@ -125,7 +127,9 @@ function LineViewImpl({
           <CheckboxBlock
             checked={cls.checked}
             content={cls.content}
-            onToggle={readOnly ? undefined : () => onToggleCheckbox(line.id)}
+            onToggle={readOnly
+              ? onReadOnlyCheckboxIntent && (() => onReadOnlyCheckboxIntent(line.id))
+              : () => onToggleCheckbox(line.id)}
           />
         );
       case 'blank':

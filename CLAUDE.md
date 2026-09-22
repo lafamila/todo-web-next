@@ -69,6 +69,9 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 - **체크박스 내용은 마크다운을 통과하지 않는다**: `CheckboxBlock` 은 원문을 span 에 그대로 넣으므로
   `InlineMarks` 가 `[텍스트]` 강조와 `[텍스트](URL)` 링크만 되살린다(앵커는 마크다운 경로와 같은
   `ContentLink`). 전체 마크다운을 돌리면 기존 체크박스의 `*`·`#`·`_` 가 갑자기 서식이 되므로 하지 않는다.
+  현재 메모의 잠금 미확보 상태에서도 글리프 클릭은 편집 의도로 받아 잠금을 요청한다. `InlineEditor`가
+  line id·줄 원문·문서 snapshot을 보관하고 grant 뒤 동일 문서일 때만 한 번 토글/즉시 저장한다.
+  원문 변경·메모/버전 전환·다른 편집 의도는 대기를 취소한다. 과거 버전과 공개 렌더는 이 핸들러를 받지 않는다.
 - **라인 상태**: `rendered` → (더블클릭) → `editing` → (완결 패턴 + 2초 무변경 + 조합 중 아님) →
   `focused-rendered` → (Backspace 1회는 삭제 없이 소스 복귀 / 문자 입력·조합 시작도 소스 복귀).
   blur·Escape·다른 라인 활성화는 즉시 `rendered`. `--` 나 `-- ` 같은 미완결 패턴은 절대 자동 렌더되지 않는다.
@@ -154,6 +157,11 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   입장 확인을 받은 후 요청한다. canonical `memoLocked` 이벤트를 받으면 기존 토큰과 활성 라인을 즉시
   폐기하며, `ready` 상태의 중복 요청은 pending 으로 되돌리지 않는다. REST 저장은 해당 소켓에서 받은
   `X-Memo-Lease-Token` 을 붙이며 저장 실패를 화면에 표시한다.
+  명시적 재시도 버튼은 `retryLock`을 사용한다: stale deny/join/lock 상태를 비우고 연결이 끊겼으면
+  connect, 연결 중이면 joinMemo부터 재검증한 뒤 lockMemo를 보낸다. 실제 서버의 읽기/쓰기 권한 검사는
+  유지한다. 재연결이 5초 안에 되지 않으면 transport 시도를 중단하고 denied로 돌아온다. 완료된 join의
+  중복 lockStatus는 무시하고, 재검증 전 늦은 grant는 보류/반납하여 ready가 자기 락 때문에 denied로
+  되돌아가거나 취소된 요청이 살아나지 않도록 한다. 일반 편집 의도는 기존 idempotent requestLock을 쓴다.
 - **코드블록 포커스와 lease 수명**: 라인 textarea 활성 상태와 Monaco 포커스는 서로 독립된 source다.
   `InlineEditor`가 둘을 OR로 집계하고 합산 상태가 실제로 바뀔 때만 `MemoSection`에 알린다. line→Monaco
   인계 중 effect 순서가 뒤집혀도 같은 task의 false는 유예해 Monaco focus가 이를 취소하며, read-only 전환과

@@ -11,6 +11,11 @@ import {
   shouldRetryJoinResponse,
   shouldRetryLockResponse,
   shouldEmitLockRequest,
+  planExplicitLeaseRetry,
+  shouldAcquireAfterExplicitRejoin,
+  shouldDeferGrantUntilExplicitRejoin,
+  shouldTerminateExplicitConnectionRetry,
+  shouldAcceptJoinStatus,
   shouldRenewLease,
   shouldAcceptLockGrant,
   canSubmitMemoSave,
@@ -35,6 +40,7 @@ interface UseMemoSocketReturn {
   lockHolder: MemoLockInfo | null;
   leaseState: MemoLeaseState;
   requestLock: () => void;
+  retryLock: () => void;
   releaseLock: () => void;
   hasCurrentLease: (memoId: string) => boolean;
   broadcastUpdate: (content: string, title?: string) => void;
@@ -59,11 +65,15 @@ export function useMemoSocket({
   const lockRequestMemoRef = useRef<string | null>(null);
   const ownsLockRef = useRef(false);
   const accessDeniedMemoRef = useRef<string | null>(null);
+  const explicitRetryMemoRef = useRef<string | null>(null);
+  const unconfirmedGrantMemoRef = useRef<string | null>(null);
   const startLockResponseWatchdogRef = useRef<(memoId: string) => void>(() => {});
   const stopLockResponseWatchdogRef = useRef<() => void>(() => {});
   const stopRenewalRef = useRef<() => void>(() => {});
   const startJoinResponseWatchdogRef = useRef<(memoId: string) => void>(() => {});
   const stopJoinResponseWatchdogRef = useRef<() => void>(() => {});
+  const startConnectionResponseWatchdogRef = useRef<(memoId: string) => void>(() => {});
+  const stopConnectionResponseWatchdogRef = useRef<() => void>(() => {});
 
   // Keep callbacks in refs to avoid re-triggering effect
   const onContentUpdatedRef = useRef(onContentUpdated);
@@ -103,10 +113,12 @@ export function useMemoSocket({
     let renewTimer: number | null = null;
     let lockResponseTimer: number | null = null;
     let joinResponseTimer: number | null = null;
+    let connectionResponseTimer: number | null = null;
     let renewAfterMs = 30_000;
     let lockAttemptCount = 0;
     let joinAttemptCount = 0;
     const LOCK_RESPONSE_TIMEOUT_MS = 2_000;
+    const CONNECTION_RESPONSE_TIMEOUT_MS = 5_000;
 
     const stopRenewal = () => {
       if (renewTimer !== null) {
@@ -126,6 +138,51 @@ export function useMemoSocket({
         joinResponseTimer = null;
       }
     };
+    const stopConnectionResponseWatchdog = () => {
+      if (connectionResponseTimer !== null) {
+        window.clearTimeout(connectionResponseTimer);
+        connectionResponseTimer = null;
+      }
+    };
+    const releaseUnconfirmedGrant = (memoId: string) => {
+      if (unconfirmedGrantMemoRef.current !== memoId) return;
+      unconfirmedGrantMemoRef.current = null;
+      socket.emit('unlockMemo', { memoId });
+    };
+    const denyUnresponsiveConnection = (memoId: string) => {
+      if (!shouldTerminateExplicitConnectionRetry({
+        timeoutMemoId: memoId,
+        retryMemoId: explicitRetryMemoRef.current,
+        currentMemoId: currentMemoIdRef.current,
+      })) {
+        return;
+      }
+      stopConnectionResponseWatchdog();
+      // disconnect()가 Manager의 남은 자동 재연결도 취소한다. 먼저 끊어야
+      // disconnect handler가 만든 중간 상태를 아래 terminal denied가 덮는다.
+      socket.disconnect();
+      stopConnectionResponseWatchdog();
+      ownsLockRef.current = false;
+      editIntentRef.current = false;
+      joinedMemoIdRef.current = null;
+      joinRequestMemoRef.current = null;
+      lockRequestMemoRef.current = null;
+      accessDeniedMemoRef.current = null;
+      explicitRetryMemoRef.current = null;
+      unconfirmedGrantMemoRef.current = null;
+      clearMemoLease(memoId);
+      const displayName = '동기화 서버 연결 오류';
+      setLockHolder({ displayName, userId: 'lock-unavailable' });
+      setLeaseState('denied');
+      onLockDeniedRef.current(displayName);
+    };
+    const armConnectionResponseWatchdog = (memoId: string) => {
+      stopConnectionResponseWatchdog();
+      connectionResponseTimer = window.setTimeout(() => {
+        connectionResponseTimer = null;
+        denyUnresponsiveConnection(memoId);
+      }, CONNECTION_RESPONSE_TIMEOUT_MS);
+    };
     const denyUnresponsiveJoin = (memoId: string) => {
       if (memoId !== currentMemoIdRef.current) return;
       stopJoinResponseWatchdog();
@@ -133,6 +190,8 @@ export function useMemoSocket({
       joinedMemoIdRef.current = null;
       joinRequestMemoRef.current = null;
       lockRequestMemoRef.current = null;
+      explicitRetryMemoRef.current = null;
+      releaseUnconfirmedGrant(memoId);
       clearMemoLease(memoId);
       const displayName = '동기화 서버 응답 없음';
       setLockHolder({
@@ -179,6 +238,8 @@ export function useMemoSocket({
       ownsLockRef.current = false;
       editIntentRef.current = false;
       lockRequestMemoRef.current = null;
+      explicitRetryMemoRef.current = null;
+      releaseUnconfirmedGrant(memoId);
       clearMemoLease(memoId);
       const displayName = '동기화 서버 응답 없음';
       setLockHolder({
@@ -247,6 +308,10 @@ export function useMemoSocket({
       armJoinResponseWatchdog(memoId);
     };
     stopJoinResponseWatchdogRef.current = stopJoinResponseWatchdog;
+    startConnectionResponseWatchdogRef.current = (memoId) => {
+      armConnectionResponseWatchdog(memoId);
+    };
+    stopConnectionResponseWatchdogRef.current = stopConnectionResponseWatchdog;
 
     const scheduleRenewal = (delayMs = renewAfterMs) => {
       stopRenewal();
@@ -267,6 +332,7 @@ export function useMemoSocket({
     };
 
     socket.on('connect', () => {
+      stopConnectionResponseWatchdog();
       setIsConnected(true);
       setLockHolder(null);
       accessDeniedMemoRef.current = null;
@@ -301,6 +367,9 @@ export function useMemoSocket({
       joinAttemptCount = 0;
       if (currentMemoIdRef.current) {
         clearMemoLease(currentMemoIdRef.current);
+        if (explicitRetryMemoRef.current === currentMemoIdRef.current) {
+          armConnectionResponseWatchdog(currentMemoIdRef.current);
+        }
       }
     });
 
@@ -313,12 +382,34 @@ export function useMemoSocket({
         lockedByUserId: string | null;
         available?: boolean;
       }) => {
-        if (data.memoId !== currentMemoIdRef.current) return;
+        if (!shouldAcceptJoinStatus({
+          currentMemoId: currentMemoIdRef.current,
+          joinRequestMemoId: joinRequestMemoRef.current,
+          statusMemoId: data.memoId,
+        })) {
+          return;
+        }
         stopJoinResponseWatchdog();
         joinAttemptCount = 0;
         accessDeniedMemoRef.current = null;
         joinedMemoIdRef.current = data.memoId;
         joinRequestMemoRef.current = null;
+        if (
+          shouldAcquireAfterExplicitRejoin({
+            retryMemoId: explicitRetryMemoRef.current,
+            currentMemoId: currentMemoIdRef.current,
+            statusMemoId: data.memoId,
+          })
+        ) {
+          explicitRetryMemoRef.current = null;
+          ownsLockRef.current = false;
+          setLockHolder(null);
+          setLeaseState('pending');
+          lockRequestMemoRef.current = data.memoId;
+          socket.emit('lockMemo', { memoId: data.memoId });
+          armLockResponseWatchdog(data.memoId);
+          return;
+        }
         if (data.available === false) {
           stopLockResponseWatchdog();
           const displayName = '동기화 서버';
@@ -374,6 +465,8 @@ export function useMemoSocket({
       joinRequestMemoRef.current = null;
       lockRequestMemoRef.current = null;
       accessDeniedMemoRef.current = data.memoId;
+      explicitRetryMemoRef.current = null;
+      releaseUnconfirmedGrant(data.memoId);
       lockAttemptCount = 0;
       joinAttemptCount = 0;
       clearMemoLease(data.memoId);
@@ -394,6 +487,8 @@ export function useMemoSocket({
         ownsLockRef.current = false;
         editIntentRef.current = false;
         lockRequestMemoRef.current = null;
+        explicitRetryMemoRef.current = null;
+        unconfirmedGrantMemoRef.current = null;
         stopRenewal();
         stopLockResponseWatchdog();
         lockAttemptCount = 0;
@@ -414,6 +509,7 @@ export function useMemoSocket({
       if (data.memoId !== currentMemoIdRef.current) return;
       ownsLockRef.current = false;
       lockRequestMemoRef.current = null;
+      unconfirmedGrantMemoRef.current = null;
       stopRenewal();
       stopLockResponseWatchdog();
       lockAttemptCount = 0;
@@ -439,6 +535,17 @@ export function useMemoSocket({
       renewAfterMs?: number;
     }) => {
       if (
+        shouldDeferGrantUntilExplicitRejoin({
+          retryMemoId: explicitRetryMemoRef.current,
+          joinedMemoId: joinedMemoIdRef.current,
+          grantedMemoId: data.memoId,
+        })
+      ) {
+        unconfirmedGrantMemoRef.current = data.memoId;
+        clearMemoLease(data.memoId);
+        return;
+      }
+      if (
         !shouldAcceptLockGrant(
           currentMemoIdRef.current,
           data.memoId,
@@ -460,6 +567,8 @@ export function useMemoSocket({
       }
       ownsLockRef.current = true;
       lockRequestMemoRef.current = null;
+      explicitRetryMemoRef.current = null;
+      unconfirmedGrantMemoRef.current = null;
       stopLockResponseWatchdog();
       lockAttemptCount = 0;
       setLeaseState('ready');
@@ -512,6 +621,8 @@ export function useMemoSocket({
         lockAttemptCount = 0;
         clearMemoLease(data.memoId);
         accessDeniedMemoRef.current = accessDenied ? data.memoId : null;
+        explicitRetryMemoRef.current = null;
+        releaseUnconfirmedGrant(data.memoId);
         setLockHolder({
           displayName: lockedBy,
           userId: accessDenied
@@ -539,11 +650,14 @@ export function useMemoSocket({
       stopRenewal();
       stopLockResponseWatchdog();
       stopJoinResponseWatchdog();
+      stopConnectionResponseWatchdog();
       startLockResponseWatchdogRef.current = () => {};
       stopLockResponseWatchdogRef.current = () => {};
       stopRenewalRef.current = () => {};
       startJoinResponseWatchdogRef.current = () => {};
       stopJoinResponseWatchdogRef.current = () => {};
+      startConnectionResponseWatchdogRef.current = () => {};
+      stopConnectionResponseWatchdogRef.current = () => {};
       if (currentMemoIdRef.current) {
         clearMemoLease(currentMemoIdRef.current);
       }
@@ -552,6 +666,8 @@ export function useMemoSocket({
       joinRequestMemoRef.current = null;
       lockRequestMemoRef.current = null;
       accessDeniedMemoRef.current = null;
+      explicitRetryMemoRef.current = null;
+      unconfirmedGrantMemoRef.current = null;
       socket.disconnect();
       socketRef.current = null;
       setIsConnected(false);
@@ -566,7 +682,10 @@ export function useMemoSocket({
       stopLockResponseWatchdogRef.current();
       stopRenewalRef.current();
       stopJoinResponseWatchdogRef.current();
+      stopConnectionResponseWatchdogRef.current();
       accessDeniedMemoRef.current = null;
+      explicitRetryMemoRef.current = null;
+      unconfirmedGrantMemoRef.current = null;
     }
     if (!socket || !socket.connected) {
       if (prevMemoId !== memoId) {
@@ -590,6 +709,7 @@ export function useMemoSocket({
       joinRequestMemoRef.current = null;
       lockRequestMemoRef.current = null;
       clearMemoLease(prevMemoId);
+      unconfirmedGrantMemoRef.current = null;
     }
 
     // Join new room
@@ -653,15 +773,54 @@ export function useMemoSocket({
     startLockResponseWatchdogRef.current(currentMemoIdRef.current);
   }, []);
 
+  const retryLock = useCallback(() => {
+    const socket = socketRef.current;
+    const plan = planExplicitLeaseRetry({
+      hasSocket: Boolean(socket),
+      connected: Boolean(socket?.connected),
+      currentMemoId: currentMemoIdRef.current,
+    });
+    if (!socket || !plan) return;
+    const { memoId: retryMemoId, next } = plan;
+
+    // 재시도는 이전 deny/in-flight/join 캐시를 버리고 서버에 접근 권한과
+    // canonical lock owner를 다시 묻는다. lockMemo 자체의 권한 검사는 유지된다.
+    stopRenewalRef.current();
+    stopLockResponseWatchdogRef.current();
+    stopJoinResponseWatchdogRef.current();
+    clearMemoLease(retryMemoId);
+    ownsLockRef.current = next.ownsLock;
+    editIntentRef.current = next.editIntent;
+    joinedMemoIdRef.current = next.joinedMemoId;
+    joinRequestMemoRef.current = next.joinRequestMemoId;
+    lockRequestMemoRef.current = next.lockRequestMemoId;
+    accessDeniedMemoRef.current = next.accessDeniedMemoId;
+    explicitRetryMemoRef.current = next.explicitRetryMemoId;
+    setLockHolder(null);
+    setLeaseState('pending');
+
+    if (plan.action === 'connect') {
+      startConnectionResponseWatchdogRef.current(retryMemoId);
+      socket.connect();
+      return;
+    }
+    socket.emit('joinMemo', { memoId: retryMemoId });
+    startJoinResponseWatchdogRef.current(retryMemoId);
+  }, []);
+
   const releaseLock = useCallback(() => {
     const socket = socketRef.current;
     stopLockResponseWatchdogRef.current();
     stopRenewalRef.current();
+    stopConnectionResponseWatchdogRef.current();
     const memoId = currentMemoIdRef.current;
     const wasOwner = ownsLockRef.current;
+    const hadUnconfirmedGrant = unconfirmedGrantMemoRef.current === memoId;
     ownsLockRef.current = false;
     editIntentRef.current = false;
     lockRequestMemoRef.current = null;
+    explicitRetryMemoRef.current = null;
+    unconfirmedGrantMemoRef.current = null;
     if (!memoId) {
       setLockHolder(null);
       setLeaseState('idle');
@@ -670,7 +829,9 @@ export function useMemoSocket({
     clearMemoLease(memoId);
     setLockHolder(null);
     setLeaseState('idle');
-    if (socket && wasOwner) socket.emit('unlockMemo', { memoId });
+    if (socket && (wasOwner || hadUnconfirmedGrant)) {
+      socket.emit('unlockMemo', { memoId });
+    }
   }, []);
 
   const hasCurrentLease = useCallback(
@@ -698,6 +859,7 @@ export function useMemoSocket({
     lockHolder,
     leaseState,
     requestLock,
+    retryLock,
     releaseLock,
     hasCurrentLease,
     broadcastUpdate,

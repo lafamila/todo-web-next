@@ -5,7 +5,7 @@ import { MonacoCodeEditor } from '@/components/editor/MonacoCodeEditor';
 import { assertClassifierMatchesParseContent } from './classifyLine';
 import { LineView } from './LineView';
 import { useLineStateMachine, type MentionState } from './useLineStateMachine';
-import { lineCaretToDocumentOffset } from '@/lib/editorIntent';
+import { lineCaretToDocumentOffset, takePendingCheckboxToggle, type PendingCheckboxToggle } from '@/lib/editorIntent';
 import {
   createEditorActivityTracker,
 } from '@/lib/editorActivity';
@@ -40,6 +40,8 @@ export interface InlineEditorProps {
   readOnly?: boolean;
   onReadOnlyEditIntent?: (documentOffset: number) => void;
   onReadOnlyCodeEditIntent?: () => void;
+  /** 체크 클릭은 소스 편집으로 전환하지 않고 잠금 확보 뒤 원래 줄에 재생한다. */
+  onReadOnlyCheckboxIntent?: () => void;
 }
 
 /**
@@ -62,7 +64,9 @@ export function InlineEditor({
   readOnly = false,
   onReadOnlyEditIntent,
   onReadOnlyCodeEditIntent,
+  onReadOnlyCheckboxIntent,
 }: InlineEditorProps) {
+  const pendingCheckboxRef = useRef<PendingCheckboxToggle | null>(null);
   const [activityTracker] = useState(() =>
     createEditorActivityTracker((active) => onEditingChange?.(active)),
   );
@@ -89,7 +93,14 @@ export function InlineEditor({
     readOnly,
   });
 
-  const { activeLineId, activeMode, flashLineId, groups } = machine;
+  const { activeLineId, activeMode, flashLineId, groups, lines, toggleCheckboxLine } = machine;
+
+  useEffect(() => {
+    const lineId = takePendingCheckboxToggle(
+      pendingCheckboxRef, lines, value, readOnly, Boolean(onReadOnlyCheckboxIntent),
+    );
+    if (lineId !== null) toggleCheckboxLine(lineId);
+  }, [lines, toggleCheckboxLine, onReadOnlyCheckboxIntent, readOnly, value]);
 
   // 새 코드블록은 라인을 먼저 deactivate한 뒤 Monaco chunk/instance가 준비되기를 기다린다.
   // 이 인계 의도 자체를 Monaco source로 선점해 로딩이 한 task보다 길어도 false가 새지 않게 한다.
@@ -126,6 +137,7 @@ export function InlineEditor({
   const handleSurfaceClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
     if (readOnly) {
+      pendingCheckboxRef.current = null;
       onReadOnlyEditIntent?.(value.length);
       return;
     }
@@ -237,8 +249,23 @@ export function InlineEditor({
   };
 
   const handleReadOnlyLineIntent = (lineId: number, caret: number) => {
+    pendingCheckboxRef.current = null;
     const offset = lineCaretToDocumentOffset(machine.lines, lineId, caret);
     if (offset !== null) onReadOnlyEditIntent?.(offset);
+  };
+
+  const handleReadOnlyCheckboxIntent = (lineId: number) => {
+    if (!onReadOnlyCheckboxIntent) return;
+    const line = machine.lines.find((candidate) => candidate.id === lineId);
+    if (!line) return;
+    // 대기 중 반복 클릭으로 같은 토글을 여러 번 예약하지 않는다. 마지막 대상만 유지한다.
+    pendingCheckboxRef.current = { lineId, lineText: line.text, document: value };
+    onReadOnlyCheckboxIntent();
+  };
+
+  const handleReadOnlyCodeIntent = () => {
+    pendingCheckboxRef.current = null;
+    onReadOnlyCodeEditIntent?.();
   };
 
   useEffect(() => {
@@ -308,7 +335,7 @@ export function InlineEditor({
                     ? undefined
                     : (focused) => activityTracker.update('monaco', focused)
                 }
-                onReadOnlyEditIntent={onReadOnlyCodeEditIntent}
+                onReadOnlyEditIntent={onReadOnlyCodeEditIntent ? handleReadOnlyCodeIntent : undefined}
               />
               {group.close && (
                 <LineView
@@ -337,6 +364,7 @@ export function InlineEditor({
             readOnly={readOnly}
             onActivate={machine.activateLine}
             onReadOnlyEditIntent={handleReadOnlyLineIntent}
+            onReadOnlyCheckboxIntent={onReadOnlyCheckboxIntent ? handleReadOnlyCheckboxIntent : undefined}
             onToggleCheckbox={machine.toggleCheckboxLine}
             textareaRef={machine.textareaRef}
             handlers={group.line.id === activeLineId ? machine.lineHandlers : undefined}
