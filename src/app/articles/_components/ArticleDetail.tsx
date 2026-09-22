@@ -5,6 +5,7 @@ import {
   CheckboxBlock,
   MarkdownBlock,
   StaticCodeBlock,
+  BoxTableBlock,
 } from '@/components/editor/blocks/ContentBlocks';
 import { indentStyle } from '@/lib/lineMarks';
 import { parseContent } from '@/lib/utils';
@@ -36,6 +37,10 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
       const indent = indentStyle(block.metadata?.indent ?? 0);
 
       switch (block.type) {
+        case 'table':
+          return block.metadata?.table
+            ? <BoxTableBlock key={index} table={block.metadata.table} />
+            : <pre key={index}>{block.content}</pre>;
         case 'checkbox':
           return (
             <div key={index} className="my-1" style={indent}>

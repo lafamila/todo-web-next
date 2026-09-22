@@ -1,3 +1,5 @@
+import type { BoxTableData } from "./boxTable";
+
 export interface ProjectInterface {
   id: string;
   name: string;
@@ -149,7 +151,7 @@ export interface CreateMemoRequestInterface {
 }
 
 export interface ContentBlockInterface {
-  type: "text" | "code" | "checkbox" | "memo-link";
+  type: "text" | "code" | "checkbox" | "memo-link" | "table";
   content: string;
   metadata?: {
     language?: string;
@@ -158,6 +160,8 @@ export interface ContentBlockInterface {
     memoTitle?: string;
     /** 들여쓰기 단위 수 (스페이스 2칸 = 1). `lib/lineMarks.ts` 참조. */
     indent?: number;
+    /** Unicode 상자 문자 표의 화면 렌더링 정보. content에는 원문 전체가 남는다. */
+    table?: BoxTableData;
   };
 }
 

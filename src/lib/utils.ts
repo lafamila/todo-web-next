@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from "clsx";
 import { codeFenceLanguage, isCodeFenceLine } from "./codeFence";
 import { matchCheckbox, splitIndent, toggleCheckboxLine } from "./lineMarks";
+import { readBoxTable } from "./boxTable";
 import type { ContentBlockInterface } from "./types";
 
 export function cn(...classes: ClassValue[]): string {
@@ -46,16 +47,7 @@ export function parseContent(content: string): ContentBlockInterface[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    const checkbox = matchCheckbox(line);
-    if (checkbox) {
-      blocks.push({
-        type: "checkbox",
-        content: checkbox.content,
-        metadata: { checked: checkbox.checked, indent: checkbox.indent },
-      });
-      continue;
-    }
-
+    // 코드 펜스가 표보다 우선한다. 펜스 안의 상자 문자는 언제나 코드 원문으로 남긴다.
     if (isCodeFenceLine(line)) {
       const language = codeFenceLanguage(line);
       const codeLines: string[] = [];
@@ -70,6 +62,27 @@ export function parseContent(content: string): ContentBlockInterface[] {
         type: "code",
         content: codeLines.join("\n"),
         metadata: { language },
+      });
+      continue;
+    }
+
+    const boxTable = readBoxTable(lines, i);
+    if (boxTable) {
+      blocks.push({
+        type: "table",
+        content: lines.slice(i, boxTable.endIndex).join("\n"),
+        metadata: { table: boxTable.table },
+      });
+      i = boxTable.endIndex - 1;
+      continue;
+    }
+
+    const checkbox = matchCheckbox(line);
+    if (checkbox) {
+      blocks.push({
+        type: "checkbox",
+        content: checkbox.content,
+        metadata: { checked: checkbox.checked, indent: checkbox.indent },
       });
       continue;
     }

@@ -58,6 +58,8 @@ export interface LineViewProps {
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   /** 코드펜스 라인은 원문 그대로 보여주고 자동 렌더 대상에서 제외된다. */
   asFence?: boolean;
+  /** 표 원문 편집 중에는 Markdown을 거치지 않고 테두리/공백까지 그대로 표시한다. */
+  asPlainText?: boolean;
 }
 
 function LineViewImpl({
@@ -72,6 +74,7 @@ function LineViewImpl({
   handlers,
   textareaRef,
   asFence = false,
+  asPlainText = false,
 }: LineViewProps) {
   const cls = classifyLine(line.text);
   const isEditing = mode === 'editing';
@@ -115,6 +118,7 @@ function LineViewImpl({
   };
 
   const renderBlock = () => {
+    if (asPlainText) return <span className="editor-table-source">{line.text || '\u00a0'}</span>;
     if (asFence) {
       if (fenceCollapsed) return null;
       return <span className="font-mono text-xs text-gray-500">{line.text || '```'}</span>;
@@ -142,6 +146,7 @@ function LineViewImpl({
 
   /** 렌더 결과에만 들여쓰기를 준다 (편집 중인 줄은 원문 공백이 그대로 보인다). */
   const renderIndentedBlock = () => {
+    if (asPlainText) return renderBlock();
     const indent = indentStyle(cls.indent);
     if (!indent) return renderBlock();
     return <div style={indent}>{renderBlock()}</div>;

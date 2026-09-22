@@ -2,6 +2,7 @@ import { codeFenceLanguage, isCodeFenceLine } from '@/lib/codeFence';
 import { matchCheckbox, splitIndent } from '@/lib/lineMarks';
 import { parseContent } from '@/lib/utils';
 import type { ContentBlockInterface } from '@/lib/types';
+import { readBoxTable, type BoxTableData } from '@/lib/boxTable';
 
 /**
  * 인라인 에디터의 문서 모델.
@@ -45,7 +46,7 @@ export const fenceLanguage = codeFenceLanguage;
 /**
  * 한 줄을 분류한다. `lib/utils.ts` 의 `parseContent` 와 동일 케이스 판정을 목표로 하며,
  * 개발 모드에서는 `assertClassifierMatchesParseContent` 가 두 경로의 일치를 감시한다.
- * 코드펜스의 open/close 구분은 문서 문맥이 필요하므로 `buildLineGroups` 2차 패스가 담당한다.
+ * 코드펜스와 상자 문자 표는 문서 문맥이 필요하므로 `buildLineGroups` 2차 패스가 담당한다.
  */
 export function classifyLine(text: string): LineClassification {
   const checkbox = matchCheckbox(text);
@@ -107,6 +108,7 @@ export function isCompletePattern(cls: LineClassification): boolean {
 
 export type LineGroup =
   | { type: 'line'; key: number; line: EditorLine; cls: LineClassification }
+  | { type: 'table'; key: number; lines: EditorLine[]; table: BoxTableData }
   | {
       type: 'code';
       key: number;
@@ -117,11 +119,12 @@ export type LineGroup =
     };
 
 /**
- * 2차 패스: 코드펜스 open~close 를 하나의 멀티라인 그룹으로 묶는다.
- * 그룹 본문(body)은 Monaco 가 통째로 소유하며 라인 편집 대상이 아니다.
+ * 2차 패스: 코드펜스와 상자 문자 표를 각각 하나의 멀티라인 그룹으로 묶는다.
+ * 코드 그룹 본문(body)은 Monaco 가 통째로 소유하며 라인 편집 대상이 아니다.
  */
 export function buildLineGroups(lines: EditorLine[]): LineGroup[] {
   const groups: LineGroup[] = [];
+  const texts = lines.map((line) => line.text);
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -141,19 +144,32 @@ export function buildLineGroups(lines: EditorLine[]): LineGroup[] {
       continue;
     }
 
+    const boxTable = readBoxTable(texts, i);
+    if (boxTable) {
+      const tableLines = lines.slice(i, boxTable.endIndex);
+      groups.push({ type: 'table', key: line.id, lines: tableLines, table: boxTable.table });
+      i = boxTable.endIndex - 1;
+      continue;
+    }
+
     groups.push({ type: 'line', key: line.id, line, cls: classifyLine(line.text) });
   }
 
   return groups;
 }
 
-/** 라인 단위 편집이 허용되는 id 집합. 코드 그룹은 펜스 라인만 편집 가능하다. */
+/** 라인 단위 편집이 허용되는 id 집합. 표는 원문 전체, 코드 그룹은 펜스 라인만 포함한다. */
 export function editableLineIds(groups: LineGroup[]): Set<number> {
   const ids = new Set<number>();
 
   for (const group of groups) {
     if (group.type === 'line') {
       ids.add(group.line.id);
+      continue;
+    }
+
+    if (group.type === 'table') {
+      for (const line of group.lines) ids.add(line.id);
       continue;
     }
 
@@ -177,6 +193,14 @@ function groupsToBlocks(groups: LineGroup[]): ContentBlockInterface[] {
         type: 'code',
         content: linesToText(group.body),
         metadata: { language: group.language },
+      };
+    }
+
+    if (group.type === 'table') {
+      return {
+        type: 'table',
+        content: linesToText(group.lines),
+        metadata: { table: group.table },
       };
     }
 
@@ -232,7 +256,8 @@ export function assertClassifierMatchesParseContent(lines: EditorLine[]): void {
       a.type !== b.type ||
       a.content !== b.content ||
       Boolean(a.metadata?.checked) !== Boolean(b.metadata?.checked) ||
-      (a.metadata?.indent ?? 0) !== (b.metadata?.indent ?? 0)
+      (a.metadata?.indent ?? 0) !== (b.metadata?.indent ?? 0) ||
+      JSON.stringify(a.metadata?.table) !== JSON.stringify(b.metadata?.table)
     ) {
       console.warn('[inline-editor] classifier/parseContent 판정 불일치', {
         index: i,

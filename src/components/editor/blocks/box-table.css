@@ -1,0 +1,83 @@
+.editor-box-table {
+  min-width: 0;
+  max-width: 100%;
+  margin: 8px 0;
+}
+
+.editor-table-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin: 4px 0 6px;
+}
+
+.editor-table-controls .todo-action-button {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.editor-table-source {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875em;
+}
+
+.box-table-scroll {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 8px 0;
+  border: 1px solid #525252;
+  border-radius: 4px;
+  background: #171717;
+  color: #e5e5e5;
+  overscroll-behavior-x: contain;
+}
+
+.box-table-scroll:focus-visible {
+  outline: 2px solid #a3a3a3;
+  outline-offset: 2px;
+}
+
+.box-table-scroll .box-table {
+  width: 100%;
+  min-width: 32rem;
+  margin: 0;
+  border-collapse: collapse;
+  table-layout: auto;
+  font-size: 14px;
+  line-height: 1.6;
+  color: inherit;
+}
+
+.box-table-scroll .box-table th,
+.box-table-scroll .box-table td {
+  min-width: 5ch;
+  max-width: 64ch;
+  border: 1px solid #404040;
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.box-table-scroll .box-table th {
+  background: #262626;
+  color: #fafafa;
+  font-weight: 600;
+}
+
+.box-table-scroll .box-table tbody tr:nth-child(even) {
+  background: #1e1e1e;
+}
+
+@media (max-width: 768px) {
+  .box-table-scroll .box-table th,
+  .box-table-scroll .box-table td {
+    padding: 7px 9px;
+  }
+}

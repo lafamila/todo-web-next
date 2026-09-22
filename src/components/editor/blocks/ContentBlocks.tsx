@@ -7,6 +7,7 @@ import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { remarkBracketBold, splitBracketBold } from '@/lib/bracketBold';
 import { cn } from '@/lib/utils';
+import type { BoxTableData } from '@/lib/boxTable';
 
 /**
  * 메모 본문 블록의 단일 표현.
@@ -163,6 +164,55 @@ export function CheckboxBlock({ checked, content, onToggle }: CheckboxBlockProps
 export interface StaticCodeBlockProps {
   code: string;
   language?: string;
+}
+
+/** 저장된 상자 문자 원문은 그대로 두고 편집기/버전/게시글이 같은 표를 표시한다. */
+export function BoxTableBlock({
+  table,
+  rowLineIds,
+  onActivateCell,
+}: {
+  table: BoxTableData;
+  rowLineIds?: number[];
+  onActivateCell?: (rowIndex: number, cellIndex: number) => void;
+}) {
+  const renderRow = (row: BoxTableData['rows'][number], rowIndex: number) => (
+    <tr key={rowIndex} data-line-id={rowLineIds?.[rowIndex]}>
+      {row.cells.map((cell, cellIndex) => {
+        const Cell = rowIndex < table.headerRowCount ? 'th' : 'td';
+        return (
+          <Cell
+            key={cellIndex}
+            scope={Cell === 'th' ? 'col' : undefined}
+            data-table-cell-offset={row.cellOffsets[cellIndex]}
+            onClick={onActivateCell ? (event) => {
+              const selection = window.getSelection();
+              if (selection && !selection.isCollapsed) return;
+              event.stopPropagation();
+              onActivateCell(rowIndex, cellIndex);
+            } : undefined}
+          >
+            {cell}
+          </Cell>
+        );
+      })}
+    </tr>
+  );
+
+  return (
+    <div className="box-table-scroll" role="region" aria-label="표 내용" tabIndex={0}>
+      <table className="box-table" style={{ minWidth: `${table.columnCount * 8}rem` }}>
+        {table.headerRowCount > 0 && (
+          <thead>{table.rows.slice(0, table.headerRowCount).map(renderRow)}</thead>
+        )}
+        <tbody>
+          {table.rows.slice(table.headerRowCount).map((row, index) =>
+            renderRow(row, index + table.headerRowCount),
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 export function StaticCodeBlock({ code, language }: StaticCodeBlockProps) {

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { MonacoCodeEditor } from '@/components/editor/MonacoCodeEditor';
+import { BoxTableBlock } from '@/components/editor/blocks/ContentBlocks';
 import { assertClassifierMatchesParseContent } from './classifyLine';
 import { LineView } from './LineView';
 import { useLineStateMachine, type MentionState } from './useLineStateMachine';
@@ -157,6 +158,16 @@ export function InlineEditor({
     if (!Number.isFinite(lineId)) return null;
 
     const source = machine.lines.find((line) => line.id === lineId)?.text ?? '';
+    const cell = element.closest<HTMLElement>('[data-table-cell-offset]');
+    if (cell && lineEl.contains(cell) && node) {
+      const prefix = document.createRange();
+      prefix.selectNodeContents(cell);
+      prefix.setEnd(node, offset);
+      return {
+        lineId,
+        column: Math.min(source.length, Number(cell.dataset.tableCellOffset) + prefix.toString().length),
+      };
+    }
     const nodeText = node?.textContent ?? '';
     const base = nodeText ? source.indexOf(nodeText) : -1;
     return { lineId, column: base >= 0 ? base + offset : offset };
@@ -174,6 +185,16 @@ export function InlineEditor({
 
     const lineEls = Array.from(root.querySelectorAll<HTMLElement>('[data-line-id]'));
     if (lineEls.length === 0) return null;
+
+    // 표 테두리처럼 렌더에서 숨긴 줄도 문서 전체 선택의 양 끝에는 포함한다.
+    if (clientY < lineEls[0].getBoundingClientRect().top) {
+      const first = machine.lines[0];
+      return first ? { lineId: first.id, column: 0 } : null;
+    }
+    if (clientY >= lineEls[lineEls.length - 1].getBoundingClientRect().bottom) {
+      const last = machine.lines[machine.lines.length - 1];
+      return last ? { lineId: last.id, column: last.text.length } : null;
+    }
 
     let target = lineEls[0];
     let below = false;
@@ -238,7 +259,7 @@ export function InlineEditor({
 
     const element = e.target instanceof Element ? e.target : null;
     // 라인 textarea·코드편집기 안에서 시작한 드래그는 그쪽의 네이티브 선택이다.
-    if (element?.closest('textarea, .monaco-editor')) {
+    if (element?.closest('textarea, button, a, select, .monaco-editor')) {
       draggingRef.current = false;
       dragAnchorRef.current = null;
       return;
@@ -299,7 +320,61 @@ export function InlineEditor({
       onClick={handleSurfaceClick}
       onMouseDown={handleSurfaceMouseDown}
     >
-      {groups.map((group) => {
+      {groups.flatMap<React.ReactNode>((group) => {
+        if (group.type === 'table') {
+          if (group.lines.some((line) => line.id === activeLineId)) {
+            // root-level line keys를 유지한다. 편집 중 표가 일시적으로 불완전해져도
+            // 같은 textarea가 유지되어 포커스·IME·undo를 잃지 않는다.
+            return [
+              <div key={`table-controls-${group.key}`} className="editor-table-controls">
+                <button type="button" className="todo-action-button todo-action-button--secondary" onClick={machine.deactivate}>
+                  표로 보기
+                </button>
+              </div>,
+              ...group.lines.map((line) => (
+                <LineView
+                  key={line.id}
+                  line={line}
+                  mode={line.id === activeLineId ? activeMode : null}
+                  flash={line.id === flashLineId}
+                  readOnly={readOnly}
+                  onActivate={machine.activateLine}
+                  onReadOnlyEditIntent={handleReadOnlyLineIntent}
+                  onToggleCheckbox={machine.toggleCheckboxLine}
+                  textareaRef={machine.textareaRef}
+                  handlers={line.id === activeLineId ? machine.lineHandlers : undefined}
+                  asPlainText
+                />
+              )),
+            ];
+          }
+
+          const canRequestEdit = !readOnly || Boolean(onReadOnlyEditIntent);
+          const activateSource = (lineId: number, column: number) => {
+            pendingCheckboxRef.current = null;
+            if (readOnly) handleReadOnlyLineIntent(lineId, column);
+            else machine.activateLine(lineId, column);
+          };
+          return (
+            <div key={group.key} className="editor-box-table">
+              {canRequestEdit && (
+                <div className="editor-table-controls">
+                  <button type="button" className="todo-action-button todo-action-button--secondary" onClick={() => activateSource(group.lines[0].id, 0)}>
+                    표 원문 편집
+                  </button>
+                </div>
+              )}
+              <BoxTableBlock
+                table={group.table}
+                rowLineIds={group.table.rows.map((row) => group.lines[row.lineOffset].id)}
+                onActivateCell={canRequestEdit ? (rowIndex, cellIndex) => {
+                  const row = group.table.rows[rowIndex];
+                  activateSource(group.lines[row.lineOffset].id, row.cellOffsets[cellIndex]);
+                } : undefined}
+              />
+            </div>
+          );
+        }
         if (group.type === 'code') {
           return (
             <div key={group.key} className="my-2">
