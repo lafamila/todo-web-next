@@ -76,7 +76,7 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   `parseContent`와 `buildLineGroups`가 같은 파서를, 메모·과거 버전·게시글이 `BoxTableBlock`을 공유한다.
   정상 테두리 안의 잘린 장식선은 화면에서만 생략하며, 데이터 열 수가 맞지 않거나 닫는 테두리가 없으면
   원문으로 표시한다. 셀은 HTML/Markdown을 실행하지 않는 텍스트이고 긴 표는 자기 영역 안에서 가로 스크롤한다.
-  셀 클릭 또는 '표 원문 편집'은 기존 lease 경로를 거쳐 해당 원문 줄로 진입한다. 원문 줄은 root-level
+  별도 편집 버튼 없이 셀 클릭으로 기존 lease 경로를 거쳐 해당 원문 줄로 진입한다. 원문 줄은 root-level
   line key를 유지해 편집 중 표 구조가 깨져도 textarea/native undo가 보존된다. 선택 위치는 셀별 UTF-16
   원문 offset으로 복원한다. 저장·버전·동기화 문자열은 변환하지 않고 과거 버전/게시글에는 편집 진입이 없다.
 - **라인 상태**: `rendered` → (더블클릭) → `editing` → (완결 패턴 + 2초 무변경 + 조합 중 아님) →

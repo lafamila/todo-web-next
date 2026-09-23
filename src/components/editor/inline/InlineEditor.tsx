@@ -357,13 +357,6 @@ export function InlineEditor({
           };
           return (
             <div key={group.key} className="editor-box-table">
-              {canRequestEdit && (
-                <div className="editor-table-controls">
-                  <button type="button" className="todo-action-button todo-action-button--secondary" onClick={() => activateSource(group.lines[0].id, 0)}>
-                    표 원문 편집
-                  </button>
-                </div>
-              )}
               <BoxTableBlock
                 table={group.table}
                 rowLineIds={group.table.rows.map((row) => group.lines[row.lineOffset].id)}
