@@ -44,6 +44,26 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 
 ## Memo Editor (인라인 라이브 렌더링)
 
+### 프로젝트 계층과 공유 백로그
+
+- 프로젝트는 root/직접 sub-project 두 단계다. `isGroup` root 클릭은 아코디언만 토글하고 문서 화면을 선택하지 않는다.
+  첫 자식 생성 시 기존 메모(백로그 포함)와 멤버 역할이 첫 자식으로 보존 이동/복사된다. 이후 자식 멤버는 수동 초대다.
+- `ProjectTree`는 pointer long press(550ms), 우클릭, 키보드 메뉴와 ⋯ 버튼을 제공한다. 실제 이동/scroll/pointer cancel은
+  long press를 취소한다. 자식은 24px 들여쓰기하고 아이콘-only 폭에서는 숨긴다.
+- root 멤버 관리는 선택된 leaf와 독립된 메뉴 대상이다. 현재 자식 전체/명시 선택 범위를 서버로 보내며 미래 자식에 상속하지 않는다.
+  탐색용 부모(`navigationOnly`)가 표시되어도 본문/멤버 권한을 가진 것으로 간주하지 않는다.
+- 프로젝트 삭제는 서버의 `canDelete`와 정확한 이름 확인을 사용한다. 자식 사이 메모 이동은 같은 root 생성자만 가능하며
+  기존 메모 ID·버전·본문을 재생성하지 않는다. 선택 메모의 위치만 바뀌면 미저장 버퍼는 유지한다.
+- `BacklogPanel`은 선택된 leaf 프로젝트의 singleton 백로그를 불러오며 일반 목록에 섞지 않는다. `MemoSection`의 문서 override로
+  동일한 InlineEditor/Monaco/Raw/IME/CAS/lease/기기 초안 기능을 재사용하고 기존 메모와 별도 버퍼·소켓을 가진다.
+- Cmd/Ctrl+Shift+S는 백로그 열기, Cmd/Ctrl+S는 마지막으로 포커스한 편집기 저장이다. 백로그 열기는 focus를 이동하고
+  닫기는 기존 focus를 복원한다. 체크박스 즉시 저장은 패널을 닫지 않고 명시 저장의 최신 snapshot 성공만 닫는다.
+  저장 실패·대기·충돌은 유지하며 수동 닫기에도 debounce 전 초안을 flush한다.
+- 데스크톱 백로그는 절반 폭으로 시작하는 우측 overlay, pointer/keyboard resize, edge-hover 손잡이를 제공한다.
+  모바일은 전체 폭과 항상 접근 가능한 손잡이. z-index 1250으로 fullscreen(1200) 위, Modal(1300) 아래다.
+- Cmd/Ctrl+Enter는 전체화면 진입/해제 토글이며 IME/repeat를 무시한다. API 추가 계약은 root
+  `.idea/completed/TODO_SUBPROJECT_BACKLOG_PLAN.md`, 안전한 브라우저 검증은 `../.scripts/tests/todo-workspace-qa.md` 참조.
+
 메모 본문 편집기는 **편집창/미리보기 분리가 없는 단일 서피스**다. 활성 라인 1개만 `<textarea>` 로
 살아 있고 나머지 라인은 렌더된 블록으로 남는다. 구현은 `src/components/editor/inline/` 에 있고
 `MemoSection` 이 이를 호스팅한다.

@@ -5,15 +5,24 @@ import { useApp } from "@/contexts/AppContext";
 import { useAuth } from '@/contexts/AuthContext';
 import { useSync } from '@/contexts/SyncContext';
 import { SORT_OPTIONS } from "@/lib/constants";
-import { MemoInterface, ProjectRole, SortOption, UserInterface } from "@/lib/types";
+import { MemoInterface, ProjectInterface, ProjectRole, SortOption, UserInterface } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import * as api from "@/lib/api";
 import { isTypingContext, MemoSection, SHOW_MEMO_LIST_EVENT } from "./MemoSection";
 import { SyncStatusIndicator } from './SyncStatusIndicator';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { isMemberManagementShortcut } from '@/lib/projectSearchPolicy';
+import {
+  isDetailFullscreenShortcut,
+  isMemberManagementShortcut,
+} from '@/lib/projectSearchPolicy';
 import { ProjectMemoSearch } from './ProjectMemoSearch';
+import {
+  OPEN_PROJECT_MEMBERS_EVENT,
+  type OpenProjectMembersDetail,
+} from './projectEvents';
+import { buildMemberInviteScope, siblingSubprojects } from '@/lib/projectHierarchy';
+import { ProjectMemberModal } from './ProjectMemberModal';
 
 const DEFAULT_PANE_WIDTH = 400;
 // Tasks (n) 헤더 + 멤버초대 버튼 라인이 줄바꿈되지 않는 최소폭
@@ -23,20 +32,20 @@ const PANE_WIDTH_STORAGE_KEY = "todo:tasksPaneWidth";
 
 export default function MemoListSection() {
   const {
-    state: { selectedProject, memos, selectedMemo, sortOption, selectedMemoIds, members },
+    state: { projects, selectedProject, memos, selectedMemo, sortOption, selectedMemoIds, members },
     selectMemo,
     createMemo,
     setSortOption,
     toggleSelectMemo,
     clearSelectedMemos,
     deleteMemos,
+    moveMemo,
     loadMembers,
     inviteMember,
     removeMember,
   } = useApp();
-  const { user, features } = useAuth();
+  const { features } = useAuth();
   const { findIssue } = useSync();
-  const isAdmin = user?.isAdmin ?? false;
   // 모바일은 목록/메모를 한 화면에 나란히 둘 수 없어 뷰를 전환한다 (선택 상태는 유지).
   const isMobile = useIsMobile();
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
@@ -55,11 +64,18 @@ export default function MemoListSection() {
   const suggestionsRef = useRef<HTMLDivElement>(null);
   const newTaskInputRef = useRef<HTMLInputElement>(null);
   const [showMemberModal, setShowMemberModal] = useState(false);
+  const [memberProject, setMemberProject] = useState<ProjectInterface | null>(null);
   const [searchUserQuery, setSearchUserQuery] = useState('');
   const [searchResults, setSearchResults] = useState<UserInterface[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
   const [inviteRole, setInviteRole] = useState<ProjectRole>('editor');
+  const [inviteAllChildren, setInviteAllChildren] = useState(true);
+  const [inviteChildIds, setInviteChildIds] = useState<string[]>([]);
+  const [movingMemo, setMovingMemo] = useState<MemoInterface | null>(null);
+  const [moveTargetId, setMoveTargetId] = useState('');
+  const [moveError, setMoveError] = useState('');
+  const [isMoving, setIsMoving] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
 
@@ -120,14 +136,28 @@ export default function MemoListSection() {
     setMobileView('list');
   }, [selectedProject?.id]);
 
-  const handleOpenMemberModal = useCallback(async () => {
-    if (!selectedProject) return;
+  const handleOpenMemberModal = useCallback(async (project = selectedProject) => {
+    if (!project || !project.canManage) return;
+    const children = projects.filter((candidate) => candidate.parentProjectId === project.id);
+    setMemberProject(project);
     setShowMemberModal(true);
     setSearchUserQuery('');
     setSearchResults([]);
     setInviteRole('editor');
-    await loadMembers(selectedProject.id);
-  }, [selectedProject, loadMembers]);
+    setInviteAllChildren(true);
+    setInviteChildIds(children.map((child) => child.id));
+    await loadMembers(project.id);
+  }, [loadMembers, projects, selectedProject]);
+
+  useEffect(() => {
+    const openForProject = (event: Event) => {
+      const projectId = (event as CustomEvent<OpenProjectMembersDetail>).detail?.projectId;
+      const project = projects.find((candidate) => candidate.id === projectId);
+      if (project) void handleOpenMemberModal(project);
+    };
+    window.addEventListener(OPEN_PROJECT_MEMBERS_EVENT, openForProject);
+    return () => window.removeEventListener(OPEN_PROJECT_MEMBERS_EVENT, openForProject);
+  }, [handleOpenMemberModal, projects]);
 
   // Keyboard shortcuts: Cmd+Shift+X (focus memo input), Cmd+Shift+O (open member modal)
   useEffect(() => {
@@ -141,7 +171,7 @@ export default function MemoListSection() {
       }
 
       if (isMemberManagementShortcut(e)) {
-        if (isAdmin && features.memberInvite) {
+        if (selectedProject.canManage && features.memberInvite) {
           e.preventDefault();
           e.stopPropagation();
           handleOpenMemberModal();
@@ -149,11 +179,11 @@ export default function MemoListSection() {
       }
 
       // Cmd/Ctrl+Enter: 선택된 메모의 에디터를 전체화면으로
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      if (isDetailFullscreenShortcut(e)) {
         if (selectedMemo && selectedMemoIds.length === 0) {
           e.preventDefault();
           e.stopPropagation();
-          setDetailFullscreen(true);
+          setDetailFullscreen((fullscreen) => !fullscreen);
         }
       }
 
@@ -164,7 +194,7 @@ export default function MemoListSection() {
     };
     window.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
-  }, [selectedProject, isAdmin, features.memberInvite, handleOpenMemberModal, selectedMemo, selectedMemoIds]);
+  }, [selectedProject, features.memberInvite, handleOpenMemberModal, selectedMemo, selectedMemoIds]);
 
   const handleSearchUsers = useCallback((query: string) => {
     setSearchUserQuery(query);
@@ -187,10 +217,23 @@ export default function MemoListSection() {
   }, []);
 
   const handleInvite = useCallback(async (targetUser: UserInterface) => {
-    if (!selectedProject) return;
+    if (!memberProject) return;
     setIsInviting(true);
     try {
-      await inviteMember(selectedProject.id, targetUser, inviteRole);
+      const children = projects.filter(
+        (candidate) => candidate.parentProjectId === memberProject.id,
+      );
+      await inviteMember(
+        memberProject.id,
+        targetUser,
+        inviteRole,
+        buildMemberInviteScope(
+          memberProject,
+          children,
+          inviteAllChildren,
+          inviteChildIds,
+        ),
+      );
       setSearchUserQuery('');
       setSearchResults([]);
     } catch {
@@ -198,12 +241,42 @@ export default function MemoListSection() {
     } finally {
       setIsInviting(false);
     }
-  }, [selectedProject, inviteMember, inviteRole]);
+  }, [inviteAllChildren, inviteChildIds, inviteMember, inviteRole, memberProject, projects]);
 
   const handleRemoveMember = useCallback(async (userId: string) => {
-    if (!selectedProject) return;
-    await removeMember(selectedProject.id, userId);
-  }, [selectedProject, removeMember]);
+    if (!memberProject) return;
+    await removeMember(memberProject.id, userId);
+  }, [memberProject, removeMember]);
+
+  const moveTargets = useMemo(
+    () => selectedProject ? siblingSubprojects(projects, selectedProject) : [],
+    [projects, selectedProject],
+  );
+  const canMoveMemos = Boolean(
+    selectedProject?.parentProjectId &&
+    projects.find((project) => project.id === selectedProject.parentProjectId)?.canDelete,
+  );
+
+  const openMoveMemo = (memo: MemoInterface) => {
+    if (memo.kind === 'backlog' || moveTargets.length === 0) return;
+    setMovingMemo(memo);
+    setMoveTargetId(moveTargets[0].id);
+    setMoveError('');
+  };
+
+  const handleMoveMemo = async () => {
+    if (!movingMemo || !moveTargetId) return;
+    setIsMoving(true);
+    setMoveError('');
+    try {
+      await moveMemo(movingMemo.id, moveTargetId);
+      setMovingMemo(null);
+    } catch (error) {
+      setMoveError(error instanceof Error ? error.message : '메모 이동에 실패했습니다.');
+    } finally {
+      setIsMoving(false);
+    }
+  };
 
   // Sort memos — 기본 날짜(생성) 내림차순, 방향 토글 지원
   const sortedMemos = useMemo(() => {
@@ -377,9 +450,35 @@ export default function MemoListSection() {
     }
   };
 
+  const memberModal = (
+    <ProjectMemberModal
+      open={showMemberModal}
+      project={memberProject}
+      projects={projects}
+      members={members}
+      searchQuery={searchUserQuery}
+      searchResults={searchResults}
+      searching={isSearching}
+      inviting={isInviting}
+      inviteRole={inviteRole}
+      inviteAllChildren={inviteAllChildren}
+      inviteChildIds={inviteChildIds}
+      onClose={() => {
+        setShowMemberModal(false);
+        setMemberProject(null);
+      }}
+      onSearch={handleSearchUsers}
+      onInvite={(target) => void handleInvite(target)}
+      onRemove={(userId) => void handleRemoveMember(userId)}
+      onRoleChange={setInviteRole}
+      onAllChildrenChange={setInviteAllChildren}
+      onChildIdsChange={setInviteChildIds}
+    />
+  );
+
   const isMultiSelectMode = selectedMemoIds.length > 0;
 
-  if (!selectedProject) return <div></div>;
+  if (!selectedProject) return <>{memberModal}</>;
   return (
     <>
     <div className="content">
@@ -425,9 +524,9 @@ export default function MemoListSection() {
             </div>
             <div className="tasks-heading-actions">
               <div id="screen-share-buttons" />
-              {isAdmin && features.memberInvite && (
+              {selectedProject.canManage && features.memberInvite && (
                 <button
-                  onClick={handleOpenMemberModal}
+                  onClick={() => void handleOpenMemberModal()}
                   className="todo-action-button todo-action-button--icon"
                   aria-label="멤버 관리"
                   title="멤버 관리 (⌘⇧O)"
@@ -522,6 +621,19 @@ export default function MemoListSection() {
                     )}
                     {memo.title}
                   </h3>
+                  {canMoveMemos && moveTargets.length > 0 && memo.kind !== 'backlog' && (
+                    <button
+                      type="button"
+                      className="todo-action-button todo-action-button--secondary"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openMoveMemo(memo);
+                      }}
+                      aria-label={`${memo.title} 이동`}
+                    >
+                      이동
+                    </button>
+                  )}
                   <div className="shrink-0 whitespace-nowrap text-right flex flex-col gap-1 text-xs text-gray-500 mr-2 ml-3">
                     <span className="task-date-created">생성: {formatDate(memo.createdAt)}</span>
                     <span>편집: {formatDate(memo.updatedAt)}</span>
@@ -543,7 +655,7 @@ export default function MemoListSection() {
             <div className="h-full flex flex-col items-center justify-center gap-4">
               <p className="text-lg text-gray-300">{selectedMemoIds.length}개의 메모가 선택됨</p>
               <div className="flex gap-3">
-                {isAdmin && (
+                {selectedProject.canManage && (
                   <button
                     onClick={handleBulkDelete}
                     disabled={isDeleting}
@@ -568,108 +680,41 @@ export default function MemoListSection() {
       </div>
     </div>
 
-      {/* Member Management Modal */}
-      <Modal
-        isOpen={showMemberModal}
-        onClose={() => setShowMemberModal(false)}
-        title="멤버 관리"
-        size="md"
-      >
-        <div className="flex flex-col gap-4">
-          {/* User Search */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">사용자 검색</label>
-            <div className="mb-2 flex rounded border border-gray-200 overflow-hidden w-fit">
-              {(['editor', 'viewer'] as ProjectRole[]).map((role) => (
-                <button
-                  key={role}
-                  type="button"
-                  onClick={() => setInviteRole(role)}
-                  className={`px-3 py-1 text-xs ${
-                    inviteRole === role
-                      ? 'bg-gray-900 text-white'
-                      : 'bg-white text-gray-600 hover:bg-gray-50'
-                  }`}
-                >
-                  {role}
-                </button>
-              ))}
-            </div>
-            <Input
-              value={searchUserQuery}
-              onChange={handleSearchUsers}
-              placeholder="이름 또는 아이디로 검색..."
-            />
-            {isSearching && (
-              <p className="text-sm text-gray-500 mt-1">검색 중...</p>
-            )}
-            {searchResults.length > 0 && (
-              <div className="mt-2 border border-gray-200 rounded max-h-40 overflow-y-auto">
-                {searchResults.map((u) => {
-                  const alreadyMember = members.some((m) => m.userId === u.id);
-                  const isInviteBlocked = u.canInviteToTodo === false;
-                  return (
-                    <div
-                      key={u.id}
-                      className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
-                    >
-                      <div>
-                        <span className="text-sm font-medium text-gray-900">{u.displayName}</span>
-                        <span className="text-xs text-gray-500 ml-2">@{u.username}</span>
-                      </div>
-                      {alreadyMember ? (
-                        <span className="text-xs text-gray-400">이미 멤버</span>
-                      ) : isInviteBlocked ? (
-                        <span className="text-xs text-gray-400">사용 신청 필요</span>
-                      ) : (
-                        <Button
-                          size="sm"
-                          onClick={() => handleInvite(u)}
-                          disabled={isInviting || isInviteBlocked}
-                        >
-                          초대
-                        </Button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+      {memberModal}
 
-          {/* Current Members */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              현재 멤버 ({members.length})
-            </label>
-            {members.length === 0 ? (
-              <p className="text-sm text-gray-500">멤버가 없습니다.</p>
-            ) : (
-              <div className="border border-gray-200 rounded max-h-48 overflow-y-auto">
-                {members.map((m) => (
-                  <div
-                    key={m.userId}
-                    className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
-                  >
-                    <div>
-                      <span className="text-sm font-medium text-gray-900">{m.displayName}</span>
-                      <span className="text-xs text-gray-500 ml-2">@{m.username}</span>
-                      <span className="text-xs text-gray-400 ml-2">({m.role})</span>
-                    </div>
-                    {isAdmin && m.role !== 'owner' && (
-                      <button
-                        onClick={() => handleRemoveMember(m.userId)}
-                        className="text-xs text-red-500 hover:text-red-700 transition-colors"
-                      >
-                        제거
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+      <Modal
+        isOpen={Boolean(movingMemo)}
+        onClose={() => !isMoving && setMovingMemo(null)}
+        title="메모 이동"
+        size="sm"
+      >
+        {movingMemo && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-700">
+              <strong>{movingMemo.title}</strong>을 같은 프로젝트의 다른 서브프로젝트로 이동합니다.
+              메모 ID와 버전 기록은 유지됩니다.
+            </p>
+            <label className="block text-sm font-medium text-gray-700">이동 대상</label>
+            <select
+              className="w-full border border-gray-300 rounded px-3 py-2"
+              value={moveTargetId}
+              onChange={(event) => setMoveTargetId(event.target.value)}
+            >
+              {moveTargets.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+            {moveError && <p className="text-sm text-red-600">{moveError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button onClick={handleMoveMemo} disabled={isMoving || !moveTargetId}>
+                {isMoving ? '이동 중...' : '이동'}
+              </Button>
+              <Button variant="secondary" onClick={() => setMovingMemo(null)} disabled={isMoving}>
+                취소
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </Modal>
     </>
   );

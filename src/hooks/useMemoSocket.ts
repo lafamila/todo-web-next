@@ -19,6 +19,7 @@ import {
   shouldRenewLease,
   shouldAcceptLockGrant,
   canSubmitMemoSave,
+  isCurrentMemoAccessDenial,
 } from '@/lib/memoLeasePolicy';
 
 interface MemoLockInfo {
@@ -32,6 +33,8 @@ interface UseMemoSocketOptions {
   onLocked: (info: MemoLockInfo) => void;
   onUnlocked: () => void;
   onLockDenied: (displayName: string) => void;
+  /** 읽기 권한 자체가 회수됨. viewer의 쓰기 lease 거부와 구분한다. */
+  onAccessDenied?: (memoId: string) => void;
   onSyncApplied?: () => void;
 }
 
@@ -52,6 +55,7 @@ export function useMemoSocket({
   onLocked,
   onUnlocked,
   onLockDenied,
+  onAccessDenied,
   onSyncApplied,
 }: UseMemoSocketOptions): UseMemoSocketReturn {
   const socketRef = useRef<Socket | null>(null);
@@ -80,6 +84,7 @@ export function useMemoSocket({
   const onLockedRef = useRef(onLocked);
   const onUnlockedRef = useRef(onUnlocked);
   const onLockDeniedRef = useRef(onLockDenied);
+  const onAccessDeniedRef = useRef(onAccessDenied);
   const onSyncAppliedRef = useRef(onSyncApplied);
 
   useEffect(() => {
@@ -94,6 +99,9 @@ export function useMemoSocket({
   useEffect(() => {
     onLockDeniedRef.current = onLockDenied;
   }, [onLockDenied]);
+  useEffect(() => {
+    onAccessDeniedRef.current = onAccessDenied;
+  }, [onAccessDenied]);
   useEffect(() => {
     onSyncAppliedRef.current = onSyncApplied;
   }, [onSyncApplied]);
@@ -455,7 +463,7 @@ export function useMemoSocket({
     );
 
     socket.on('memoAccessDenied', (data: { memoId: string }) => {
-      if (data.memoId !== currentMemoIdRef.current) return;
+      if (!isCurrentMemoAccessDenial(currentMemoIdRef.current, data.memoId)) return;
       stopRenewal();
       stopLockResponseWatchdog();
       stopJoinResponseWatchdog();
@@ -475,7 +483,7 @@ export function useMemoSocket({
         userId: 'access-denied',
       });
       setLeaseState('denied');
-      onLockDeniedRef.current('접근 권한 없음');
+      onAccessDeniedRef.current?.(data.memoId);
     });
 
     socket.on(

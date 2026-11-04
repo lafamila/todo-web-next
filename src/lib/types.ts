@@ -10,6 +10,14 @@ export interface ProjectInterface {
   createdAt: Date | string;
   updatedAt: Date | string;
   updatedAtUtc?: string | null;
+  parentProjectId: string | null;
+  isGroup: boolean;
+  role: ProjectRole | null;
+  canManage: boolean;
+  canDelete: boolean;
+  canWrite: boolean;
+  /** 자식 탐색을 위해 노출될 뿐 메모/백로그 접근 권한은 없는 상위 프로젝트. */
+  navigationOnly: boolean;
 }
 
 export interface CreateProjectRequestInterface {
@@ -17,6 +25,7 @@ export interface CreateProjectRequestInterface {
   icon: string;
   isSecret: boolean;
   password?: string;
+  parentProjectId?: string;
 }
 
 export interface MemoInterface {
@@ -31,6 +40,14 @@ export interface MemoInterface {
   updatedAtUtc?: string | null;
   /** CAS 저장용 서버 revision. 구버전 API 호환을 위해 optional이다. */
   revision?: string;
+  kind?: "memo" | "backlog";
+  /** 구조 변경 재조회에서 UI buffer를 덮지 않고 서버 본문/revision 쌍을 전달하는 client-only 값. */
+  serverContent?: string;
+}
+
+export interface InviteMemberScopeInterface {
+  includeAllSubprojects?: boolean;
+  childProjectIds?: string[];
 }
 
 export interface SearchTextSegmentInterface {
@@ -258,7 +275,8 @@ export interface TodoAppContextTypeInterface {
   refreshProjects: () => Promise<void>;
   refreshCurrentProject: () => Promise<void>;
   selectProject: (project: ProjectInterface) => Promise<void>;
-  createProject: (data: CreateProjectRequestInterface) => Promise<void>;
+  createProject: (data: CreateProjectRequestInterface) => Promise<ProjectInterface>;
+  deleteProject: (projectId: string, confirmationName: string) => Promise<void>;
   verifyProjectPassword: (projectId: string, password: string) => Promise<boolean>;
   selectMemo: (memo: MemoInterface) => Promise<boolean>;
   createMemo: (title: string) => Promise<void>;
@@ -267,8 +285,15 @@ export interface TodoAppContextTypeInterface {
   toggleSelectMemo: (memoId: string) => void;
   clearSelectedMemos: () => void;
   deleteMemos: (memoIds: string[]) => Promise<void>;
+  moveMemo: (memoId: string, targetProjectId: string) => Promise<MemoInterface>;
+  revokeMemoAccess: (memoId: string) => void;
   loadMembers: (projectId: string) => Promise<void>;
-  inviteMember: (projectId: string, user: UserInterface, role: ProjectRole) => Promise<void>;
+  inviteMember: (
+    projectId: string,
+    user: UserInterface,
+    role: ProjectRole,
+    scope?: InviteMemberScopeInterface,
+  ) => Promise<void>;
   removeMember: (projectId: string, userId: string) => Promise<void>;
 }
 

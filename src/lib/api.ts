@@ -21,6 +21,7 @@ import type {
   ProjectMergeResultInterface,
   ProjectMemberInterface,
   ProjectRole,
+  InviteMemberScopeInterface,
   SyncIssuesResponseInterface,
   SyncStatusInterface,
   UserInterface,
@@ -198,6 +199,7 @@ export async function inviteMember(
   userId: string,
   role: ProjectRole = "viewer",
   user?: UserInterface,
+  scope?: InviteMemberScopeInterface,
 ): Promise<ProjectMemberInterface> {
   return fetchJson<ProjectMemberInterface>(
     `/projects/${projectId}/members`,
@@ -209,6 +211,7 @@ export async function inviteMember(
         username: user?.username ?? user?.loginId,
         displayName: user?.displayName ?? user?.name,
         email: user?.email,
+        ...scope,
       }),
     },
     "멤버 초대에 실패했습니다.",
@@ -249,6 +252,20 @@ export async function createProject(
   );
 }
 
+export async function deleteProject(
+  projectId: string,
+  confirmationName: string,
+): Promise<void> {
+  await fetchVoid(
+    `/projects/${projectId}`,
+    {
+      method: "DELETE",
+      body: JSON.stringify({ confirmationName }),
+    },
+    "프로젝트를 삭제하지 못했습니다.",
+  );
+}
+
 export async function verifyPassword(
   projectId: string,
   password: string,
@@ -274,6 +291,25 @@ export async function getProjectMemos(projectId: string): Promise<MemoInterface[
     `/projects/${projectId}/memos`,
     undefined,
     "Failed to fetch memos",
+  );
+}
+
+export async function getProjectBacklog(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<MemoInterface | null> {
+  return fetchJson<MemoInterface | null>(
+    `/projects/${projectId}/backlog`,
+    { signal },
+    "백로그를 불러오지 못했습니다.",
+  );
+}
+
+export async function ensureProjectBacklog(projectId: string): Promise<MemoInterface> {
+  return fetchJson<MemoInterface>(
+    `/projects/${projectId}/backlog`,
+    { method: "POST" },
+    "백로그를 만들지 못했습니다.",
   );
 }
 
@@ -350,6 +386,20 @@ export async function updateMemo(
       }),
     },
     "Failed to update memo",
+  );
+}
+
+export async function moveMemo(
+  memoId: string,
+  targetProjectId: string,
+): Promise<MemoInterface> {
+  return fetchJson<MemoInterface>(
+    `/memos/${memoId}/move`,
+    {
+      method: "POST",
+      body: JSON.stringify({ targetProjectId }),
+    },
+    "메모를 이동하지 못했습니다.",
   );
 }
 

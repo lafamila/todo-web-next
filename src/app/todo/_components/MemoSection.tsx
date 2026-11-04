@@ -13,7 +13,9 @@ import {
 } from '@/components/editor/inline/InlineEditor';
 import type {
   ArticleInterface,
+  MemoInterface,
   MemoVersionInterface,
+  ProjectInterface,
   SyncIssueInterface,
 } from '@/lib/types';
 import {
@@ -25,12 +27,17 @@ import {
   getMemo,
   getAllProjects,
   mergeMemo,
+  updateMemo as updateMemoById,
   waitForMemoMergeApplied,
 } from '@/lib/api';
 import { useMemoSocket } from '@/hooks/useMemoSocket';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { shouldResetMemoEditorState } from '@/lib/memoVersionPolicy';
+import {
+  shouldAdoptMemoRevision,
+  shouldResetMemoEditorState,
+} from '@/lib/memoVersionPolicy';
 import { classifyLockDenial } from '@/lib/memoLeasePolicy';
+import { isLatestSavedSnapshot, isMemoSaveShortcut } from '@/lib/backlogPolicy';
 import { MemoResolutionPanel } from './MemoResolutionPanel';
 import { MemoVersionBar } from './MemoVersionBar';
 import {
@@ -172,6 +179,7 @@ const editorFeatureHelp = [
 
 const shortcutHelp = [
   { keys: 'Ctrl/⌘ + S', description: '현재 메모를 저장합니다.' },
+  { keys: 'Ctrl/⌘ + Shift + S', description: '선택한 프로젝트의 백로그를 우측 패널로 엽니다.' },
   { keys: 'Ctrl/⌘ + E', description: 'Raw 모드를 켜고 끕니다. 본문 전체를 하나의 텍스트로 선택·복사할 때 씁니다.' },
   {
     keys: 'Ctrl/⌘ + A',
@@ -194,19 +202,59 @@ const shortcutHelp = [
   { keys: 'Esc', description: '편집 중인 줄을 확정하거나, 검색 추천 목록·모달을 닫습니다.' },
 ];
 
-export function MemoSection() {
+export const BACKLOG_VISIBILITY_EVENT = 'todo:backlogVisibility';
+export const EDITOR_ACTIVE_SURFACE_EVENT = 'todo:editorActiveSurface';
+
+interface MemoSectionProps {
+  memo?: MemoInterface | null;
+  project?: ProjectInterface | null;
+  variant?: 'main' | 'backlog';
+  keyboardActive?: boolean;
+  onLatestSaveSuccess?: () => void;
+  onClose?: () => void;
+}
+
+export function MemoSection({
+  memo: memoOverride,
+  project: projectOverride,
+  variant = 'main',
+  keyboardActive = true,
+  onLatestSaveSuccess,
+  onClose,
+}: MemoSectionProps = {}) {
   const isMobile = useIsMobile();
   // 데스크톱: 상태·액션을 헤더 슬롯으로 포털해 에디터가 패널 전체 높이를 쓴다.
   // 모바일: 헤더가 좁으므로 패널 상단의 앱바에 그대로 둔다(뒤로·저장이 여기 있어야 손이 닿는다).
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
   const {
-    state: { selectedMemo, selectedProject, projects, memos },
-    updateMemo,
+    state: {
+      selectedMemo: appSelectedMemo,
+      selectedProject: appSelectedProject,
+      projects,
+      memos,
+    },
+    updateMemo: updateSelectedMemo,
     selectProject,
     selectMemo,
     refreshProjects,
     refreshCurrentProject,
+    revokeMemoAccess,
   } = useApp();
+  const selectedMemo = memoOverride === undefined ? appSelectedMemo : memoOverride;
+  const selectedProject = projectOverride === undefined ? appSelectedProject : projectOverride;
+  const updateMemo = useCallback(
+    (content: string, baseRevision?: string) =>
+      memoOverride === undefined
+        ? updateSelectedMemo(content, baseRevision)
+        : selectedMemo
+          ? updateMemoById(selectedMemo.id, content, baseRevision)
+          : Promise.reject(new Error('No memo is selected')),
+    [memoOverride, selectedMemo, updateSelectedMemo],
+  );
+  const isBacklog = variant === 'backlog';
+  const surfaceName = isBacklog ? 'backlog' : 'main';
+  const [activeSurface, setActiveSurface] = useState<'main' | 'backlog'>('main');
+  const surfaceRef = useRef<HTMLElement>(null);
   const { user, features } = useAuth();
   const {
     issues,
@@ -219,8 +267,32 @@ export function MemoSection() {
 
   // 헤더 슬롯은 같은 트리(MemoListSection)가 렌더하므로 마운트 후에 존재한다.
   useEffect(() => {
+    if (isBacklog) return;
     setHeaderSlot(document.getElementById(HEADER_SLOT_ID));
+  }, [isBacklog]);
+
+  useEffect(() => {
+    const handleActiveSurface = (event: Event) => {
+      const surface = (event as CustomEvent<{ surface?: 'main' | 'backlog' }>).detail?.surface;
+      if (surface) setActiveSurface(surface);
+    };
+    window.addEventListener(EDITOR_ACTIVE_SURFACE_EVENT, handleActiveSurface);
+    return () => window.removeEventListener(EDITOR_ACTIVE_SURFACE_EVENT, handleActiveSurface);
   }, []);
+
+  const activateSurface = useCallback(() => {
+    window.dispatchEvent(new CustomEvent(EDITOR_ACTIVE_SURFACE_EVENT, {
+      detail: { surface: surfaceName },
+    }));
+  }, [surfaceName]);
+
+  useEffect(() => {
+    if (!isBacklog) return;
+    activateSurface();
+    requestAnimationFrame(() => surfaceRef.current?.focus());
+  }, [activateSurface, isBacklog]);
+
+  const handlesGlobalKeyboard = keyboardActive && activeSurface === surfaceName;
 
   // Raw 모드 = 문서 전체를 하나의 textarea 로 다루는 escape hatch (멀티라인 선택/복사용).
   const [rawMode, setRawMode] = useState(false);
@@ -231,6 +303,7 @@ export function MemoSection() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const isEditingRef = useRef(false);
   const [remoteContent, setRemoteContent] = useState<string | null>(null);
+  const [accessRevoked, setAccessRevoked] = useState(false);
   const [showRemoteCompare, setShowRemoteCompare] = useState(false);
   const [viewedVersion, setViewedVersion] = useState<MemoVersionInterface | null>(null);
   const isViewingVersion = viewedVersion !== null;
@@ -258,6 +331,7 @@ export function MemoSection() {
   const localRevisionRef = useRef(0);
   const draftCreatedAtRef = useRef(0);
   const draftFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushDraftOnUnmountRef = useRef<() => void>(() => {});
   const pendingSaveRef = useRef<PendingMemoSave | null>(null);
   const saveInFlightRef = useRef(false);
   const saveRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -415,8 +489,29 @@ export function MemoSection() {
       setRawMode(false);
       rawModeRef.current = false;
     },
+    onAccessDenied: (revokedMemoId: string) => {
+      // Snapshot before clearing the visible buffer. The ref evaluates the current
+      // content synchronously, so unmounting a revoked backlog cannot erase its draft.
+      flushDraftOnUnmountRef.current();
+      // A save already in flight belongs to this editor instance, not to a
+      // later reopening of the backlog with the same memo ID.
+      editorEpochRef.current += 1;
+      initializedMemoIdRef.current = null;
+      // Hide through accessRevoked, but keep the snapshot until unmount: the
+      // cleanup flush must not overwrite the saved draft with an empty body.
+      setRemoteContent(null);
+      setShowRemoteCompare(false);
+      setAccessRevoked(true);
+      revokeMemoAccess(revokedMemoId);
+      if (isBacklog) onClose?.();
+      void Promise.allSettled([
+        refreshProjects(),
+        refreshCurrentProject(),
+        refreshSync(),
+      ]);
+    },
     onSyncApplied: () => {
-      void Promise.all([
+      void Promise.allSettled([
         refreshProjects(),
         refreshCurrentProject(),
         refreshSync(),
@@ -489,6 +584,12 @@ export function MemoSection() {
     },
     [draftConflictActive, draftError, isViewingVersion, ownDraftKey, selectedMemo, user],
   );
+
+  useEffect(() => {
+    flushDraftOnUnmountRef.current = () => {
+      void flushDraft(contentRef.current, localRevisionRef.current);
+    };
+  }, [flushDraft]);
 
   const scheduleDraftFlush = useCallback(() => {
     if (draftFlushTimerRef.current) clearTimeout(draftFlushTimerRef.current);
@@ -642,6 +743,11 @@ export function MemoSection() {
 
   useEffect(() => {
     return () => {
+      // Closing the backlog can happen before the 350ms debounce. Persist the latest
+      // buffer first so a manual close never discards the only copy of recent input.
+      flushDraftOnUnmountRef.current();
+      editorEpochRef.current += 1;
+      initializedMemoIdRef.current = null;
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
@@ -649,6 +755,7 @@ export function MemoSection() {
       if (saveRetryTimerRef.current) clearTimeout(saveRetryTimerRef.current);
       remoteRefreshAbortRef.current?.abort();
       pendingSaveRef.current?.resolve(false);
+      pendingSaveRef.current = null;
     };
   }, []);
 
@@ -790,6 +897,7 @@ export function MemoSection() {
       setLockMessage(null);
       setSaveMessage(null);
       setRemoteContent(null);
+      setAccessRevoked(false);
       setShowRemoteCompare(false);
       setViewedVersion(null);
       isEditingRef.current = false;
@@ -921,14 +1029,14 @@ export function MemoSection() {
 
   // 현재 메모의 게시 상태 확인
   useEffect(() => {
-    if (!selectedMemo) {
+    if (!selectedMemo || isBacklog) {
       setArticleStatus(null);
       return;
     }
     getMemoArticle(selectedMemo.id)
       .then((article) => setArticleStatus(article))
       .catch(() => setArticleStatus(null));
-  }, [selectedMemo]);
+  }, [isBacklog, selectedMemo]);
 
   useEffect(() => {
     contentRef.current = content;
@@ -938,19 +1046,32 @@ export function MemoSection() {
     originalContentRef.current = originalContent;
   }, [originalContent]);
 
-  // 같은 메모의 목록 metadata가 sync refresh로 갱신될 수 있다. 깨끗한 버퍼에서만
-  // 최신 CAS 기준을 받아들이고, dirty/draft-conflict 중에는 편집의 base를 보존한다.
+  // 이동처럼 본문은 동일하고 구조 metadata만 바뀌면 dirty buffer를 보존하면서
+  // 새 CAS 기준을 채택한다. 실제 fresh server 본문이 accepted baseline과 다르면
+  // 원격 변경이므로 기존 revision을 유지해 409/비교 경로를 우회하지 않는다.
   const selectedMemoRevision = selectedMemo?.revision;
+  const selectedMemoServerContent = selectedMemo?.serverContent ?? selectedMemo?.content ?? '';
   useEffect(() => {
-    if (!selectedMemoId || initializedMemoIdRef.current !== selectedMemoId) return;
-    if (draftConflictActive || contentRef.current !== originalContentRef.current) return;
+    if (!shouldAdoptMemoRevision({
+      currentMemoId: initializedMemoIdRef.current,
+      incomingMemoId: selectedMemoId ?? null,
+      incomingServerContent: selectedMemoServerContent,
+      acceptedContent: originalContentRef.current,
+      draftConflictActive,
+    })) return;
     baseRevisionRef.current = selectedMemoRevision;
-  }, [draftConflictActive, selectedMemoId, selectedMemoRevision]);
+  }, [
+    draftConflictActive,
+    selectedMemoId,
+    selectedMemoRevision,
+    selectedMemoServerContent,
+  ]);
 
   const processPendingSave = useCallback(async () => {
     const pending = pendingSaveRef.current;
     if (!pending || saveInFlightRef.current) return;
-    if (!selectedMemo || selectedMemo.id !== pending.memoId || isViewingVersion) {
+    if (!selectedMemo || selectedMemo.id !== pending.memoId ||
+      pending.editorEpoch !== editorEpochRef.current || isViewingVersion) {
       pendingSaveRef.current = null;
       pending.resolve(false);
       return;
@@ -1049,6 +1170,13 @@ export function MemoSection() {
       pending.resolve(true);
     } catch (error) {
       console.error('Failed to save memo:', error);
+      if (
+        initializedMemoIdRef.current !== pending.memoId ||
+        editorEpochRef.current !== pending.editorEpoch
+      ) {
+        pending.resolve(false);
+        return;
+      }
       const failure = classifySaveFailure(error);
 
       if (failure === 'conflict') {
@@ -1232,6 +1360,27 @@ export function MemoSection() {
     [queueMemoSave],
   );
 
+  /**
+   * 사용자가 직접 실행한 저장만 패널 닫기 신호를 낸다. 체크박스의 즉시 저장은
+   * 같은 `handleSaveMemo` 경로를 사용하지만 편집 흐름을 닫아서는 안 된다.
+   */
+  const handleExplicitSave = useCallback(async () => {
+    const snapshotContent = contentRef.current;
+    const snapshotRevision = localRevisionRef.current;
+    const saved = await queueMemoSave(snapshotContent);
+    if (isLatestSavedSnapshot({
+      saved,
+      snapshotContent,
+      currentContent: contentRef.current,
+      acceptedContent: originalContentRef.current,
+      snapshotRevision,
+      currentRevision: localRevisionRef.current,
+    })) {
+      onLatestSaveSuccess?.();
+    }
+    return saved;
+  }, [onLatestSaveSuccess, queueMemoSave]);
+
   // 게시 / 재게시 핸들러
   const handlePublish = useCallback(async () => {
     if (!selectedMemo) return;
@@ -1327,6 +1476,7 @@ export function MemoSection() {
 
   useEffect(() => {
     const handleInsertMemoLinkEvent = (e: Event) => {
+      if (!handlesGlobalKeyboard) return;
       const customEvent = e as CustomEvent<{ id: string; title: string }>;
       if (customEvent.detail) {
         const { id, title } = customEvent.detail;
@@ -1336,7 +1486,7 @@ export function MemoSection() {
 
     window.addEventListener('insertMemoLink', handleInsertMemoLinkEvent);
     return () => window.removeEventListener('insertMemoLink', handleInsertMemoLinkEvent);
-  }, [handleInsertMemoLink]);
+  }, [handleInsertMemoLink, handlesGlobalKeyboard]);
 
   /**
    * Cmd/Ctrl+A — 라인 하나만 선택되던 동작을 문서 전체 선택으로 바꾼다.
@@ -1411,9 +1561,11 @@ export function MemoSection() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      if (!handlesGlobalKeyboard) return;
+
+      if (isMemoSaveShortcut(e)) {
         e.preventDefault();
-        handleSaveMemo();
+        void handleExplicitSave();
         return;
       }
 
@@ -1459,7 +1611,8 @@ export function MemoSection() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [
     canEdit,
-    handleSaveMemo,
+    handleExplicitSave,
+    handlesGlobalKeyboard,
     holdLock,
     isViewingVersion,
     rawMode,
@@ -1961,6 +2114,14 @@ export function MemoSection() {
     return <div className="detail memo-draft-failure-surface">{failedDraftWarnings}</div>;
   }
 
+  if (accessRevoked) {
+    return (
+      <div className="detail memo-access-revoked" role="alert">
+        이 메모에 대한 접근 권한이 회수되었습니다. 목록을 새로 고치는 중입니다.
+      </div>
+    );
+  }
+
   const isDirty = content !== originalContent;
 
   const draftStatusLabel =
@@ -1993,7 +2154,7 @@ export function MemoSection() {
     </div>
   );
 
-  const publishActions = isAdmin && features.articles && (
+  const publishActions = !isBacklog && isAdmin && features.articles && (
     <>
       <button
         type="button"
@@ -2017,9 +2178,46 @@ export function MemoSection() {
   );
 
   return (
-    <main className="detail min-h-0">
+    <main
+      ref={surfaceRef}
+      className={`detail min-h-0${isBacklog ? ' backlog-editor-surface' : ''}`}
+      tabIndex={isBacklog ? -1 : undefined}
+      onPointerDownCapture={activateSurface}
+      onFocusCapture={activateSurface}
+    >
       <div className="h-full flex flex-col min-h-0">
-        {isMobile ? (
+        {isBacklog ? (
+          <div className="backlog-editor-toolbar">
+            <strong>백로그</strong>
+            {statusItems}
+            <div className="backlog-editor-actions">
+              {rawMode && <span className="memo-toolbar-raw">RAW 모드</span>}
+              <button
+                type="button"
+                className="todo-action-button todo-action-button--secondary"
+                onClick={() => setShowHelpModal(true)}
+                aria-label="에디터 도움말 열기"
+              >
+                ?
+              </button>
+              <button
+                type="button"
+                className="todo-action-button"
+                onClick={() => void handleExplicitSave()}
+                disabled={isViewingVersion}
+              >
+                저장
+              </button>
+              <button
+                type="button"
+                className="todo-action-button todo-action-button--secondary"
+                onClick={onClose}
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        ) : isMobile ? (
           // 모바일 앱바 — 물리 키보드가 없으므로 저장은 버튼이 유일한 경로다.
           <div className="memo-mobile-bar">
             <button
@@ -2035,7 +2233,7 @@ export function MemoSection() {
               <button
                 type="button"
                 className="memo-mobile-save todo-action-button"
-                onClick={() => void handleSaveMemo()}
+                onClick={() => void handleExplicitSave()}
                 disabled={!isDirty || isViewingVersion}
               >
                 저장
@@ -2067,15 +2265,17 @@ export function MemoSection() {
           )
         )}
 
-        <button
-          type="button"
-          onClick={() => setShowHelpModal(true)}
-          className="memo-help-fab todo-action-button fixed bottom-4 right-4 z-40 flex h-12 w-12 items-center justify-center text-lg font-bold shadow-lg"
-          aria-label="에디터 도움말 열기"
-          title="에디터 도움말"
-        >
-          ?
-        </button>
+        {!isBacklog && (
+          <button
+            type="button"
+            onClick={() => setShowHelpModal(true)}
+            className="memo-help-fab todo-action-button fixed bottom-4 right-4 z-40 flex h-12 w-12 items-center justify-center text-lg font-bold shadow-lg"
+            aria-label="에디터 도움말 열기"
+            title="에디터 도움말"
+          >
+            ?
+          </button>
+        )}
 
         {features.memoVersionHistory &&
           !actionableIssue &&

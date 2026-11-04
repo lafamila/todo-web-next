@@ -205,3 +205,11 @@ export function shouldAcceptLockGrant(
 ): boolean {
   return Boolean(editIntent && currentMemoId === grantedMemoId);
 }
+
+/** 다른 메모를 보던 사이 늦게 도착한 권한 회수 이벤트는 현재 문서를 숨기면 안 된다. */
+export function isCurrentMemoAccessDenial(
+  currentMemoId: string | null,
+  deniedMemoId: string,
+): boolean {
+  return currentMemoId === deniedMemoId;
+}

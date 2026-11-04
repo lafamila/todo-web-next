@@ -7,6 +7,7 @@ export interface ShortcutEventLike {
   altKey: boolean;
   isComposing?: boolean;
   keyCode?: number;
+  repeat?: boolean;
 }
 
 export const isImeKeyEvent = (
@@ -26,6 +27,14 @@ export const isProjectSearchShortcut = (event: ShortcutEventLike): boolean =>
 
 export const isMemberManagementShortcut = (event: ShortcutEventLike): boolean =>
   isPrimaryShiftShortcut(event, 'o');
+
+export const isDetailFullscreenShortcut = (event: ShortcutEventLike): boolean =>
+  (event.metaKey || event.ctrlKey) &&
+  !event.shiftKey &&
+  !event.altKey &&
+  !event.repeat &&
+  !isImeKeyEvent(event) &&
+  event.key === 'Enter';
 
 export const moveSearchSelection = (
   currentIndex: number,

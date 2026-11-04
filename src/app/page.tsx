@@ -11,6 +11,7 @@ import { consumePostLoginRedirect } from '@/lib/auth';
 import MemoListSection from './todo/_components/MemoListSection';
 import ProjectSection from './todo/_components/ProjectSection';
 import ScreenShare from './todo/_components/ScreenShare';
+import { BacklogPanel } from './todo/_components/BacklogPanel';
 
 function TodoHomeContent() {
   const { user, logout, features } = useAuth();
@@ -109,6 +110,7 @@ function TodoHomeContent() {
     <div className="todo-workspace min-h-screen">
       <ProjectSection />
       <MemoListSection />
+      <BacklogPanel />
       {features.screenShare && <ScreenShare />}
     </div>
   );

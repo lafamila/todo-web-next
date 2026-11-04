@@ -4,6 +4,7 @@ import {
   isMemberManagementShortcut,
   isProjectSearchShortcut,
   isImeKeyEvent,
+  isDetailFullscreenShortcut,
   moveSearchSelection,
 } from './projectSearchPolicy.ts';
 import type { ShortcutEventLike } from './projectSearchPolicy.ts';
@@ -53,6 +54,15 @@ test('member management uses Cmd/Ctrl+Shift+O and no longer consumes P', () => {
   assert.equal(isMemberManagementShortcut(shortcut({ key: 'ㅐ', code: 'KeyO' })), true);
   assert.equal(isMemberManagementShortcut(shortcut()), false);
   assert.equal(isMemberManagementShortcut(shortcut({ key: 'o', shiftKey: false })), false);
+});
+
+test('Cmd/Ctrl+Enter toggles detail fullscreen once and ignores repeat/IME', () => {
+  const enter = shortcut({ key: 'Enter', shiftKey: false });
+  assert.equal(isDetailFullscreenShortcut(enter), true);
+  assert.equal(isDetailFullscreenShortcut({ ...enter, metaKey: false, ctrlKey: true }), true);
+  assert.equal(isDetailFullscreenShortcut({ ...enter, repeat: true }), false);
+  assert.equal(isDetailFullscreenShortcut({ ...enter, isComposing: true }), false);
+  assert.equal(isDetailFullscreenShortcut({ ...enter, shiftKey: true }), false);
 });
 
 test('arrow selection wraps through ranked search results', () => {

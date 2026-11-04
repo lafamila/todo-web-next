@@ -3,25 +3,28 @@ import { useApp } from "@/contexts/AppContext";
 import { useAuth } from '@/contexts/AuthContext';
 import { useSync } from '@/contexts/SyncContext';
 import { Modal } from '@/components/ui/Modal';
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Input } from '@/components/ui/Input';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Button } from '@/components/ui/Button';
 import Add from '@/assets/add-icon.svg';
-import Icon from '@/components/ui/Icon';
 import { AllIcons } from '@/lib/constants';
 import * as api from '@/lib/api';
 import { formatDate } from '@/lib/utils';
+import { ProjectTree } from './ProjectTree';
+import { openProjectMembers } from './projectEvents';
+import styles from './ProjectTree.module.css';
 
 export default function ProjectSection() {
   const {
     state: { projects, selectedProject: currentProject },
     selectProject,
     createProject,
+    deleteProject,
     verifyProjectPassword,
     refreshProjects,
   } = useApp();
-  const { user, logout } = useAuth();
+  const { user, logout, features } = useAuth();
   const {
     findIssue,
     canMerge,
@@ -37,6 +40,18 @@ export default function ProjectSection() {
   const [duplicateCounts, setDuplicateCounts] = useState<Record<string, number>>({});
   const [isMerging, setIsMerging] = useState(false);
   const [mergeError, setMergeError] = useState('');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [projectMenu, setProjectMenu] = useState<{
+    project: ProjectInterface;
+    x: number;
+    y: number;
+  } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [createParent, setCreateParent] = useState<ProjectInterface | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ProjectInterface | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [projectActionError, setProjectActionError] = useState('');
+  const [isDeletingProject, setIsDeletingProject] = useState(false);
 
   // Create Project Modal State
   const [projectName, setProjectName] = useState('');
@@ -48,6 +63,22 @@ export default function ProjectSection() {
   const [passwordError, setPasswordError] = useState('');
   // 모바일 드로어 — 터치에는 hover 확장이 없으므로 사이드바를 버튼으로 여닫는다.
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    if (!projectMenu) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setProjectMenu(null);
+    };
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProjectMenu(null);
+    };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', dismissOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', dismissOnEscape);
+    };
+  }, [projectMenu]);
   // Keyboard shortcut: Cmd+Shift+X when no project is selected → open create project modal
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -85,6 +116,17 @@ export default function ProjectSection() {
   }, []);
 
   const handleProjectClick = async (project: ProjectInterface) => {
+    setProjectMenu(null);
+    if (project.isGroup) {
+      setExpandedIds((current) => {
+        const next = new Set(current);
+        if (next.has(project.id)) next.delete(project.id);
+        else next.add(project.id);
+        return next;
+      });
+      return;
+    }
+    if (project.navigationOnly) return;
     setDrawerOpen(false);
     const issue = findIssue('projects', project.id);
     if (issue?.kind === 'duplicate_project') {
@@ -157,21 +199,72 @@ export default function ProjectSection() {
     }
 
     try {
-      await createProject({
+      const created = await createProject({
         name: projectName,
         icon: AllIcons[Math.floor(Math.random() * AllIcons.length)],
         isSecret,
         password: isSecret ? password : undefined,
+        parentProjectId: createParent?.id,
       });
+
+      if (created.parentProjectId) {
+        setExpandedIds((current) => new Set(current).add(created.parentProjectId as string));
+      }
 
       // Reset form
       setProjectName('');
       setIsSecret(false);
       setPassword('');
       setShowCreateModal(false);
+      setCreateParent(null);
     } catch (error) {
-      console.error('Failed to create project:', error);
+      setProjectActionError(
+        error instanceof Error ? error.message : '프로젝트 생성에 실패했습니다.',
+      );
     }
+  };
+
+  const openCreateProject = (parent: ProjectInterface | null = null) => {
+    setCreateParent(parent);
+    setProjectName('');
+    setIsSecret(false);
+    setPassword('');
+    setProjectActionError('');
+    setShowCreateModal(true);
+    setProjectMenu(null);
+  };
+
+  const openDeleteProject = (project: ProjectInterface) => {
+    setDeleteTarget(project);
+    setDeleteConfirmation('');
+    setProjectActionError('');
+    setProjectMenu(null);
+  };
+
+  const handleDeleteProject = async () => {
+    if (!deleteTarget || deleteConfirmation !== deleteTarget.name) return;
+    setIsDeletingProject(true);
+    setProjectActionError('');
+    try {
+      await deleteProject(deleteTarget.id, deleteConfirmation);
+      setDeleteTarget(null);
+      setDeleteConfirmation('');
+    } catch (error) {
+      setProjectActionError(
+        error instanceof Error ? error.message : '프로젝트를 삭제하지 못했습니다.',
+      );
+    } finally {
+      setIsDeletingProject(false);
+    }
+  };
+
+  const openProjectMenu = (project: ProjectInterface, x: number, y: number) => {
+    if (!project.canManage && !project.canDelete) return;
+    setProjectMenu({
+      project,
+      x: Math.max(8, Math.min(x, window.innerWidth - 205)),
+      y: Math.max(8, Math.min(y, window.innerHeight - 170)),
+    });
   };
 
   const handleVerifyPassword = async () => {
@@ -210,32 +303,28 @@ export default function ProjectSection() {
     )}
     <div className={`left-sidebar${drawerOpen ? ' drawer-open' : ''}`}>
       <div className="sidebar-logo">TD</div>
-      <div className="project-container">
-        {projects.map((project) => (
-          <div
-            key={project.id}
-            className="project"
-            onClick={() => {
-              handleProjectClick(project);
-            }}>
-            <div className="project-icon">
-              {project.isSecret && (
-                <span className='project-secret'>🔒</span>
-              )}
-              <Icon icon={project.icon} />
-            </div>
-            <div className="project-name">
-              <span className={findIssue('projects', project.id) ? 'sync-issue-dim' : ''}>
-                {project.name}
-              </span>
-            </div>
-          </div>
-        ))}
+      <div className={`project-container ${styles.container}`}>
+        <ProjectTree
+          projects={projects}
+          selectedProjectId={currentProject?.id}
+          expandedIds={expandedIds}
+          issueFor={(projectId) => Boolean(findIssue('projects', projectId))}
+          onActivate={(project) => void handleProjectClick(project)}
+          onToggle={(projectId) => {
+            setExpandedIds((current) => {
+              const next = new Set(current);
+              if (next.has(projectId)) next.delete(projectId);
+              else next.add(projectId);
+              return next;
+            });
+          }}
+          onOpenMenu={openProjectMenu}
+        />
       </div>
       <div className="left-sidebar-footer">
         {isAdmin && (
           <button
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => openCreateProject()}
             className="new-project"
           >
             <div className="new-project-icon">
@@ -255,21 +344,73 @@ export default function ProjectSection() {
         </button>
       </div>
     </div>
+      {projectMenu && (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={`${projectMenu.project.name} 프로젝트 기능`}
+          className={styles.contextMenu}
+          style={{ left: projectMenu.x, top: projectMenu.y }}
+        >
+          {!projectMenu.project.parentProjectId && projectMenu.project.canDelete && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => openCreateProject(projectMenu.project)}
+            >
+              서브프로젝트 생성
+            </button>
+          )}
+          {projectMenu.project.canManage && features.memberInvite && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                openProjectMembers(projectMenu.project.id);
+                setProjectMenu(null);
+              }}
+            >
+              멤버 관리
+            </button>
+          )}
+          {projectMenu.project.canDelete && (
+            <button
+              type="button"
+              role="menuitem"
+              className={styles.danger}
+              onClick={() => openDeleteProject(projectMenu.project)}
+            >
+              삭제
+            </button>
+          )}
+        </div>
+      )}
       {/* Create Project Modal */}
       <Modal
         isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        title="새 프로젝트 만들기"
+        onClose={() => {
+          setShowCreateModal(false);
+          setCreateParent(null);
+          setProjectActionError('');
+        }}
+        title={createParent ? `${createParent.name} 서브프로젝트 만들기` : '새 프로젝트 만들기'}
       >
         <div className="space-y-4">
+          {createParent && (
+            <p className="text-sm text-gray-600">
+              {createParent.isGroup
+                ? '새 서브프로젝트에는 소유자만 포함됩니다. 필요한 멤버는 생성 후 직접 초대하세요.'
+                : '첫 서브프로젝트를 만들면 기존 메모와 멤버 권한이 이곳으로 함께 이동합니다.'}
+            </p>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              프로젝트 이름
+              {createParent ? '서브프로젝트 이름' : '프로젝트 이름'}
             </label>
             <Input
               value={projectName}
               onChange={setProjectName}
-              placeholder="프로젝트 이름을 입력하세요"
+              placeholder={createParent ? '서브프로젝트 이름을 입력하세요' : '프로젝트 이름을 입력하세요'}
               className='w-full outline-none'
               autoFocus
             />
@@ -298,16 +439,68 @@ export default function ProjectSection() {
             </div>
           )}
 
+          {projectActionError && (
+            <p className="text-sm text-red-600">{projectActionError}</p>
+          )}
+
           <div className="flex justify-end gap-2 mt-6">
             <Button onClick={handleCreateProject}>생성</Button>
             <Button
               variant="secondary"
-              onClick={() => setShowCreateModal(false)}
+              onClick={() => {
+                setShowCreateModal(false);
+                setCreateParent(null);
+                setProjectActionError('');
+              }}
             >
               취소
             </Button>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(deleteTarget)}
+        onClose={() => !isDeletingProject && setDeleteTarget(null)}
+        title="프로젝트 삭제"
+        size="sm"
+      >
+        {deleteTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-700">
+              <strong>{deleteTarget.name}</strong>은 목록과 모든 멤버의 화면에서 사라집니다.
+              메모와 버전은 복구를 위해 DB에 보존됩니다.
+            </p>
+            {deleteTarget.isGroup && (
+              <p className="text-sm text-gray-600">포함된 서브프로젝트도 함께 숨겨집니다.</p>
+            )}
+            <label className="block text-sm text-gray-700">
+              확인하려면 프로젝트 이름을 그대로 입력하세요.
+            </label>
+            <Input
+              value={deleteConfirmation}
+              onChange={setDeleteConfirmation}
+              placeholder={deleteTarget.name}
+              autoFocus
+            />
+            {projectActionError && (
+              <p className="text-sm text-red-600">{projectActionError}</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button
+                onClick={handleDeleteProject}
+                disabled={
+                  isDeletingProject || deleteConfirmation !== deleteTarget.name
+                }
+              >
+                {isDeletingProject ? '삭제 중...' : '삭제'}
+              </Button>
+              <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+                취소
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       <Modal

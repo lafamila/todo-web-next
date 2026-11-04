@@ -9,7 +9,14 @@ import {
   shouldDeferGrantUntilExplicitRejoin,
   shouldTerminateExplicitConnectionRetry,
   shouldAcceptJoinStatus,
+  isCurrentMemoAccessDenial,
 } from './memoLeasePolicy.ts';
+
+test('read access revocation applies only to the currently mounted memo', () => {
+  assert.equal(isCurrentMemoAccessDenial('memo-1', 'memo-1'), true);
+  assert.equal(isCurrentMemoAccessDenial('memo-2', 'memo-1'), false);
+  assert.equal(isCurrentMemoAccessDenial(null, 'memo-1'), false);
+});
 
 test('현재 메모의 활성 편집 요청에 대한 grant만 수락한다', () => {
   assert.equal(shouldAcceptLockGrant('memo-1', 'memo-1', true), true);
