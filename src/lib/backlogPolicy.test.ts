@@ -3,6 +3,9 @@ import test from 'node:test';
 
 import {
   BACKLOG_MIN_WIDTH_PX,
+  backlogAcceptsInput,
+  backlogTransitionWaitMs,
+  canCloseBacklogSession,
   clampBacklogWidth,
   initialBacklogWidth,
   isBacklogShortcut,
@@ -18,6 +21,17 @@ test('Cmd/Ctrl+Shift+S is distinct from ordinary save and IME input', () => {
   assert.equal(isMemoSaveShortcut({ key: 'S', metaKey: true, shiftKey: true }), false);
   assert.equal(isBacklogShortcut({ key: 's', metaKey: true, shiftKey: true, isComposing: true }), false);
   assert.equal(isBacklogShortcut({ key: 's', metaKey: true, shiftKey: true, keyCode: 229 }), false);
+});
+
+test('closing panel blocks input and stale save cannot close a reopened session', () => {
+  assert.equal(backlogAcceptsInput('open'), true);
+  assert.equal(backlogAcceptsInput('opening'), true);
+  assert.equal(backlogAcceptsInput('closing'), false);
+  assert.equal(canCloseBacklogSession({ phase: 'open', requestedSession: 4, currentSession: 4 }), true);
+  assert.equal(canCloseBacklogSession({ phase: 'closing', requestedSession: 4, currentSession: 4 }), false);
+  assert.equal(canCloseBacklogSession({ phase: 'open', requestedSession: 4, currentSession: 5 }), false);
+  assert.equal(backlogTransitionWaitMs(false), 260);
+  assert.equal(backlogTransitionWaitMs(true), 0);
 });
 
 test('backlog starts at half width and keeps enough main document visible', () => {

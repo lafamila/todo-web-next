@@ -54,6 +54,11 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   탐색용 부모(`navigationOnly`)가 표시되어도 본문/멤버 권한을 가진 것으로 간주하지 않는다.
 - 프로젝트 삭제는 서버의 `canDelete`와 정확한 이름 확인을 사용한다. 자식 사이 메모 이동은 같은 root 생성자만 가능하며
   기존 메모 ID·버전·본문을 재생성하지 않는다. 선택 메모의 위치만 바뀌면 미저장 버퍼는 유지한다.
+- 프로젝트 이름 수정은 owner 전용 PATCH를 사용한다. 트리 제목/생성 버튼은 좌측, 메뉴는 부모·자식 모두 같은 우측 선에
+  정렬하며 접힌 그룹에만 메뉴 앞 ▼를 표시한다. 메뉴가 열린 동안 `menu-open`이 hover 밖에서도 사이드바를 펼쳐둔다.
+- 다중 선택 이동은 양쪽 root의 실제 소유자가 관리하는 leaf 사이에서 가능하다. 출발·도착 프로젝트 이름을 각각 정확히
+  입력해야 하며 API가 전체를 한 트랜잭션으로 검증/이동한다. 선택 중인 dirty 편집기를 유지하고 이동 후 같은 메모 ID로
+  대상 프로젝트를 따른다. 실패·제목 충돌은 전체 취소, 늦은 응답은 기존 selection epoch gate를 따른다.
 - `BacklogPanel`은 선택된 leaf 프로젝트의 singleton 백로그를 불러오며 일반 목록에 섞지 않는다. `MemoSection`의 문서 override로
   동일한 InlineEditor/Monaco/Raw/IME/CAS/lease/기기 초안 기능을 재사용하고 기존 메모와 별도 버퍼·소켓을 가진다.
 - Cmd/Ctrl+Shift+S는 백로그 열기, Cmd/Ctrl+S는 마지막으로 포커스한 편집기 저장이다. 백로그 열기는 focus를 이동하고
@@ -61,6 +66,10 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   저장 실패·대기·충돌은 유지하며 수동 닫기에도 debounce 전 초안을 flush한다.
 - 데스크톱 백로그는 절반 폭으로 시작하는 우측 overlay, pointer/keyboard resize, edge-hover 손잡이를 제공한다.
   모바일은 전체 폭과 항상 접근 가능한 손잡이. z-index 1250으로 fullscreen(1200) 위, Modal(1300) 아래다.
+- 백로그는 closed/opening/open/closing 전환으로 DOM을 닫힘 애니메이션 끝까지 유지한다. desktop은 우측, mobile은 하단
+  slide를 양방향으로 사용하며 closing은 inert/키 입력 차단, 종료 후 focus 복원한다. session guard가 이전 저장/animation
+  콜백의 재열린 패널 닫기를 막는다. 백로그 ? 버튼은 없고 desktop 저장은 단축키, 모바일은 저장 버튼을 제공한다.
+  dirty/lease/기기 초안/서버 저장 상태는 닫기 액션과 같은 상단 우측 행에만 표시한다.
 - Cmd/Ctrl+Enter는 전체화면 진입/해제 토글이며 IME/repeat를 무시한다. API 추가 계약은 root
   `.idea/completed/TODO_SUBPROJECT_BACKLOG_PLAN.md`, 안전한 브라우저 검증은 `../.scripts/tests/todo-workspace-qa.md` 참조.
 

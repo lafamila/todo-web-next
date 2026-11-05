@@ -6,6 +6,8 @@ import {
 import type {
   ArticleInterface,
   ArticleListItemInterface,
+  BulkMoveMemosRequestInterface,
+  BulkMoveMemosResponseInterface,
   CalendarMonthInterface,
   CreateMemoRequestInterface,
   CreateProjectRequestInterface,
@@ -252,6 +254,20 @@ export async function createProject(
   );
 }
 
+export async function renameProject(
+  projectId: string,
+  name: string,
+): Promise<ProjectInterface> {
+  return fetchJson<ProjectInterface>(
+    `/projects/${projectId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    },
+    "프로젝트 이름을 변경하지 못했습니다.",
+  );
+}
+
 export async function deleteProject(
   projectId: string,
   confirmationName: string,
@@ -400,6 +416,19 @@ export async function moveMemo(
       body: JSON.stringify({ targetProjectId }),
     },
     "메모를 이동하지 못했습니다.",
+  );
+}
+
+export async function bulkMoveMemos(
+  data: BulkMoveMemosRequestInterface,
+): Promise<BulkMoveMemosResponseInterface> {
+  return fetchJson<BulkMoveMemosResponseInterface>(
+    "/memos/bulk-move",
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    },
+    "선택한 메모를 이동하지 못했습니다.",
   );
 }
 

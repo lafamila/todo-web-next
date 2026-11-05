@@ -1,5 +1,7 @@
 export const BACKLOG_MIN_WIDTH_PX = 320;
 export const BACKLOG_REMAINING_MAIN_PX = 240;
+export const BACKLOG_TRANSITION_MS = 220;
+export type BacklogPanelPhase = 'closed' | 'opening' | 'open' | 'closing';
 
 interface ShortcutLike {
   key: string;
@@ -58,4 +60,24 @@ export function isLatestSavedSnapshot(input: {
     input.snapshotContent === input.acceptedContent &&
     input.snapshotRevision === input.currentRevision
   );
+}
+
+/** A delayed save may close only the same visible panel session that started it. */
+export function canCloseBacklogSession(input: {
+  phase: BacklogPanelPhase;
+  requestedSession: number;
+  currentSession: number;
+}): boolean {
+  return (
+    input.requestedSession === input.currentSession &&
+    (input.phase === 'opening' || input.phase === 'open')
+  );
+}
+
+export function backlogAcceptsInput(phase: BacklogPanelPhase): boolean {
+  return phase === 'opening' || phase === 'open';
+}
+
+export function backlogTransitionWaitMs(reducedMotion: boolean): number {
+  return reducedMotion ? 0 : BACKLOG_TRANSITION_MS + 40;
 }

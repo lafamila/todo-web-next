@@ -1269,7 +1269,8 @@ body {
   justify-content: center;
 }
 
-.left-sidebar:hover {
+.left-sidebar:hover,
+.left-sidebar.menu-open {
   width: var(--left-sidebar-width-expanded);
 }
 
@@ -1346,7 +1347,8 @@ html.viewport-resizing .project-secret {
   transition-duration: 0.5s;
 }
 
-.left-sidebar:hover .project-name {
+.left-sidebar:hover .project-name,
+.left-sidebar.menu-open .project-name {
   padding-left: 10px;
   display: inline-flex;
     align-items: center;
@@ -1384,9 +1386,16 @@ html.viewport-resizing .project-secret {
   transition-duration: 500ms;
 }
 
-.left-sidebar:hover .new-project-label {
+.left-sidebar:hover .new-project-label,
+.left-sidebar.menu-open .new-project-label {
   padding-left: 10px;
   width: calc(var(--left-sidebar-width-expanded) - var(--left-sidebar-width) - 20px);
+}
+
+.left-sidebar:hover .new-project--create,
+.left-sidebar.menu-open .new-project--create {
+  padding-left: 10px;
+  text-align: left;
 }
 
 .new-project-icon svg g {
@@ -1457,7 +1466,8 @@ html.viewport-resizing .project-secret {
     grid-template-rows: var(--mobile-header-height) minmax(0, 1fr) auto;
   }
 
-  .left-sidebar:hover {
+  .left-sidebar:hover,
+  .left-sidebar.menu-open {
     width: min(78vw, 300px);
   }
 
@@ -1468,7 +1478,8 @@ html.viewport-resizing .project-secret {
 
   /* 드로어에서는 프로젝트 이름이 항상 보인다 (hover 전제 제거) */
   .left-sidebar .project-name,
-  .left-sidebar:hover .project-name {
+  .left-sidebar:hover .project-name,
+  .left-sidebar.menu-open .project-name {
     display: inline-flex;
     flex: 1 1 auto;
     align-items: center;
@@ -1478,9 +1489,17 @@ html.viewport-resizing .project-secret {
   }
 
   .left-sidebar .new-project-label,
-  .left-sidebar:hover .new-project-label {
+  .left-sidebar:hover .new-project-label,
+  .left-sidebar.menu-open .new-project-label {
     width: auto;
     padding-left: 12px;
+  }
+
+  .left-sidebar .new-project--create,
+  .left-sidebar:hover .new-project--create,
+  .left-sidebar.menu-open .new-project--create {
+    padding-left: 12px;
+    text-align: left;
   }
 
   .project-container {

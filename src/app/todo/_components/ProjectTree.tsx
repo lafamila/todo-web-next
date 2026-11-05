@@ -12,7 +12,6 @@ interface ProjectTreeProps {
   expandedIds: Set<string>;
   issueFor: (projectId: string) => boolean;
   onActivate: (project: ProjectInterface) => void;
-  onToggle: (projectId: string) => void;
   onOpenMenu: (project: ProjectInterface, x: number, y: number) => void;
 }
 
@@ -24,7 +23,6 @@ export function ProjectTree({
   expandedIds,
   issueFor,
   onActivate,
-  onToggle,
   onOpenMenu,
 }: ProjectTreeProps) {
   const tree = useMemo(() => buildProjectTree(projects), [projects]);
@@ -116,20 +114,21 @@ export function ProjectTree({
         <Icon icon={project.icon} />
       </div>
       <div className="project-name">
-        {project.isGroup && (
-          <button
-            type="button"
-            className={styles.chevron}
-            aria-label={expandedIds.has(project.id) ? '서브프로젝트 접기' : '서브프로젝트 펼치기'}
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggle(project.id);
-            }}
+        <span
+          className={`${styles.title}${issueFor(project.id) ? ' sync-issue-dim' : ''}`}
+        >
+          {project.name}
+        </span>
+        {project.isGroup && !expandedIds.has(project.id) && (
+          <span
+            className={`${styles.collapsedIndicator}${
+              project.canManage || project.canDelete ? ` ${styles.collapsedIndicatorWithMenu}` : ''
+            }`}
+            aria-hidden="true"
           >
-            {expandedIds.has(project.id) ? '▾' : '▸'}
-          </button>
+            ▼
+          </span>
         )}
-        <span className={issueFor(project.id) ? 'sync-issue-dim' : ''}>{project.name}</span>
         {(project.canManage || project.canDelete) && (
           <button
             type="button"

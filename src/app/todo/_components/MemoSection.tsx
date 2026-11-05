@@ -179,7 +179,8 @@ const editorFeatureHelp = [
 
 const shortcutHelp = [
   { keys: 'Ctrl/⌘ + S', description: '현재 메모를 저장합니다.' },
-  { keys: 'Ctrl/⌘ + Shift + S', description: '선택한 프로젝트의 백로그를 우측 패널로 엽니다.' },
+  { keys: 'Ctrl/⌘ + Shift + S', description: '선택한 프로젝트의 백로그를 엽니다. 데스크톱은 오른쪽, 모바일은 아래에서 펼쳐집니다.' },
+  { keys: 'Ctrl/⌘ + Enter', description: '현재 메모 편집기를 전체화면으로 열거나 원래 화면으로 돌아갑니다.' },
   { keys: 'Ctrl/⌘ + E', description: 'Raw 모드를 켜고 끕니다. 본문 전체를 하나의 텍스트로 선택·복사할 때 씁니다.' },
   {
     keys: 'Ctrl/⌘ + A',
@@ -290,6 +291,21 @@ export function MemoSection({
     if (!isBacklog) return;
     activateSurface();
     requestAnimationFrame(() => surfaceRef.current?.focus());
+  }, [activateSurface, isBacklog]);
+
+  useEffect(() => {
+    if (isBacklog) return;
+    const restoreMainFocus = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        open?: boolean;
+        restoreMainEditorFocus?: boolean;
+      }>).detail;
+      if (detail?.open || !detail?.restoreMainEditorFocus) return;
+      activateSurface();
+      requestAnimationFrame(() => inlineEditorRef.current?.focusLastLine());
+    };
+    window.addEventListener(BACKLOG_VISIBILITY_EVENT, restoreMainFocus);
+    return () => window.removeEventListener(BACKLOG_VISIBILITY_EVENT, restoreMainFocus);
   }, [activateSurface, isBacklog]);
 
   const handlesGlobalKeyboard = keyboardActive && activeSurface === surfaceName;
@@ -2151,6 +2167,11 @@ export function MemoSection({
       {publishMessage && (
         <span className="memo-toolbar-publish-message">{publishMessage}</span>
       )}
+      {isBacklog && draftStatusLabel && (
+        <span className={`memo-toolbar-draft memo-toolbar-draft-${draftStatus}`}>
+          {draftStatusLabel}{draftError ? ` · ${draftError}` : ''}
+        </span>
+      )}
     </div>
   );
 
@@ -2189,25 +2210,37 @@ export function MemoSection({
         {isBacklog ? (
           <div className="backlog-editor-toolbar">
             <strong>백로그</strong>
-            {statusItems}
-            <div className="backlog-editor-actions">
+            <div className="backlog-editor-toolbar-right">
+              {statusItems}
               {rawMode && <span className="memo-toolbar-raw">RAW 모드</span>}
-              <button
-                type="button"
-                className="todo-action-button todo-action-button--secondary"
-                onClick={() => setShowHelpModal(true)}
-                aria-label="에디터 도움말 열기"
-              >
-                ?
-              </button>
-              <button
-                type="button"
-                className="todo-action-button"
-                onClick={() => void handleExplicitSave()}
-                disabled={isViewingVersion}
-              >
-                저장
-              </button>
+              {(draftStatus === 'error' || draftStatus === 'lock-wait') && (
+                <button
+                  type="button"
+                  className="todo-action-button todo-action-button--secondary"
+                  onClick={handleRetrySave}
+                >
+                  다시 시도
+                </button>
+              )}
+              {draftStatus === 'error' && (
+                <button
+                  type="button"
+                  className="todo-action-button todo-action-button--secondary"
+                  onClick={() => void handleCopyDraft()}
+                >
+                  내용 복사
+                </button>
+              )}
+              {isMobile && (
+                <button
+                  type="button"
+                  className="todo-action-button"
+                  onClick={() => void handleExplicitSave()}
+                  disabled={isViewingVersion}
+                >
+                  저장
+                </button>
+              )}
               <button
                 type="button"
                 className="todo-action-button todo-action-button--secondary"
@@ -2307,7 +2340,7 @@ export function MemoSection({
           </section>
         )}
 
-        {!recoveryDraft && draftStatusLabel && (
+        {!isBacklog && !recoveryDraft && draftStatusLabel && (
           <section
             className={`memo-draft-banner memo-draft-${draftStatus}`}
             aria-live="polite"

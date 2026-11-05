@@ -15,6 +15,8 @@
 }
 
 .row {
+  position: relative;
+  box-sizing: border-box;
   min-height: 40px;
   border-radius: 4px;
   outline: none;
@@ -34,6 +36,10 @@
   display: block;
 }
 
+:global(.left-sidebar.menu-open) .childList {
+  display: block;
+}
+
 @media (hover: hover) {
   :global(.left-sidebar:hover) .childList {
     display: block;
@@ -44,19 +50,37 @@
   padding-left: 24px;
 }
 
-.chevron {
-  width: 0;
+.title {
+  display: block;
+  min-width: 0;
+  margin-right: 52px;
   overflow: hidden;
-  flex: 0 0 auto;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.collapsedIndicator {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 20px;
+  transform: translateY(-50%);
   color: #fff;
   opacity: 0;
-  border: 0;
-  background: transparent;
-  font-size: 12px;
-  transition: width 180ms ease, opacity 180ms ease;
+  text-align: center;
+  font-size: 9px;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+.collapsedIndicatorWithMenu {
+  right: 28px;
 }
 
 .menuTrigger {
+  position: absolute;
+  top: 50%;
+  right: 0;
   width: 0;
   overflow: hidden;
   opacity: 0;
@@ -66,15 +90,22 @@
   color: #fff;
   font-size: 17px;
   line-height: 1;
+  transform: translateY(-50%);
   transition: width 180ms ease, opacity 180ms ease;
 }
 
-:global(.left-sidebar:hover) .chevron,
 :global(.left-sidebar:hover) .menuTrigger,
-:global(.left-sidebar.drawer-open) .chevron,
 :global(.left-sidebar.drawer-open) .menuTrigger,
+:global(.left-sidebar.menu-open) .menuTrigger,
 .row:focus-within .menuTrigger {
   width: 24px;
+  opacity: 0.8;
+}
+
+:global(.left-sidebar:hover) .collapsedIndicator,
+:global(.left-sidebar.drawer-open) .collapsedIndicator,
+:global(.left-sidebar.menu-open) .collapsedIndicator,
+.row:focus-within .collapsedIndicator {
   opacity: 0.8;
 }
 
@@ -142,9 +173,13 @@
   }
 
   .menuTrigger,
-  .chevron {
+  .collapsedIndicator {
     width: 30px;
     opacity: 1;
+  }
+
+  .title {
+    margin-right: 64px;
   }
 
   .row {

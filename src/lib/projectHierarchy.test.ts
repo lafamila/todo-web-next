@@ -10,6 +10,9 @@ import {
   shouldClearProjectAfterAccessFailure,
   isSameProjectActivation,
   shouldFollowMovedMemo,
+  ownedLeafMoveTargets,
+  confirmationsMatchBulkMove,
+  normalizeProjectRename,
 } from './projectHierarchy.ts';
 import type { ProjectInterface } from './types.ts';
 
@@ -114,4 +117,37 @@ test('느린 메모 이동 응답은 사용자가 다른 선택으로 떠났으�
   assert.equal(shouldFollowMovedMemo({ ...request, currentSelectionEpoch: 5 }), false);
   assert.equal(shouldFollowMovedMemo({ ...request, currentProjectId: 'other' }), false);
   assert.equal(shouldFollowMovedMemo({ ...request, currentMemoId: 'memo-b' }), false);
+});
+
+test('bulk 이동 대상은 실제 같은 owner의 살아있는 leaf만 허용한다', () => {
+  const source = project('source');
+  const otherRoot = project('other-root');
+  otherRoot.isGroup = false;
+  otherRoot.ownerId = 'owner-a';
+  source.ownerId = 'owner-a';
+  const child = project('child', 'group');
+  child.ownerId = 'owner-a';
+  const foreign = project('foreign');
+  foreign.isGroup = false;
+  foreign.ownerId = 'owner-b';
+  const group = project('group');
+  group.ownerId = 'owner-a';
+  assert.deepEqual(
+    ownedLeafMoveTargets([source, otherRoot, child, foreign, group], 'owner-a', source.id)
+      .map((candidate) => candidate.id),
+    ['other-root', 'child'],
+  );
+});
+
+test('bulk 이동은 source와 target 이름이 모두 정확히 일치해야 한다', () => {
+  assert.equal(confirmationsMatchBulkMove('Source', 'Target', 'Source', 'Target'), true);
+  assert.equal(confirmationsMatchBulkMove('Source', 'Target', 'source', 'Target'), false);
+  assert.equal(confirmationsMatchBulkMove('Source', 'Target', 'Source', 'Target '), false);
+});
+
+test('프로젝트 rename은 trim 후 비어있음·동일값·255자 초과를 거부한다', () => {
+  assert.equal(normalizeProjectRename('  New name  ', 'Old name'), 'New name');
+  assert.equal(normalizeProjectRename('   ', 'Old name'), null);
+  assert.equal(normalizeProjectRename('Old name', 'Old name'), null);
+  assert.equal(normalizeProjectRename('x'.repeat(256), 'Old name'), null);
 });

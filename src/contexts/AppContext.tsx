@@ -18,6 +18,8 @@ import type {
   UserInterface,
   ProjectRole,
   InviteMemberScopeInterface,
+  BulkMoveMemosRequestInterface,
+  BulkMoveMemosResponseInterface,
   SortOption,
 } from '@/lib/types';
 import * as api from '@/lib/api';
@@ -339,6 +341,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [beginProjectMutation, endProjectMutation, selectProject, state.selectedMemo, state.selectedProject]
   );
 
+  const renameProject = useCallback(async (
+    projectId: string,
+    name: string,
+  ): Promise<ProjectInterface> => {
+    beginProjectMutation();
+    try {
+      const renamed = await api.renameProject(projectId, name);
+      setState((prev) => ({
+        ...prev,
+        projects: prev.projects.map((project) =>
+          project.id === renamed.id ? renamed : project,
+        ),
+        selectedProject:
+          prev.selectedProject?.id === renamed.id ? renamed : prev.selectedProject,
+      }));
+      return renamed;
+    } finally {
+      endProjectMutation();
+    }
+  }, [beginProjectMutation, endProjectMutation]);
+
   const deleteProject = useCallback(async (
     projectId: string,
     confirmationName: string,
@@ -534,7 +557,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         selectedMemoIds: isSelected
           ? prev.selectedMemoIds.filter((id) => id !== memoId)
           : [...prev.selectedMemoIds, memoId],
-        selectedMemo: null,
       };
     });
   }, []);
@@ -622,6 +644,79 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }));
       }
       return moved;
+    } finally {
+      endProjectMutation();
+    }
+  }, [beginProjectMutation, endProjectMutation]);
+
+  const bulkMoveMemos = useCallback(async (
+    data: BulkMoveMemosRequestInterface,
+  ): Promise<BulkMoveMemosResponseInterface> => {
+    beginProjectMutation();
+    const requestEpoch = selectionEpochRef.current;
+    const sourceProjectId = stateRef.current.selectedProject?.id ?? null;
+    const selectedMemoId = stateRef.current.selectedMemo?.id ?? null;
+    const selectedIsMoving = Boolean(
+      selectedMemoId && data.memoIds.includes(selectedMemoId),
+    );
+    try {
+      const result = await api.bulkMoveMemos(data);
+      const movedIds = new Set(result.movedMemos.map((memo) => memo.id));
+      if (selectedIsMoving && selectedMemoId) {
+        let projects = stateRef.current.projects;
+        let targetProject = projects.find(
+          (project) => project.id === data.targetProjectId,
+        );
+        if (!targetProject) {
+          projects = await api.getAllProjects();
+          targetProject = projects.find(
+            (project) => project.id === data.targetProjectId,
+          );
+        }
+        if (!targetProject) throw new Error('이동 대상 프로젝트를 찾을 수 없습니다.');
+        const targetMemos = await api.getProjectMemos(data.targetProjectId);
+        if (!shouldFollowMovedMemo({
+          expectedSelectionEpoch: requestEpoch,
+          currentSelectionEpoch: selectionEpochRef.current,
+          expectedProjectId: sourceProjectId,
+          currentProjectId: stateRef.current.selectedProject?.id,
+          expectedMemoId: selectedMemoId,
+          currentMemoId: stateRef.current.selectedMemo?.id,
+        })) return result;
+        const selectedFresh = result.movedMemos.find(
+          (memo) => memo.id === selectedMemoId,
+        );
+        if (!selectedFresh) throw new Error('이동된 선택 메모 응답이 없습니다.');
+        selectionEpochRef.current += 1;
+        intendedProjectIdRef.current = data.targetProjectId;
+        committedProjectIdRef.current = data.targetProjectId;
+        setState((prev) => ({
+          ...prev,
+          projects,
+          selectedProject: targetProject,
+          memos: targetMemos,
+          selectedMemo:
+            prev.selectedMemo?.id === selectedMemoId
+              ? {
+                  ...selectedFresh,
+                  content: prev.selectedMemo.content,
+                  serverContent: selectedFresh.content,
+                }
+              : prev.selectedMemo,
+          selectedMemoIds: [],
+          members: [],
+        }));
+      } else {
+        setState((prev) => ({
+          ...prev,
+          memos:
+            prev.selectedProject?.id === sourceProjectId
+              ? prev.memos.filter((memo) => !movedIds.has(memo.id))
+              : prev.memos,
+          selectedMemoIds: prev.selectedMemoIds.filter((id) => !movedIds.has(id)),
+        }));
+      }
+      return result;
     } finally {
       endProjectMutation();
     }
@@ -756,6 +851,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshCurrentProject,
     selectProject,
     createProject,
+    renameProject,
     deleteProject,
     verifyProjectPassword,
     selectMemo,
@@ -766,6 +862,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     clearSelectedMemos,
     deleteMemos,
     moveMemo,
+    bulkMoveMemos,
     revokeMemoAccess,
     loadMembers,
     inviteMember,

@@ -28,6 +28,14 @@ export interface CreateProjectRequestInterface {
   parentProjectId?: string;
 }
 
+export interface BulkMoveMemosRequestInterface {
+  memoIds: string[];
+  sourceProjectId: string;
+  targetProjectId: string;
+  sourceConfirmationName: string;
+  targetConfirmationName: string;
+}
+
 export interface MemoInterface {
   id: string;
   projectId: string;
@@ -43,6 +51,10 @@ export interface MemoInterface {
   kind?: "memo" | "backlog";
   /** 구조 변경 재조회에서 UI buffer를 덮지 않고 서버 본문/revision 쌍을 전달하는 client-only 값. */
   serverContent?: string;
+}
+
+export interface BulkMoveMemosResponseInterface {
+  movedMemos: MemoInterface[];
 }
 
 export interface InviteMemberScopeInterface {
@@ -276,6 +288,7 @@ export interface TodoAppContextTypeInterface {
   refreshCurrentProject: () => Promise<void>;
   selectProject: (project: ProjectInterface) => Promise<void>;
   createProject: (data: CreateProjectRequestInterface) => Promise<ProjectInterface>;
+  renameProject: (projectId: string, name: string) => Promise<ProjectInterface>;
   deleteProject: (projectId: string, confirmationName: string) => Promise<void>;
   verifyProjectPassword: (projectId: string, password: string) => Promise<boolean>;
   selectMemo: (memo: MemoInterface) => Promise<boolean>;
@@ -286,6 +299,9 @@ export interface TodoAppContextTypeInterface {
   clearSelectedMemos: () => void;
   deleteMemos: (memoIds: string[]) => Promise<void>;
   moveMemo: (memoId: string, targetProjectId: string) => Promise<MemoInterface>;
+  bulkMoveMemos: (
+    data: BulkMoveMemosRequestInterface,
+  ) => Promise<BulkMoveMemosResponseInterface>;
   revokeMemoAccess: (memoId: string) => void;
   loadMembers: (projectId: string) => Promise<void>;
   inviteMember: (

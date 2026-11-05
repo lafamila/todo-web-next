@@ -14,12 +14,14 @@ import { formatDate } from '@/lib/utils';
 import { ProjectTree } from './ProjectTree';
 import { openProjectMembers } from './projectEvents';
 import styles from './ProjectTree.module.css';
+import { normalizeProjectRename } from '@/lib/projectHierarchy';
 
 export default function ProjectSection() {
   const {
     state: { projects, selectedProject: currentProject },
     selectProject,
     createProject,
+    renameProject,
     deleteProject,
     verifyProjectPassword,
     refreshProjects,
@@ -52,6 +54,10 @@ export default function ProjectSection() {
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [projectActionError, setProjectActionError] = useState('');
   const [isDeletingProject, setIsDeletingProject] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<ProjectInterface | null>(null);
+  const [renameName, setRenameName] = useState('');
+  const [renameError, setRenameError] = useState('');
+  const [isRenamingProject, setIsRenamingProject] = useState(false);
 
   // Create Project Modal State
   const [projectName, setProjectName] = useState('');
@@ -241,6 +247,32 @@ export default function ProjectSection() {
     setProjectMenu(null);
   };
 
+  const openRenameProject = (project: ProjectInterface) => {
+    setRenameTarget(project);
+    setRenameName(project.name);
+    setRenameError('');
+    setProjectMenu(null);
+  };
+
+  const handleRenameProject = async () => {
+    if (!renameTarget) return;
+    const normalized = normalizeProjectRename(renameName, renameTarget.name);
+    if (!normalized) return;
+    setIsRenamingProject(true);
+    setRenameError('');
+    try {
+      await renameProject(renameTarget.id, normalized);
+      setRenameTarget(null);
+      setRenameName('');
+    } catch (error) {
+      setRenameError(
+        error instanceof Error ? error.message : '프로젝트 이름을 변경하지 못했습니다.',
+      );
+    } finally {
+      setIsRenamingProject(false);
+    }
+  };
+
   const handleDeleteProject = async () => {
     if (!deleteTarget || deleteConfirmation !== deleteTarget.name) return;
     setIsDeletingProject(true);
@@ -301,7 +333,7 @@ export default function ProjectSection() {
     {drawerOpen && (
       <div className="sidebar-backdrop" onClick={() => setDrawerOpen(false)} />
     )}
-    <div className={`left-sidebar${drawerOpen ? ' drawer-open' : ''}`}>
+    <div className={`left-sidebar${drawerOpen ? ' drawer-open' : ''}${projectMenu ? ' menu-open' : ''}`}>
       <div className="sidebar-logo">TD</div>
       <div className={`project-container ${styles.container}`}>
         <ProjectTree
@@ -310,14 +342,6 @@ export default function ProjectSection() {
           expandedIds={expandedIds}
           issueFor={(projectId) => Boolean(findIssue('projects', projectId))}
           onActivate={(project) => void handleProjectClick(project)}
-          onToggle={(projectId) => {
-            setExpandedIds((current) => {
-              const next = new Set(current);
-              if (next.has(projectId)) next.delete(projectId);
-              else next.add(projectId);
-              return next;
-            });
-          }}
           onOpenMenu={openProjectMenu}
         />
       </div>
@@ -325,7 +349,7 @@ export default function ProjectSection() {
         {isAdmin && (
           <button
             onClick={() => openCreateProject()}
-            className="new-project"
+            className="new-project new-project--create"
           >
             <div className="new-project-icon">
               <Add width="20px" height="20px" />
@@ -373,6 +397,15 @@ export default function ProjectSection() {
               멤버 관리
             </button>
           )}
+          {projectMenu.project.canManage && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => openRenameProject(projectMenu.project)}
+            >
+              이름 수정
+            </button>
+          )}
           {projectMenu.project.canDelete && (
             <button
               type="button"
@@ -385,6 +418,52 @@ export default function ProjectSection() {
           )}
         </div>
       )}
+      <Modal
+        isOpen={Boolean(renameTarget)}
+        onClose={() => !isRenamingProject && setRenameTarget(null)}
+        title="프로젝트 이름 수정"
+        size="sm"
+      >
+        {renameTarget && (
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleRenameProject();
+            }}
+          >
+            <label className="block text-sm font-medium text-gray-700">
+              새 프로젝트 이름
+            </label>
+            <Input
+              value={renameName}
+              onChange={setRenameName}
+              placeholder="프로젝트 이름을 입력하세요"
+              autoFocus
+            />
+            <p className="text-xs text-gray-500">공백을 제외하고 1~255자로 입력하세요.</p>
+            {renameError && <p className="text-sm text-red-600">{renameError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button
+                type="submit"
+                disabled={
+                  isRenamingProject ||
+                  !normalizeProjectRename(renameName, renameTarget.name)
+                }
+              >
+                {isRenamingProject ? '변경 중...' : '변경'}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setRenameTarget(null)}
+                disabled={isRenamingProject}
+              >
+                취소
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
       {/* Create Project Modal */}
       <Modal
         isOpen={showCreateModal}

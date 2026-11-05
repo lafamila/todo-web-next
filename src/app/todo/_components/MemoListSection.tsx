@@ -21,7 +21,12 @@ import {
   OPEN_PROJECT_MEMBERS_EVENT,
   type OpenProjectMembersDetail,
 } from './projectEvents';
-import { buildMemberInviteScope, siblingSubprojects } from '@/lib/projectHierarchy';
+import {
+  buildMemberInviteScope,
+  confirmationsMatchBulkMove,
+  ownedLeafMoveTargets,
+  siblingSubprojects,
+} from '@/lib/projectHierarchy';
 import { ProjectMemberModal } from './ProjectMemberModal';
 
 const DEFAULT_PANE_WIDTH = 400;
@@ -40,11 +45,12 @@ export default function MemoListSection() {
     clearSelectedMemos,
     deleteMemos,
     moveMemo,
+    bulkMoveMemos,
     loadMembers,
     inviteMember,
     removeMember,
   } = useApp();
-  const { features } = useAuth();
+  const { features, user } = useAuth();
   const { findIssue } = useSync();
   // 모바일은 목록/메모를 한 화면에 나란히 둘 수 없어 뷰를 전환한다 (선택 상태는 유지).
   const isMobile = useIsMobile();
@@ -76,6 +82,12 @@ export default function MemoListSection() {
   const [moveTargetId, setMoveTargetId] = useState('');
   const [moveError, setMoveError] = useState('');
   const [isMoving, setIsMoving] = useState(false);
+  const [showBulkMoveModal, setShowBulkMoveModal] = useState(false);
+  const [bulkMoveTargetId, setBulkMoveTargetId] = useState('');
+  const [sourceConfirmationName, setSourceConfirmationName] = useState('');
+  const [targetConfirmationName, setTargetConfirmationName] = useState('');
+  const [bulkMoveError, setBulkMoveError] = useState('');
+  const [isBulkMoving, setIsBulkMoving] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
 
@@ -256,6 +268,16 @@ export default function MemoListSection() {
     selectedProject?.parentProjectId &&
     projects.find((project) => project.id === selectedProject.parentProjectId)?.canDelete,
   );
+  const bulkMoveTargets = useMemo(
+    () => selectedProject
+      ? ownedLeafMoveTargets(projects, user?.id, selectedProject.id)
+      : [],
+    [projects, selectedProject, user?.id],
+  );
+  const bulkMoveTarget = useMemo(
+    () => bulkMoveTargets.find((project) => project.id === bulkMoveTargetId) ?? null,
+    [bulkMoveTargetId, bulkMoveTargets],
+  );
 
   const openMoveMemo = (memo: MemoInterface) => {
     if (memo.kind === 'backlog' || moveTargets.length === 0) return;
@@ -275,6 +297,45 @@ export default function MemoListSection() {
       setMoveError(error instanceof Error ? error.message : '메모 이동에 실패했습니다.');
     } finally {
       setIsMoving(false);
+    }
+  };
+
+  const openBulkMove = () => {
+    const firstTarget = bulkMoveTargets[0];
+    if (!selectedProject || !firstTarget || selectedMemoIds.length === 0) return;
+    setBulkMoveTargetId(firstTarget.id);
+    setSourceConfirmationName('');
+    setTargetConfirmationName('');
+    setBulkMoveError('');
+    setShowBulkMoveModal(true);
+  };
+
+  const handleBulkMove = async () => {
+    if (!selectedProject || selectedMemoIds.length === 0) return;
+    const target = bulkMoveTarget;
+    if (!target || !confirmationsMatchBulkMove(
+      selectedProject.name,
+      target.name,
+      sourceConfirmationName,
+      targetConfirmationName,
+    )) return;
+    setIsBulkMoving(true);
+    setBulkMoveError('');
+    try {
+      await bulkMoveMemos({
+        memoIds: selectedMemoIds,
+        sourceProjectId: selectedProject.id,
+        targetProjectId: target.id,
+        sourceConfirmationName,
+        targetConfirmationName,
+      });
+      setShowBulkMoveModal(false);
+    } catch (error) {
+      setBulkMoveError(
+        error instanceof Error ? error.message : '선택한 메모 이동에 실패했습니다.',
+      );
+    } finally {
+      setIsBulkMoving(false);
     }
   };
 
@@ -485,7 +546,7 @@ export default function MemoListSection() {
       <div
         className={`main-container${detailFullscreen ? ' detail-fullscreen' : ''}${
           isMobile
-            ? mobileView === 'detail' || isMultiSelectMode
+            ? mobileView === 'detail'
               ? ' mobile-view-detail'
               : ' mobile-view-list'
             : ''
@@ -517,7 +578,7 @@ export default function MemoListSection() {
         </div>
         <div className="main">
           {/* 상단 여백은 클래스로 둔다 — 인라인 스타일은 모바일 미디어 쿼리가 못 이긴다 */}
-          <div className="tasks-heading flex items-start justify-between">
+          <div className="tasks-heading flex flex-wrap items-start justify-between gap-2">
             <div>
               <span style={{ fontWeight: "bold", fontSize: "20px" }}>Tasks</span>{" "}
               <span className="task-count">({memos.length})</span>
@@ -538,6 +599,45 @@ export default function MemoListSection() {
                 </button>
               )}
             </div>
+            {isMultiSelectMode && (
+              <div
+                className="flex basis-full flex-wrap items-center justify-between gap-2 rounded border border-gray-300 bg-gray-50 px-3 py-2"
+                role="toolbar"
+                aria-label="선택한 메모 작업"
+              >
+                <strong>{selectedMemoIds.length}개 선택</strong>
+                <div className="flex flex-wrap items-center gap-2">
+                  {selectedProject.ownerId === user?.id && bulkMoveTargets.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={openBulkMove}
+                      disabled={isBulkMoving || isDeleting}
+                      className="todo-action-button todo-action-button--secondary"
+                    >
+                      이동
+                    </button>
+                  )}
+                  {selectedProject.canManage && (
+                    <button
+                      type="button"
+                      onClick={handleBulkDelete}
+                      disabled={isDeleting || isBulkMoving}
+                      className="todo-action-button"
+                    >
+                      {isDeleting ? '삭제 중...' : '삭제'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={clearSelectedMemos}
+                    disabled={isDeleting || isBulkMoving}
+                    className="todo-action-button todo-action-button--secondary"
+                  >
+                    취소
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           <div className="new-task-container" style={{ position: 'relative' }}>
             <Input
@@ -621,7 +721,7 @@ export default function MemoListSection() {
                     )}
                     {memo.title}
                   </h3>
-                  {canMoveMemos && moveTargets.length > 0 && memo.kind !== 'backlog' && (
+                  {!isMultiSelectMode && canMoveMemos && moveTargets.length > 0 && memo.kind !== 'backlog' && (
                     <button
                       type="button"
                       className="todo-action-button todo-action-button--secondary"
@@ -650,33 +750,7 @@ export default function MemoListSection() {
           />
         </div>
 
-        {isMultiSelectMode ? (
-          <main className="detail min-h-0">
-            <div className="h-full flex flex-col items-center justify-center gap-4">
-              <p className="text-lg text-gray-300">{selectedMemoIds.length}개의 메모가 선택됨</p>
-              <div className="flex gap-3">
-                {selectedProject.canManage && (
-                  <button
-                    onClick={handleBulkDelete}
-                    disabled={isDeleting}
-                    className="todo-action-button"
-                  >
-                    {isDeleting ? '삭제 중...' : '삭제'}
-                  </button>
-                )}
-                <button
-                  onClick={clearSelectedMemos}
-                  disabled={isDeleting}
-                  className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  취소
-                </button>
-              </div>
-            </div>
-          </main>
-        ) : (
-          <MemoSection />
-        )}
+        <MemoSection />
       </div>
     </div>
 
@@ -710,6 +784,81 @@ export default function MemoListSection() {
                 {isMoving ? '이동 중...' : '이동'}
               </Button>
               <Button variant="secondary" onClick={() => setMovingMemo(null)} disabled={isMoving}>
+                취소
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={showBulkMoveModal}
+        onClose={() => !isBulkMoving && setShowBulkMoveModal(false)}
+        title="선택한 메모 이동"
+        size="md"
+      >
+        {selectedProject && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-700">
+              선택한 {selectedMemoIds.length}개 메모를 다른 소유 프로젝트로 원자적으로 이동합니다.
+              메모 ID·본문·버전·편집 시각은 유지됩니다.
+            </p>
+            <label className="block text-sm font-medium text-gray-700">이동 대상</label>
+            <select
+              className="w-full border border-gray-300 rounded px-3 py-2"
+              value={bulkMoveTargetId}
+              onChange={(event) => {
+                setBulkMoveTargetId(event.target.value);
+                setTargetConfirmationName('');
+                setBulkMoveError('');
+              }}
+            >
+              {bulkMoveTargets.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+            <label className="block text-sm text-gray-700">
+              출발 프로젝트 이름 <strong>{selectedProject.name}</strong> 입력
+            </label>
+            <Input
+              value={sourceConfirmationName}
+              onChange={setSourceConfirmationName}
+              placeholder={selectedProject.name}
+            />
+            {bulkMoveTarget && (
+              <>
+                <label className="block text-sm text-gray-700">
+                  대상 프로젝트 이름 <strong>{bulkMoveTarget.name}</strong> 입력
+                </label>
+                <Input
+                  value={targetConfirmationName}
+                  onChange={setTargetConfirmationName}
+                  placeholder={bulkMoveTarget.name}
+                />
+              </>
+            )}
+            {bulkMoveError && <p className="text-sm text-red-600">{bulkMoveError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button
+                onClick={handleBulkMove}
+                disabled={
+                  isBulkMoving ||
+                  !bulkMoveTarget ||
+                  !confirmationsMatchBulkMove(
+                    selectedProject.name,
+                    bulkMoveTarget.name,
+                    sourceConfirmationName,
+                    targetConfirmationName,
+                  )
+                }
+              >
+                {isBulkMoving ? '이동 중...' : '이동'}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setShowBulkMoveModal(false)}
+                disabled={isBulkMoving}
+              >
                 취소
               </Button>
             </div>

@@ -36,6 +36,21 @@ export function siblingSubprojects(
   );
 }
 
+export function ownedLeafMoveTargets(
+  projects: ProjectInterface[],
+  ownerId: string | null | undefined,
+  sourceProjectId: string,
+): ProjectInterface[] {
+  if (!ownerId) return [];
+  return projects.filter(
+    (project) =>
+      project.id !== sourceProjectId &&
+      project.ownerId === ownerId &&
+      !project.isGroup &&
+      !project.navigationOnly,
+  );
+}
+
 export function movedBeyondLongPressTolerance(
   startX: number,
   startY: number,
@@ -97,4 +112,21 @@ export function shouldFollowMovedMemo(input: {
     input.expectedProjectId === input.currentProjectId &&
     input.expectedMemoId === input.currentMemoId
   );
+}
+
+export const confirmationsMatchBulkMove = (
+  sourceName: string,
+  targetName: string,
+  sourceConfirmation: string,
+  targetConfirmation: string,
+): boolean =>
+  sourceConfirmation === sourceName && targetConfirmation === targetName;
+
+export function normalizeProjectRename(
+  value: string,
+  currentName: string,
+): string | null {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 255 || normalized === currentName) return null;
+  return normalized;
 }

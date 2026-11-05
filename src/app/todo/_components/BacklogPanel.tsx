@@ -5,6 +5,10 @@ import { useApp } from '@/contexts/AppContext';
 import { getProjectBacklog, ensureProjectBacklog } from '@/lib/api';
 import type { MemoInterface } from '@/lib/types';
 import {
+  backlogAcceptsInput,
+  backlogTransitionWaitMs,
+  type BacklogPanelPhase,
+  canCloseBacklogSession,
   clampBacklogWidth,
   initialBacklogWidth,
   isBacklogShortcut,
@@ -16,8 +20,10 @@ import {
   MemoSection,
 } from './MemoSection';
 
-const dispatchPanelState = (open: boolean) => {
-  window.dispatchEvent(new CustomEvent(BACKLOG_VISIBILITY_EVENT, { detail: { open } }));
+const dispatchPanelState = (open: boolean, restoreMainEditorFocus = false) => {
+  window.dispatchEvent(new CustomEvent(BACKLOG_VISIBILITY_EVENT, {
+    detail: { open, restoreMainEditorFocus },
+  }));
   window.dispatchEvent(new CustomEvent(EDITOR_ACTIVE_SURFACE_EVENT, {
     detail: { surface: open ? 'backlog' : 'main' },
   }));
@@ -26,7 +32,8 @@ const dispatchPanelState = (open: boolean) => {
 export function BacklogPanel() {
   const { state: { selectedProject } } = useApp();
   const isMobile = useIsMobile();
-  const [open, setOpen] = useState(false);
+  const [phase, setPhase] = useState<BacklogPanelPhase>('closed');
+  const [panelSession, setPanelSession] = useState(0);
   const [memo, setMemo] = useState<MemoInterface | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,21 +41,54 @@ export function BacklogPanel() {
     typeof window === 'undefined' ? 640 : initialBacklogWidth(window.innerWidth, false),
   );
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const previousWasMainEditorRef = useRef(false);
   const panelRef = useRef<HTMLElement | null>(null);
   const loadingSequenceRef = useRef(0);
   const resizePointerRef = useRef<number | null>(null);
+  const phaseRef = useRef<BacklogPanelPhase>('closed');
+  const sessionRef = useRef(0);
+  const [reducedMotion, setReducedMotion] = useState(false);
 
   const eligible = Boolean(
     selectedProject && !selectedProject.isGroup && !selectedProject.navigationOnly,
   );
 
-  const closePanel = useCallback(() => {
-    loadingSequenceRef.current += 1;
-    setOpen(false);
-    dispatchPanelState(false);
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReducedMotion(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+
+  const finishClose = useCallback((session: number) => {
+    if (sessionRef.current !== session || phaseRef.current !== 'closing') return;
+    phaseRef.current = 'closed';
+    setPhase('closed');
+    const directFocus = previousFocusRef.current?.isConnected
+      ? previousFocusRef.current
+      : null;
+    dispatchPanelState(false, previousWasMainEditorRef.current && !directFocus);
     requestAnimationFrame(() => {
-      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus();
+      directFocus?.focus();
     });
+  }, []);
+
+  const finishOpen = useCallback((session: number) => {
+    if (sessionRef.current !== session || phaseRef.current !== 'opening') return;
+    phaseRef.current = 'open';
+    setPhase('open');
+  }, []);
+
+  const closePanel = useCallback((session = sessionRef.current) => {
+    if (!canCloseBacklogSession({
+      phase: phaseRef.current,
+      requestedSession: session,
+      currentSession: sessionRef.current,
+    })) return;
+    loadingSequenceRef.current += 1;
+    phaseRef.current = 'closing';
+    setPhase('closing');
   }, []);
 
   const loadBacklog = useCallback(async () => {
@@ -74,44 +114,81 @@ export function BacklogPanel() {
 
   const openPanel = useCallback(() => {
     if (!eligible) return;
-    previousFocusRef.current = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-    setWidth(initialBacklogWidth(window.innerWidth, isMobile));
-    setOpen(true);
+    if (phaseRef.current === 'open' || phaseRef.current === 'opening') return;
+    if (phaseRef.current === 'closed') {
+      previousFocusRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+      previousWasMainEditorRef.current = Boolean(
+        previousFocusRef.current?.closest('main.detail') &&
+          !previousFocusRef.current?.closest('.backlog-panel'),
+      );
+      setWidth(initialBacklogWidth(window.innerWidth, isMobile));
+    }
+    const nextSession = sessionRef.current + 1;
+    sessionRef.current = nextSession;
+    setPanelSession(nextSession);
+    phaseRef.current = 'opening';
+    setPhase('opening');
     dispatchPanelState(true);
     void loadBacklog();
   }, [eligible, isMobile, loadBacklog]);
+
+  useEffect(() => {
+    if (phase !== 'opening' && phase !== 'closing') return;
+    const session = panelSession;
+    const finish = () => {
+      if (phase === 'opening') finishOpen(session);
+      else finishClose(session);
+    };
+    const waitMs = backlogTransitionWaitMs(reducedMotion);
+    if (waitMs === 0) {
+      finish();
+      return;
+    }
+    const timer = window.setTimeout(finish, waitMs);
+    return () => window.clearTimeout(timer);
+  }, [finishClose, finishOpen, panelSession, phase, reducedMotion]);
+
+  const handlePanelAnimationEnd = (event: React.AnimationEvent<HTMLElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (phase === 'opening' && event.animationName.includes('open')) {
+      finishOpen(panelSession);
+    }
+    if (phase === 'closing' && event.animationName.includes('close')) {
+      finishClose(panelSession);
+    }
+  };
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if (!isBacklogShortcut(event) || !eligible) return;
       event.preventDefault();
       event.stopPropagation();
-      if (!open) openPanel();
+      if (phaseRef.current === 'closed' || phaseRef.current === 'closing') openPanel();
     };
     window.addEventListener('keydown', handleShortcut, { capture: true });
     return () => window.removeEventListener('keydown', handleShortcut, { capture: true });
-  }, [eligible, open, openPanel]);
+  }, [eligible, openPanel]);
 
   useEffect(() => {
-    if (!open) return;
+    if (phase !== 'opening') return;
     requestAnimationFrame(() => panelRef.current?.focus());
-  }, [open]);
+  }, [phase, panelSession]);
 
   const selectedProjectId = selectedProject?.id ?? null;
   useEffect(() => {
     loadingSequenceRef.current += 1;
     setMemo(null);
     setError(null);
-    if (open) closePanel();
+    if (phaseRef.current !== 'closed') closePanel();
     // Switching projects closes only the overlay; IndexedDB preserves any backlog draft.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProjectId]);
 
   useEffect(() => {
-    if (open && !eligible) closePanel();
-  }, [closePanel, eligible, open]);
+    if (phaseRef.current !== 'closed' && !eligible) closePanel();
+  }, [closePanel, eligible]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -154,7 +231,7 @@ export function BacklogPanel() {
 
   return (
     <>
-      {!open && (
+      {phase === 'closed' && (
         <button
           type="button"
           className="backlog-edge-handle"
@@ -165,13 +242,16 @@ export function BacklogPanel() {
           <span>백로그</span>
         </button>
       )}
-      {open && selectedProject && (
+      {phase !== 'closed' && selectedProject && (
         <aside
           ref={panelRef}
-          className="backlog-panel"
+          className={`backlog-panel backlog-panel--${phase}`}
           style={{ width: isMobile ? '100vw' : `${width}px` }}
           aria-label={`${selectedProject.name} 백로그`}
+          aria-hidden={phase === 'closing' ? true : undefined}
+          inert={phase === 'closing' ? true : undefined}
           tabIndex={-1}
+          onAnimationEnd={handlePanelAnimationEnd}
         >
           {!isMobile && (
             <div
@@ -195,8 +275,9 @@ export function BacklogPanel() {
               memo={memo}
               project={selectedProject}
               variant="backlog"
-              onLatestSaveSuccess={closePanel}
-              onClose={closePanel}
+              keyboardActive={backlogAcceptsInput(phase)}
+              onLatestSaveSuccess={() => closePanel(panelSession)}
+              onClose={() => closePanel(panelSession)}
             />
           ) : (
             <div className="backlog-panel-message" role="alert">
@@ -206,7 +287,11 @@ export function BacklogPanel() {
                 <button type="button" className="todo-action-button" onClick={() => void loadBacklog()}>
                   다시 시도
                 </button>
-                <button type="button" className="todo-action-button todo-action-button--secondary" onClick={closePanel}>
+                <button
+                  type="button"
+                  className="todo-action-button todo-action-button--secondary"
+                  onClick={() => closePanel(panelSession)}
+                >
                   닫기
                 </button>
               </div>

@@ -39,7 +39,17 @@
   color: #fff;
   border-left: 1px solid #525252;
   box-shadow: -14px 0 40px rgb(0 0 0 / 28%);
-  animation: backlog-panel-enter 180ms ease-out;
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.backlog-panel--opening {
+  animation: backlog-panel-open-desktop 220ms ease-out both;
+}
+
+.backlog-panel--closing {
+  pointer-events: none;
+  animation: backlog-panel-close-desktop 220ms ease-in both;
 }
 
 .backlog-panel:focus,
@@ -89,15 +99,31 @@
   font-size: 15px;
 }
 
-.backlog-editor-toolbar .memo-editor-toolbar-status {
+.backlog-editor-toolbar-right {
   min-width: 0;
-  flex: 1 1 auto;
-}
-
-.backlog-editor-actions {
+  margin-left: auto;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+}
+
+.backlog-editor-toolbar .memo-editor-toolbar-status {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
+.backlog-editor-toolbar .memo-editor-toolbar-status > span {
+  max-width: min(42vw, 420px);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.backlog-editor-toolbar-right > .todo-action-button {
+  flex: 0 0 auto;
 }
 
 .backlog-panel-message {
@@ -127,9 +153,14 @@
   text-align: center;
 }
 
-@keyframes backlog-panel-enter {
-  from { transform: translateX(24px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+@keyframes backlog-panel-open-desktop {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes backlog-panel-close-desktop {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
 }
 
 @media (max-width: 768px) {
@@ -159,17 +190,42 @@
     max-width: 100vw;
   }
 
-  .backlog-editor-toolbar {
-    flex-wrap: wrap;
+  .backlog-panel--opening {
+    animation-name: backlog-panel-open-mobile;
   }
 
-  .backlog-editor-toolbar .memo-editor-toolbar-status {
-    order: 3;
-    flex-basis: 100%;
+  .backlog-panel--closing {
+    animation-name: backlog-panel-close-mobile;
   }
+
+  .backlog-editor-toolbar {
+    min-height: 58px;
+    gap: 8px;
+  }
+
+  .backlog-editor-toolbar-right {
+    gap: 4px;
+    flex: 1 1 auto;
+  }
+
+  .backlog-editor-toolbar .memo-editor-toolbar-status > span {
+    max-width: 92px;
+  }
+
+}
+
+@keyframes backlog-panel-open-mobile {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes backlog-panel-close-mobile {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .backlog-panel { animation: none; }
+  .backlog-panel--opening,
+  .backlog-panel--closing { animation: none; }
   .backlog-edge-handle { transition: none; }
 }
