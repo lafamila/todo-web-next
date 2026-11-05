@@ -53,6 +53,29 @@ export interface MemoInterface {
   serverContent?: string;
 }
 
+export type MemoAttachmentStatus = "uploading" | "ready" | "failed";
+
+export interface MemoAttachmentInterface {
+  id: string;
+  memoId: string;
+  fileName: string;
+  contentType: string;
+  byteSize: number;
+  isImage: boolean;
+  status: MemoAttachmentStatus;
+  createdBy: string;
+  createdAt: string;
+  updatedAtUtc: string | null;
+}
+
+export interface AttachmentPreviewState {
+  id: string;
+  status: MemoAttachmentStatus;
+  objectUrl?: string;
+  error?: string;
+  fileName?: string;
+}
+
 export interface BulkMoveMemosResponseInterface {
   movedMemos: MemoInterface[];
 }
@@ -180,7 +203,7 @@ export interface CreateMemoRequestInterface {
 }
 
 export interface ContentBlockInterface {
-  type: "text" | "code" | "checkbox" | "memo-link" | "table";
+  type: "text" | "code" | "checkbox" | "memo-link" | "table" | "attachment-image";
   content: string;
   metadata?: {
     language?: string;
@@ -191,6 +214,8 @@ export interface ContentBlockInterface {
     indent?: number;
     /** Unicode 상자 문자 표의 화면 렌더링 정보. content에는 원문 전체가 남는다. */
     table?: BoxTableData;
+    /** standalone todo attachment image token의 UUID. */
+    attachmentId?: string;
   };
 }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, type AnchorHTMLAttributes, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type AnchorHTMLAttributes, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
@@ -8,6 +8,8 @@ import remarkGfm from 'remark-gfm';
 import { remarkBracketBold, splitBracketBold } from '@/lib/bracketBold';
 import { cn } from '@/lib/utils';
 import type { BoxTableData } from '@/lib/boxTable';
+import type { AttachmentPreviewState } from '@/lib/types';
+import { TODO_API_BASE_URL } from '@/lib/constants';
 
 /**
  * 메모 본문 블록의 단일 표현.
@@ -157,6 +159,57 @@ export function CheckboxBlock({ checked, content, onToggle }: CheckboxBlockProps
       <span className={cn('flex-1', checked && 'text-gray-500 line-through')}>
         <InlineMarks text={content} />
       </span>
+    </div>
+  );
+}
+
+export function attachmentImageUrl(attachmentId: string): string {
+  return `${TODO_API_BASE_URL}/attachments/${encodeURIComponent(attachmentId)}/content?inline=true`;
+}
+
+export function AttachmentImageBlock({
+  attachmentId,
+  preview,
+  onRetry,
+}: {
+  attachmentId: string;
+  preview?: AttachmentPreviewState;
+  onRetry?: () => void;
+}) {
+  const [loadFailed, setLoadFailed] = useState(false);
+  const status = preview?.status ?? 'ready';
+  const source = status === 'ready'
+    ? attachmentImageUrl(attachmentId)
+    : preview?.objectUrl;
+
+  useEffect(() => setLoadFailed(false), [source]);
+
+  if (status === 'failed' || loadFailed || !source) {
+    return (
+      <div className="attachment-image-block attachment-image-error" role="status">
+        <span>{preview?.error || '이미지를 불러오지 못했습니다.'}</span>
+        {onRetry && (
+          <button type="button" className="todo-action-button todo-action-button--secondary" onClick={onRetry}>
+            다시 시도
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="attachment-image-block" data-attachment-id={attachmentId}>
+      {/* eslint-disable-next-line @next/next/no-img-element -- authenticated Blob/API source */}
+      <img
+        src={source}
+        alt={preview?.fileName || '첨부 이미지'}
+        onError={() => setLoadFailed(true)}
+      />
+      {status === 'uploading' && (
+        <div className="attachment-image-loading" role="status" aria-label="이미지 업로드 중">
+          <span className="attachment-image-spinner" />
+        </div>
+      )}
     </div>
   );
 }

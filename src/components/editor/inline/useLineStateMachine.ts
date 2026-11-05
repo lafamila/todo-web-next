@@ -15,6 +15,10 @@ import {
   type LineGroup,
 } from './classifyLine';
 import { createEditorHistory, type EditorSnapshot } from './history';
+import {
+  insertAttachmentRowsAtIndex,
+  insertAttachmentRowsAtSelection,
+} from '@/lib/attachmentImage';
 
 /** 자동 렌더 안정화 타이머. MemoSection 의 6초 락 해제 타이머와는 별개로 관리한다. */
 export const RENDER_SETTLE_MS = 2000;
@@ -987,6 +991,75 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     [activateLine, closeMention, commitHistory, commitLines, findIndex],
   );
 
+  const insertAttachmentImageRows = useCallback(
+    (attachmentIds: string[], afterCodeOpenLineId?: number | null) => {
+      if (optionsRef.current.readOnly || attachmentIds.length === 0) return;
+      const current = linesRef.current;
+      let result: { lines: EditorLine[]; caretLineId: number; caret: number } | null;
+
+      const activeId = activeLineIdRef.current;
+      const activeIndex = findIndex(activeId);
+      const el = textareaRef.current;
+      const activeGroup: Extract<LineGroup, { type: 'code' | 'table' }> | null = activeId === null
+        ? null
+        : buildLineGroups(current).find(
+            (group): group is Extract<LineGroup, { type: 'code' | 'table' }> =>
+              (group.type === 'code' && (group.open.id === activeId || group.close?.id === activeId)) ||
+              (group.type === 'table' && group.lines.some((line) => line.id === activeId)),
+          ) ?? null;
+      if (activeGroup) {
+        const lastGroupLine = activeGroup.type === 'code'
+          ? (activeGroup.close ?? activeGroup.body.at(-1) ?? activeGroup.open)
+          : activeGroup.lines.at(-1)!;
+        const insertionIndex = current.findIndex((line) => line.id === lastGroupLine.id) + 1;
+        result = insertAttachmentRowsAtIndex({
+          lines: current, insertionIndex, attachmentIds, makeId: nextLineId,
+        });
+      } else if (activeId !== null && activeIndex >= 0 && el) {
+        result = insertAttachmentRowsAtSelection({
+          lines: current,
+          lineIndex: activeIndex,
+          selectionStart: el.selectionStart,
+          selectionEnd: el.selectionEnd,
+          attachmentIds,
+          makeId: nextLineId,
+        });
+      } else if (afterCodeOpenLineId != null) {
+        const codeGroup = buildLineGroups(current).find(
+          (item): item is Extract<LineGroup, { type: 'code' }> =>
+            item.type === 'code' && item.open.id === afterCodeOpenLineId,
+        );
+        if (!codeGroup) return;
+        const lastGroupLine = codeGroup.close ?? codeGroup.body.at(-1) ?? codeGroup.open;
+        const insertionIndex = current.findIndex((line) => line.id === lastGroupLine.id) + 1;
+        result = insertAttachmentRowsAtIndex({
+          lines: current, insertionIndex, attachmentIds, makeId: nextLineId,
+        });
+      } else if (current.length > 0 && current.at(-1)?.text === '') {
+        result = insertAttachmentRowsAtSelection({
+          lines: current,
+          lineIndex: current.length - 1,
+          selectionStart: 0,
+          selectionEnd: 0,
+          attachmentIds,
+          makeId: nextLineId,
+        });
+      } else {
+        result = insertAttachmentRowsAtIndex({
+          lines: current, insertionIndex: current.length, attachmentIds, makeId: nextLineId,
+        });
+      }
+
+      if (!result) return;
+      commitHistory(false);
+      commitLines(result.lines);
+      forceHistoryBoundaryRef.current = true;
+      closeMention();
+      activateLine(result.caretLineId, result.caret, 'editing');
+    },
+    [activateLine, closeMention, commitHistory, commitLines, findIndex],
+  );
+
   // 활성 라인 하나에만 전달되지만, 안정적이어야 LineView 의 memo 가 유지된다.
   // ref 는 여기 섞지 않는다 — 섞으면 객체 전체가 ref 취급돼 렌더 중 접근으로 잡힌다.
   const lineHandlers = useMemo(
@@ -1020,6 +1093,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     focusLastLine,
     focusOffset,
     insertAtCaret,
+    insertAttachmentImageRows,
     pendingCodeFocusId,
     consumeCodeFocus,
     selectDomRange,

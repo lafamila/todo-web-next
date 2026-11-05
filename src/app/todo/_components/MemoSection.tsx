@@ -18,6 +18,13 @@ import type {
   ProjectInterface,
   SyncIssueInterface,
 } from '@/lib/types';
+import { MemoAttachments } from './MemoAttachments';
+import { useMemoAttachments, newAttachmentId } from '@/hooks/useMemoAttachments';
+import {
+  insertAttachmentTokensAtSelection,
+  isInlineImageFile,
+  removeAttachmentTokenRows,
+} from '@/lib/attachmentUploadPolicy';
 import {
   ApiError,
   clearMemoLease,
@@ -109,6 +116,14 @@ interface FailedDraftSnapshot {
   title: string;
   content: string;
   error: string;
+}
+
+interface PendingAttachmentSave {
+  memoId: string;
+  editorEpoch: number;
+  content: string;
+  localRevision: number;
+  resolve: (saved: boolean) => void;
 }
 
 /**
@@ -271,6 +286,17 @@ export function MemoSection({
     canMerge,
   } = useSync();
   const isAdmin = user?.isAdmin ?? false;
+  const {
+    readyAttachments,
+    uploads: attachmentUploads,
+    previewStateById: attachmentStateById,
+    listError: attachmentListError,
+    enqueueFiles: enqueueAttachmentFiles,
+    retryUpload: retryAttachmentUpload,
+    cancelUpload: cancelAttachmentUpload,
+    refreshAttachments,
+    blocksMemoSave: attachmentBlocksMemoSave,
+  } = useMemoAttachments(selectedMemo?.id ?? null, user?.id ?? null);
 
   // 헤더 슬롯은 같은 트리(MemoListSection)가 렌더하므로 마운트 후에 존재한다.
   useEffect(() => {
@@ -356,6 +382,7 @@ export function MemoSection({
   const ownedDraftWriteRef = useRef<DraftWriteOwnership | null>(null);
   const flushDraftOnUnmountRef = useRef<() => void>(() => {});
   const pendingSaveRef = useRef<PendingMemoSave | null>(null);
+  const pendingAttachmentSaveRef = useRef<PendingAttachmentSave | null>(null);
   const saveInFlightRef = useRef(false);
   const saveRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resumePendingSaveRef = useRef<() => void>(() => {});
@@ -366,6 +393,10 @@ export function MemoSection({
     currentIssue?.kind === 'conflict' || currentIssue?.kind === 'duplicate_memo'
       ? currentIssue
       : undefined;
+
+  useEffect(() => {
+    if (attachmentListError) setSaveMessage(attachmentListError);
+  }, [attachmentListError]);
 
   const {
     isConnected,
@@ -379,6 +410,7 @@ export function MemoSection({
   } = useMemoSocket({
     memoId: selectedMemo?.id ?? null,
     onContentUpdated: (newContent: string) => {
+      void refreshAttachments();
       const refreshSequence = remoteRefreshSequenceRef.current + 1;
       remoteRefreshSequenceRef.current = refreshSequence;
       remoteRefreshAbortRef.current?.abort();
@@ -534,6 +566,7 @@ export function MemoSection({
       ]);
     },
     onSyncApplied: () => {
+      void refreshAttachments();
       void Promise.allSettled([
         refreshProjects(),
         refreshCurrentProject(),
@@ -1364,11 +1397,36 @@ export function MemoSection({
   }, []);
 
   const queueMemoSave = useCallback(
-    async (nextContent: string, allowConflict = false): Promise<boolean> => {
+    async (
+      nextContent: string,
+      allowConflict = false,
+      waitForAttachments = false,
+    ): Promise<boolean> => {
       if (!selectedMemo) return false;
       if (isViewingVersion) {
         setSaveMessage('과거 버전은 읽기 전용입니다. 현재 문서로 돌아온 뒤 저장하세요.');
         return false;
+      }
+      if (attachmentBlocksMemoSave) {
+        const snapshotLocalRevision = localRevisionRef.current;
+        const draftStored = await flushDraft(nextContent, snapshotLocalRevision);
+        setDraftStatus(draftStored ? 'local-saved' : 'error');
+        setSaveMessage(
+          draftStored
+            ? '업로드 후 저장 대기'
+            : '업로드 대기 · 초안 저장 실패',
+        );
+        if (!waitForAttachments) return false;
+        return new Promise<boolean>((resolve) => {
+          pendingAttachmentSaveRef.current?.resolve(false);
+          pendingAttachmentSaveRef.current = {
+            memoId: selectedMemo.id,
+            editorEpoch: editorEpochRef.current,
+            content: nextContent,
+            localRevision: snapshotLocalRevision,
+            resolve,
+          };
+        });
       }
       if (draftConflictActive && !allowConflict) {
         setDraftStatus('conflict');
@@ -1408,6 +1466,7 @@ export function MemoSection({
       });
     },
     [
+      attachmentBlocksMemoSave,
       draftConflictActive,
       flushDraft,
       isLockedByOther,
@@ -1418,8 +1477,31 @@ export function MemoSection({
     ],
   );
 
+  useEffect(() => {
+    if (attachmentBlocksMemoSave) return;
+    const pending = pendingAttachmentSaveRef.current;
+    if (!pending) return;
+    pendingAttachmentSaveRef.current = null;
+    if (
+      pending.memoId !== initializedMemoIdRef.current ||
+      pending.editorEpoch !== editorEpochRef.current ||
+      pending.content !== contentRef.current ||
+      pending.localRevision !== localRevisionRef.current
+    ) {
+      pending.resolve(false);
+      return;
+    }
+    void queueMemoSave(pending.content).then(pending.resolve);
+  }, [attachmentBlocksMemoSave, queueMemoSave]);
+
+  useEffect(() => () => {
+    const pending = pendingAttachmentSaveRef.current;
+    pendingAttachmentSaveRef.current = null;
+    pending?.resolve(false);
+  }, [selectedMemo?.id]);
+
   const handleSaveMemo = useCallback(
-    async () => queueMemoSave(contentRef.current),
+    async () => queueMemoSave(contentRef.current, false, true),
     [queueMemoSave],
   );
 
@@ -1430,7 +1512,7 @@ export function MemoSection({
   const handleExplicitSave = useCallback(async () => {
     const snapshotContent = contentRef.current;
     const snapshotRevision = localRevisionRef.current;
-    const saved = await queueMemoSave(snapshotContent);
+    const saved = await queueMemoSave(snapshotContent, false, true);
     if (isLatestSavedSnapshot({
       saved,
       snapshotContent,
@@ -1447,6 +1529,10 @@ export function MemoSection({
   // 게시 / 재게시 핸들러
   const handlePublish = useCallback(async () => {
     if (!selectedMemo) return;
+    if (attachmentBlocksMemoSave) {
+      setPublishMessage('첨부파일 업로드가 끝난 뒤 게시하세요.');
+      return;
+    }
 
     // 저장되지 않은 변경사항이 있으면 먼저 저장
     if (contentRef.current !== originalContentRef.current) {
@@ -1468,7 +1554,7 @@ export function MemoSection({
     } finally {
       setIsPublishing(false);
     }
-  }, [selectedMemo, handleSaveMemo, articleStatus]);
+  }, [articleStatus, attachmentBlocksMemoSave, handleSaveMemo, selectedMemo]);
 
   // 게시 취소 핸들러
   const handleUnpublish = useCallback(async () => {
@@ -1861,6 +1947,67 @@ export function MemoSection({
     [isViewingVersion, queueMemoSave]
   );
 
+  const handleAttachmentFiles = useCallback((files: File[]) => {
+    if (isViewingVersion || (!isBacklog && !selectedProject?.canWrite)) return;
+    void enqueueAttachmentFiles(files, false).catch((error) => {
+      setSaveMessage(
+        error instanceof Error ? error.message : '첨부파일 임시저장에 실패했습니다.',
+      );
+    });
+  }, [enqueueAttachmentFiles, isBacklog, isViewingVersion, selectedProject?.canWrite]);
+
+  const handlePasteImages = useCallback((files: File[]): boolean => {
+    if (!selectedMemo || !canEdit || isViewingVersion) return false;
+    const images = files.filter(isInlineImageFile);
+    if (images.length === 0) return false;
+    const ids = images.map(() => newAttachmentId());
+    inlineEditorRef.current?.insertAttachmentImageRows(ids);
+    void enqueueAttachmentFiles(images, true, ids).catch((error) => {
+      setSaveMessage(
+        error instanceof Error ? error.message : '붙여넣은 이미지 임시저장에 실패했습니다.',
+      );
+    });
+    return true;
+  }, [canEdit, enqueueAttachmentFiles, isViewingVersion, selectedMemo]);
+
+  const handleRawAttachmentPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!selectedMemo || !canEdit || isViewingVersion) return;
+    const images = Array.from(event.clipboardData.files).filter(isInlineImageFile);
+    if (images.length === 0) return;
+    event.preventDefault();
+    const ids = images.map(() => newAttachmentId());
+    const textarea = event.currentTarget;
+    const result = insertAttachmentTokensAtSelection(
+      contentRef.current,
+      textarea.selectionStart,
+      textarea.selectionEnd,
+      ids,
+    );
+    applyContentMutation(result.content);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(result.caret, result.caret);
+    });
+    void enqueueAttachmentFiles(images, true, ids).catch((error) => {
+      setSaveMessage(
+        error instanceof Error ? error.message : '붙여넣은 이미지 임시저장에 실패했습니다.',
+      );
+    });
+  }, [applyContentMutation, canEdit, enqueueAttachmentFiles, isViewingVersion, selectedMemo]);
+
+  const handleCancelAttachment = useCallback((attachmentId: string) => {
+    void cancelAttachmentUpload(attachmentId).then((cancelled) => {
+      if (!cancelled) return;
+      applyContentMutation(
+        removeAttachmentTokenRows(contentRef.current, attachmentId),
+      );
+    }).catch((error) => {
+      setSaveMessage(
+        error instanceof Error ? error.message : '첨부파일 취소에 실패했습니다.',
+      );
+    });
+  }, [applyContentMutation, cancelAttachmentUpload]);
+
   const handleInlineChange = useCallback(
     (next: string) => applyContentMutation(next),
     [applyContentMutation],
@@ -2209,7 +2356,16 @@ export function MemoSection({
       )}
       {lockMessage && <span className="memo-toolbar-lock">{lockMessage}</span>}
       {saveMessage && (
-        <span className="memo-toolbar-save-message">{saveMessage}</span>
+        <span
+          className="memo-toolbar-save-message"
+          title={saveMessage === '업로드 후 저장 대기'
+            ? '첨부파일 업로드 완료 후 저장합니다. 기기 초안은 보관 중입니다.'
+            : saveMessage === '업로드 대기 · 초안 저장 실패'
+              ? '첨부파일 업로드 중이며 기기 초안 저장도 실패했습니다. 내용을 복사하세요.'
+              : saveMessage}
+        >
+          {saveMessage}
+        </span>
       )}
       {publishMessage && (
         <span className="memo-toolbar-publish-message">{publishMessage}</span>
@@ -2222,8 +2378,7 @@ export function MemoSection({
     </div>
   );
 
-  const publishActions = !isBacklog && isAdmin && features.articles && (
-    <>
+  const publishPrimaryAction = !isBacklog && isAdmin && features.articles && (
       <button
         type="button"
         onClick={handlePublish}
@@ -2232,7 +2387,8 @@ export function MemoSection({
       >
         {isPublishing ? '게시 중...' : articleStatus ? `재게시 (v${articleStatus.publishedVersion})` : '게시'}
       </button>
-      {articleStatus && (
+  );
+  const unpublishAction = !isBacklog && isAdmin && features.articles && articleStatus && (
         <button
           type="button"
           onClick={handleUnpublish}
@@ -2241,7 +2397,24 @@ export function MemoSection({
         >
           {isPublishing ? '처리 중...' : '게시 취소'}
         </button>
-      )}
+  );
+  const canAttach = !isViewingVersion && Boolean(isBacklog || selectedProject.canWrite);
+  const attachmentActions = (
+    <MemoAttachments
+      memoId={selectedMemo.id}
+      readyAttachments={readyAttachments}
+      uploads={attachmentUploads}
+      disabled={!canAttach}
+      onFiles={handleAttachmentFiles}
+      onRetry={retryAttachmentUpload}
+      onCancel={handleCancelAttachment}
+    />
+  );
+  const documentActions = (
+    <>
+      {attachmentActions}
+      {readyAttachments.length === 0 && publishPrimaryAction}
+      {unpublishAction}
     </>
   );
 
@@ -2256,9 +2429,10 @@ export function MemoSection({
       <div className="h-full flex flex-col min-h-0">
         {isBacklog ? (
           <div className="backlog-editor-toolbar">
-            <strong>백로그</strong>
+            <strong>내 백로그</strong>
             <div className="backlog-editor-toolbar-right">
               {statusItems}
+              {attachmentActions}
               {rawMode && <span className="memo-toolbar-raw">RAW 모드</span>}
               {(draftStatus === 'error' || draftStatus === 'lock-wait') && (
                 <button
@@ -2309,7 +2483,7 @@ export function MemoSection({
             </button>
             {statusItems}
             <div className="memo-mobile-actions">
-              {publishActions}
+              {documentActions}
               <button
                 type="button"
                 className="memo-mobile-save todo-action-button"
@@ -2338,7 +2512,7 @@ export function MemoSection({
                     RAW 모드 · {typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘E' : 'Ctrl+E'}로 종료
                   </span>
                 )}
-                {publishActions}
+                {documentActions}
               </div>
             </div>,
             headerSlot,
@@ -2465,6 +2639,7 @@ export function MemoSection({
                 onMouseUp={handleRawMouseUp}
                 onCopy={handleRawCopy}
                 onCut={handleRawCut}
+                onPaste={handleRawAttachmentPaste}
                 onFocus={holdLock}
                 onBlur={scheduleLockRelease}
                 disabled={!canEdit}
@@ -2494,6 +2669,9 @@ export function MemoSection({
                 onSelectRange={handleSelectRange}
                 mentionActive={showMemoSearch}
                 onMentionKeyDown={handleMentionKeyDown}
+                attachmentStateById={attachmentStateById}
+                onRetryAttachment={retryAttachmentUpload}
+                onPasteImages={handlePasteImages}
                 readOnly={!canEdit}
                 onReadOnlyEditIntent={
                   isViewingVersion ? undefined : handleReadOnlyEditIntent

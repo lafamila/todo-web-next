@@ -132,12 +132,13 @@ export function BacklogPanel() {
     setError(null);
     try {
       let loaded = await getProjectBacklog(selectedProject.id);
-      if (!loaded && selectedProject.canWrite) {
+      // A project viewer can write their own private backlog too.
+      if (!loaded) {
         loaded = await ensureProjectBacklog(selectedProject.id);
       }
       if (sequence !== loadingSequenceRef.current) return;
       setMemo(loaded);
-      if (!loaded) setError('아직 백로그가 없습니다. 편집 권한이 있는 멤버가 먼저 만들 수 있습니다.');
+      if (!loaded) setError('내 백로그를 불러오지 못했습니다. 다시 시도하세요.');
     } catch (loadError) {
       if (sequence !== loadingSequenceRef.current) return;
       setError(loadError instanceof Error ? loadError.message : '백로그를 불러오지 못했습니다.');
@@ -323,10 +324,10 @@ export function BacklogPanel() {
           type="button"
           className="backlog-edge-handle"
           onClick={openPanel}
-          aria-label={`${selectedProject?.name ?? '현재 프로젝트'} 백로그 열기`}
-          title="백로그 열기 (⌘/Ctrl+Shift+S)"
+          aria-label={`${selectedProject?.name ?? '현재 프로젝트'} 내 백로그 열기`}
+          title="내 백로그 열기 (⌘/Ctrl+Shift+S)"
         >
-          <span>백로그</span>
+          <span>내 백로그</span>
         </button>
       )}
       {phase !== 'closed' && selectedProject && (
@@ -334,7 +335,7 @@ export function BacklogPanel() {
           ref={panelRef}
           className={`backlog-panel backlog-panel--${phase}`}
           style={{ width: isMobile ? '100vw' : `${width}px` }}
-          aria-label={`${selectedProject.name} 백로그`}
+          aria-label={`${selectedProject.name} 내 백로그`}
           aria-hidden={phase === 'closing' ? true : undefined}
           inert={phase === 'closing' ? true : undefined}
           tabIndex={-1}

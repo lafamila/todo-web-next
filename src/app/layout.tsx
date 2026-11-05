@@ -5,6 +5,7 @@ import "./todo/global.css";
 // 인라인 에디터 라인 상태 토큰 — todo/global.css 의 `.detail textarea` 를 이겨야 하므로 뒤에 로드한다.
 import "@/components/editor/inline/editor-tokens.css";
 import "@/components/editor/blocks/box-table.css";
+import "@/components/editor/blocks/attachment-image.css";
 import "./todo/_components/backlog-panel.css";
 
 export const metadata: Metadata = {

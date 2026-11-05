@@ -10,6 +10,7 @@ import { lineCaretToDocumentOffset, takePendingCheckboxToggle, type PendingCheck
 import {
   createEditorActivityTracker,
 } from '@/lib/editorActivity';
+import type { AttachmentPreviewState } from '@/lib/types';
 
 export type { MentionState };
 
@@ -20,6 +21,8 @@ export interface InlineEditorHandle {
   focusOffset: (offset: number) => void;
   /** @ 검색으로 고른 메모 링크를 활성 라인의 `@쿼리` 자리에 넣는다. */
   insertMemoLink: (linkText: string) => void;
+  /** 첨부 이미지를 현재 선택 위치(코드편집기면 펜스 뒤)의 standalone 행으로 넣는다. */
+  insertAttachmentImageRows: (attachmentIds: string[]) => void;
   isActive: () => boolean;
 }
 
@@ -43,6 +46,10 @@ export interface InlineEditorProps {
   onReadOnlyCodeEditIntent?: () => void;
   /** 체크 클릭은 소스 편집으로 전환하지 않고 잠금 확보 뒤 원래 줄에 재생한다. */
   onReadOnlyCheckboxIntent?: () => void;
+  attachmentStateById?: ReadonlyMap<string, AttachmentPreviewState>;
+  onRetryAttachment?: (id: string) => void;
+  /** 이미지 파일 붙여넣기를 상위 업로드 큐에 넘겼으면 true. */
+  onPasteImages?: (files: File[]) => boolean;
 }
 
 /**
@@ -66,6 +73,9 @@ export function InlineEditor({
   onReadOnlyEditIntent,
   onReadOnlyCodeEditIntent,
   onReadOnlyCheckboxIntent,
+  attachmentStateById,
+  onRetryAttachment,
+  onPasteImages,
 }: InlineEditorProps) {
   const pendingCheckboxRef = useRef<PendingCheckboxToggle | null>(null);
   const [activityTracker] = useState(() =>
@@ -123,6 +133,15 @@ export function InlineEditor({
       focusLastLine: machine.focusLastLine,
       focusOffset: machine.focusOffset,
       insertMemoLink: (linkText: string) => machine.insertAtCaret(linkText, true),
+      insertAttachmentImageRows: (attachmentIds: string[]) => {
+        const active = document.activeElement instanceof Element ? document.activeElement : null;
+        const wrapper = active?.closest<HTMLElement>('[data-code-open-line-id]');
+        const codeOpenLineId = wrapper ? Number(wrapper.dataset.codeOpenLineId) : null;
+        machine.insertAttachmentImageRows(
+          attachmentIds,
+          Number.isFinite(codeOpenLineId) ? codeOpenLineId : null,
+        );
+      },
       isActive: () => machine.activeMode !== null,
     }),
     [machine],
@@ -269,6 +288,17 @@ export function InlineEditor({
     dragAnchorRef.current = endpointFromPoint(e.clientX, e.clientY);
   };
 
+  const handleSurfacePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    if (readOnly || !onPasteImages) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest('.monaco-editor')) return;
+    const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
+    if (images.length > 0 && onPasteImages(images)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+
   const handleReadOnlyLineIntent = (lineId: number, caret: number) => {
     pendingCheckboxRef.current = null;
     const offset = lineCaretToDocumentOffset(machine.lines, lineId, caret);
@@ -319,6 +349,7 @@ export function InlineEditor({
       className="flex min-h-full flex-col"
       onClick={handleSurfaceClick}
       onMouseDown={handleSurfaceMouseDown}
+      onPasteCapture={handleSurfacePaste}
     >
       {groups.flatMap<React.ReactNode>((group) => {
         if (group.type === 'table') {
@@ -370,7 +401,7 @@ export function InlineEditor({
         }
         if (group.type === 'code') {
           return (
-            <div key={group.key} className="my-2">
+            <div key={group.key} className="my-2" data-code-open-line-id={group.open.id}>
               <LineView
                 line={group.open}
                 mode={group.open.id === activeLineId ? activeMode : null}
@@ -436,6 +467,10 @@ export function InlineEditor({
             onToggleCheckbox={machine.toggleCheckboxLine}
             textareaRef={machine.textareaRef}
             handlers={group.line.id === activeLineId ? machine.lineHandlers : undefined}
+            attachmentPreview={group.cls.attachmentId
+              ? attachmentStateById?.get(group.cls.attachmentId)
+              : undefined}
+            onRetryAttachment={!readOnly ? onRetryAttachment : undefined}
           />
         );
       })}

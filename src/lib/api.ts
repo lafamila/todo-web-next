@@ -14,6 +14,7 @@ import type {
   DailyTaskTypeInterface,
   DayDetailInterface,
   MemoInterface,
+  MemoAttachmentInterface,
   MemoLeaseInterface,
   MemoMergeResultInterface,
   MemoVersionSummaryInterface,
@@ -403,6 +404,77 @@ export async function updateMemo(
     },
     "Failed to update memo",
   );
+}
+
+export async function getMemoAttachments(
+  memoId: string,
+  signal?: AbortSignal,
+): Promise<MemoAttachmentInterface[]> {
+  return fetchJson<MemoAttachmentInterface[]>(
+    `/memos/${memoId}/attachments`,
+    { signal },
+    "첨부파일 목록을 불러오지 못했습니다.",
+  );
+}
+
+export async function uploadMemoAttachment(
+  memoId: string,
+  attachmentId: string,
+  file: Blob,
+  fileName: string,
+  signal?: AbortSignal,
+): Promise<MemoAttachmentInterface> {
+  const query = new URLSearchParams({ attachmentId, filename: fileName });
+  const response = await fetch(
+    `${TODO_API_BASE_URL}/memos/${memoId}/attachments?${query.toString()}`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+      body: file,
+      signal,
+    },
+  );
+  if (!response.ok) throw await parseError(response, "첨부파일을 업로드하지 못했습니다.");
+  return response.json() as Promise<MemoAttachmentInterface>;
+}
+
+export function attachmentContentUrl(attachmentId: string, inline = true): string {
+  const suffix = inline ? "?inline=true" : "";
+  return `${TODO_API_BASE_URL}/attachments/${encodeURIComponent(attachmentId)}/content${suffix}`;
+}
+
+function dispositionFileName(header: string | null, fallback: string): string {
+  if (!header) return fallback;
+  const encoded = header.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      // malformed fallback below
+    }
+  }
+  return header.match(/filename="([^"]+)"/i)?.[1] ?? fallback;
+}
+
+export async function downloadMemoAttachments(
+  memoId: string,
+  attachmentIds: string[],
+): Promise<{ blob: Blob; fileName: string }> {
+  const response = await fetch(`${TODO_API_BASE_URL}/memos/${memoId}/attachments/download`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ attachmentIds }),
+  });
+  if (!response.ok) throw await parseError(response, "첨부파일을 다운로드하지 못했습니다.");
+  return {
+    blob: await response.blob(),
+    fileName: dispositionFileName(
+      response.headers.get("Content-Disposition"),
+      attachmentIds.length === 1 ? "attachment" : "todo-attachments.zip",
+    ),
+  };
 }
 
 export async function moveMemo(

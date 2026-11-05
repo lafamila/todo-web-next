@@ -3,6 +3,7 @@ import { matchCheckbox, splitIndent } from '@/lib/lineMarks';
 import { parseContent } from '@/lib/utils';
 import type { ContentBlockInterface } from '@/lib/types';
 import { readBoxTable, type BoxTableData } from '@/lib/boxTable';
+import { parseAttachmentImageLine } from '@/lib/attachmentImage';
 
 /**
  * 인라인 에디터의 문서 모델.
@@ -19,6 +20,7 @@ export type LineKind =
   | 'checkbox-checked'
   | 'code-fence'
   | 'memo-link'
+  | 'attachment-image'
   | 'text'
   | 'blank';
 
@@ -31,6 +33,7 @@ export interface LineClassification {
   indent: number;
   memoId?: string;
   memoTitle?: string;
+  attachmentId?: string;
 }
 
 // 체크박스/들여쓰기 문법은 `lib/lineMarks.ts` 가 단일 소스다 (parseContent 와 공유).
@@ -63,6 +66,14 @@ export function classifyLine(text: string): LineClassification {
     return { kind: 'code-fence', content: text, checked: false, indent: 0 };
   }
 
+  const attachmentImage = parseAttachmentImageLine(text);
+  if (attachmentImage) {
+    return {
+      kind: 'attachment-image', content: text, checked: false, indent: 0,
+      attachmentId: attachmentImage.attachmentId,
+    };
+  }
+
   if (text.includes('[@') && text.includes('](')) {
     const match = text.match(MEMO_LINK_PATTERN);
 
@@ -86,7 +97,8 @@ export function isAutoRenderTarget(cls: LineClassification): boolean {
   return (
     cls.kind === 'checkbox-checked' ||
     cls.kind === 'checkbox-unchecked' ||
-    cls.kind === 'memo-link'
+    cls.kind === 'memo-link' ||
+    cls.kind === 'attachment-image'
   );
 }
 
@@ -100,6 +112,7 @@ export function isCompletePattern(cls: LineClassification): boolean {
     case 'checkbox-unchecked':
       return cls.content.trim().length > 0;
     case 'memo-link':
+    case 'attachment-image':
       return true;
     default:
       return false;
@@ -222,6 +235,12 @@ function groupsToBlocks(groups: LineGroup[]): ContentBlockInterface[] {
             indent: group.cls.indent,
           },
         };
+      case 'attachment-image':
+        return {
+          type: 'attachment-image',
+          content: group.line.text,
+          metadata: { attachmentId: group.cls.attachmentId },
+        };
       default:
         return {
           type: 'text',
@@ -257,7 +276,8 @@ export function assertClassifierMatchesParseContent(lines: EditorLine[]): void {
       a.content !== b.content ||
       Boolean(a.metadata?.checked) !== Boolean(b.metadata?.checked) ||
       (a.metadata?.indent ?? 0) !== (b.metadata?.indent ?? 0) ||
-      JSON.stringify(a.metadata?.table) !== JSON.stringify(b.metadata?.table)
+      JSON.stringify(a.metadata?.table) !== JSON.stringify(b.metadata?.table) ||
+      a.metadata?.attachmentId !== b.metadata?.attachmentId
     ) {
       console.warn('[inline-editor] classifier/parseContent 판정 불일치', {
         index: i,

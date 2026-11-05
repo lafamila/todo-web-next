@@ -1,11 +1,12 @@
 'use client';
 
 import React, { memo, useEffect, useLayoutEffect } from 'react';
-import { CheckboxBlock, MarkdownBlock } from '@/components/editor/blocks/ContentBlocks';
+import { AttachmentImageBlock, CheckboxBlock, MarkdownBlock } from '@/components/editor/blocks/ContentBlocks';
 import { indentStyle } from '@/lib/lineMarks';
 import { cn } from '@/lib/utils';
 import { classifyLine, type EditorLine } from './classifyLine';
 import type { LineHandlers, LineMode } from './useLineStateMachine';
+import type { AttachmentPreviewState } from '@/lib/types';
 
 interface CaretPositionSource {
   caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
@@ -60,6 +61,8 @@ export interface LineViewProps {
   asFence?: boolean;
   /** 표 원문 편집 중에는 Markdown을 거치지 않고 테두리/공백까지 그대로 표시한다. */
   asPlainText?: boolean;
+  attachmentPreview?: AttachmentPreviewState;
+  onRetryAttachment?: (id: string) => void;
 }
 
 function LineViewImpl({
@@ -75,6 +78,8 @@ function LineViewImpl({
   textareaRef,
   asFence = false,
   asPlainText = false,
+  attachmentPreview,
+  onRetryAttachment,
 }: LineViewProps) {
   const cls = classifyLine(line.text);
   const isEditing = mode === 'editing';
@@ -136,6 +141,14 @@ function LineViewImpl({
               : () => onToggleCheckbox(line.id)}
           />
         );
+      case 'attachment-image':
+        return cls.attachmentId ? (
+          <AttachmentImageBlock
+            attachmentId={cls.attachmentId}
+            preview={attachmentPreview}
+            onRetry={onRetryAttachment ? () => onRetryAttachment(cls.attachmentId!) : undefined}
+          />
+        ) : null;
       case 'blank':
         return <br />;
       default:

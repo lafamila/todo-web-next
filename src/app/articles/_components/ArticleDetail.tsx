@@ -6,6 +6,7 @@ import {
   MarkdownBlock,
   StaticCodeBlock,
   BoxTableBlock,
+  AttachmentImageBlock,
 } from '@/components/editor/blocks/ContentBlocks';
 import { indentStyle } from '@/lib/lineMarks';
 import { parseContent } from '@/lib/utils';
@@ -37,6 +38,10 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
       const indent = indentStyle(block.metadata?.indent ?? 0);
 
       switch (block.type) {
+        case 'attachment-image':
+          return block.metadata?.attachmentId
+            ? <AttachmentImageBlock key={index} attachmentId={block.metadata.attachmentId} />
+            : <pre key={index}>{block.content}</pre>;
         case 'table':
           return block.metadata?.table
             ? <BoxTableBlock key={index} table={block.metadata.table} />

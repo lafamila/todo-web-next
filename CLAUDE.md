@@ -44,7 +44,7 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 
 ## Memo Editor (인라인 라이브 렌더링)
 
-### 프로젝트 계층과 공유 백로그
+### 프로젝트 계층과 개인 백로그
 
 - 프로젝트는 root/직접 sub-project 두 단계다. `isGroup` root 클릭은 아코디언만 토글하고 문서 화면을 선택하지 않는다.
   첫 자식 생성 시 기존 메모(백로그 포함)와 멤버 역할이 첫 자식으로 보존 이동/복사된다. 이후 자식 멤버는 수동 초대다.
@@ -59,7 +59,8 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 - 다중 선택 이동은 양쪽 root의 실제 소유자가 관리하는 leaf 사이에서 가능하다. 출발·도착 프로젝트 이름을 각각 정확히
   입력해야 하며 API가 전체를 한 트랜잭션으로 검증/이동한다. 선택 중인 dirty 편집기를 유지하고 이동 후 같은 메모 ID로
   대상 프로젝트를 따른다. 실패·제목 충돌은 전체 취소, 늦은 응답은 기존 selection epoch gate를 따른다.
-- `BacklogPanel`은 선택된 leaf 프로젝트의 singleton 백로그를 불러오며 일반 목록에 섞지 않는다. `MemoSection`의 문서 override로
+- `BacklogPanel`은 선택된 leaf 프로젝트+로그인 계정별 비공개 백로그를 불러오며 일반 목록에 섞지 않는다.
+  다른 멤버·프로젝트 owner에게 공유하지 않으며 viewer도 자기 백로그는 생성·편집할 수 있다. `MemoSection`의 문서 override로
   동일한 InlineEditor/Monaco/Raw/IME/CAS/lease/기기 초안 기능을 재사용하고 기존 메모와 별도 버퍼·소켓을 가진다.
 - Cmd/Ctrl+Shift+S는 백로그 열기/닫기 토글, Cmd/Ctrl+S는 마지막으로 포커스한 편집기 저장이다. 백로그 열기는 focus를 이동하고
   닫기는 기존 focus를 복원한다. 체크박스 즉시 저장은 패널을 닫지 않고 명시 저장의 최신 snapshot 성공만 닫는다.
@@ -79,6 +80,22 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   돌아간다. 저장소 차단/잘못된 값은 기본 레이아웃으로 처리하며 서버에 설정을 보내지 않는다.
 - Cmd/Ctrl+Enter는 전체화면 진입/해제 토글이며 IME/repeat를 무시한다. API 추가 계약은 root
   `.idea/completed/TODO_SUBPROJECT_BACKLOG_PLAN.md`, 안전한 브라우저 검증은 `../.scripts/tests/todo-workspace-qa.md` 참조.
+
+### 첨부파일과 이미지 행
+
+- `useMemoAttachments`는 파일 선택·클립보드 이미지를 Todo 인증 API로 업로드한다. 완료 첨부가 있으면 게시/재게시 자리에
+  `다운로드(N)`을 표시한다. 모달은 전체선택/개별선택을 지원하며 한 파일은 원본, 여러 파일은 ZIP으로 받는다.
+  다운로드 모달은 `document.body` portal로 헤더/백로그 stacking context 밖에서 기존 Modal 레이어를 사용한다.
+- 이미지의 저장 문법은 독립된 `![이미지](todo-attachment:<UUID>)` 행이다. 문장 중간 paste는 앞/이미지/뒤 행으로
+  나누고 코드펜스·표 source 안에서는 블록 뒤에 삽입한다. `attachmentImage.ts`의 parser를 InlineEditor/ContentBlocks가
+  공유한다. 코드펜스 안의 토큰은 코드로 유지한다. 공개 게시글이라고 비공개 첨부 권한을 풀지 않는다.
+- 즉시 object URL 미리보기+회전 표시를 제공하고 완료 후 인증 이미지 URL로 전환한다. Blob 큐는 IndexedDB에
+  origin/account/memo/attachment별로 격리하며 새로고침 후 재개·실패 재시도·로컬 취소를 지원한다.
+  memo/account 전환은 업로드를 abort하고 scope/epoch를 검증하여 다른 본문을 변경하지 않는다.
+- 미완료/실패 업로드가 있으면 서버 저장을 완료로 처리하지 않는다. 사용자의 명시적 저장 요청만 완료 후 재개하며,
+  그 사이 본문/선택/epoch가 바뀌면 기존 요청으로 저장하거나 패널을 닫지 않는다. 기존 기기 초안은 별도로 보존한다.
+- 저장소 비밀은 Web 환경값에 넣지 않는다. API의 신규 환경키·양쪽 sync v4 갱신·private R2 설정은
+  `../todo-api-fastapi/docs/memo-attachments.md` 참조. Web Dockerfile/의존성 변경은 필요 없다.
 
 메모 본문 편집기는 **편집창/미리보기 분리가 없는 단일 서피스**다. 활성 라인 1개만 `<textarea>` 로
 살아 있고 나머지 라인은 렌더된 블록으로 남는다. 구현은 `src/components/editor/inline/` 에 있고

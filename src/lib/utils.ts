@@ -2,6 +2,7 @@ import { clsx, type ClassValue } from "clsx";
 import { codeFenceLanguage, isCodeFenceLine } from "./codeFence";
 import { matchCheckbox, splitIndent, toggleCheckboxLine } from "./lineMarks";
 import { readBoxTable } from "./boxTable";
+import { parseAttachmentImageLine } from "./attachmentImage";
 import type { ContentBlockInterface } from "./types";
 
 export function cn(...classes: ClassValue[]): string {
@@ -74,6 +75,16 @@ export function parseContent(content: string): ContentBlockInterface[] {
         metadata: { table: boxTable.table },
       });
       i = boxTable.endIndex - 1;
+      continue;
+    }
+
+    const attachmentImage = parseAttachmentImageLine(line);
+    if (attachmentImage) {
+      blocks.push({
+        type: "attachment-image",
+        content: line,
+        metadata: { attachmentId: attachmentImage.attachmentId },
+      });
       continue;
     }
 
