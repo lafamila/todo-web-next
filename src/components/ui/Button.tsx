@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils';
 import type { ReactNode } from 'react';
 
 export interface ButtonProps {
-  variant?: 'primary' | 'secondary' | 'ghost';
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   size?: 'sm' | 'md' | 'lg';
   onClick?: () => void;
   disabled?: boolean;
@@ -26,6 +26,7 @@ export function Button({
     primary: 'bg-gray-900 text-white hover:bg-gray-800',
     secondary: 'bg-gray-200 text-gray-900 hover:bg-gray-300',
     ghost: 'bg-transparent text-gray-700 hover:bg-gray-100',
+    danger: 'bg-red-600 text-white hover:bg-red-700',
   };
 
   const sizeStyles = {

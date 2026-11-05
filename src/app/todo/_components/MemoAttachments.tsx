@@ -53,7 +53,6 @@ export function MemoAttachments({
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [deleteConfirming, setDeleteConfirming] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const downloadableAttachments = useMemo(
@@ -78,7 +77,6 @@ export function MemoAttachments({
     setSelectedIds(downloadableAttachments.map((attachment) => attachment.id));
     setDownloadError(null);
     setDeleteError(null);
-    setDeleteConfirming(false);
     setDownloadOpen(true);
     void onRefresh().catch((error) => {
       setDownloadError(
@@ -91,7 +89,7 @@ export function MemoAttachments({
     if (busy) return;
     const available = new Set(downloadableAttachments.map((attachment) => attachment.id));
     setSelectedIds((current) => current.filter((id) => available.has(id)));
-    setDeleteConfirming(false);
+    if (downloadableAttachments.length === 0) setDownloadOpen(false);
   }, [busy, downloadableAttachments]);
 
   const downloadSelected = async () => {
@@ -124,12 +122,15 @@ export function MemoAttachments({
       !deleteEligibility.allowed ||
       busy
     ) return;
+    const attachmentIds = [...selectedIds];
+    if (!window.confirm(
+      `선택한 첨부파일 ${attachmentIds.length}개를 삭제하시겠습니까?\n목록에서 삭제되며 원본 저장소 객체는 보존됩니다.`,
+    )) return;
     setDeleting(true);
     setDeleteError(null);
     try {
-      await onDelete(selectedIds);
+      await onDelete(attachmentIds);
       setSelectedIds([]);
-      setDeleteConfirming(false);
     } catch (error) {
       setDeleteError(
         error instanceof Error ? error.message : '첨부파일을 삭제하지 못했습니다.',
@@ -216,7 +217,6 @@ export function MemoAttachments({
               }
               onChange={(event) => {
                 if (busy) return;
-                setDeleteConfirming(false);
                 setSelectedIds(
                   event.target.checked
                     ? downloadableAttachments.map((attachment) => attachment.id)
@@ -235,7 +235,6 @@ export function MemoAttachments({
                   checked={selectedIds.includes(attachment.id)}
                   onChange={(event) => {
                     if (busy) return;
-                    setDeleteConfirming(false);
                     setSelectedIds((current) =>
                       event.target.checked
                         ? [...current, attachment.id]
@@ -261,11 +260,6 @@ export function MemoAttachments({
               다른 사용자가 올린 파일이 포함되어 있어 삭제할 수 없습니다. 내 파일만 선택하세요.
             </p>
           )}
-          {deleteEligibility.show && deleteConfirming && deleteEligibility.allowed && (
-            <p className="text-sm text-red-600">
-              선택한 내 첨부파일 {selectedIds.length}개를 목록에서 삭제합니다. 원본 저장소 객체는 보존됩니다.
-            </p>
-          )}
           {downloadError && <p className="text-sm text-red-600">{downloadError}</p>}
           {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
           <div className="flex justify-end gap-2">
@@ -277,18 +271,15 @@ export function MemoAttachments({
             </Button>
             {deleteEligibility.show && (
               <Button
-                variant="secondary"
-                onClick={() => {
-                  if (deleteConfirming) void deleteSelected();
-                  else setDeleteConfirming(true);
-                }}
+                variant="danger"
+                onClick={() => void deleteSelected()}
                 disabled={
                   busy ||
                   selectedIds.length === 0 ||
                   !deleteEligibility.allowed
                 }
               >
-                {deleting ? '삭제 중...' : deleteConfirming ? '삭제 확인' : '삭제'}
+                {deleting ? '삭제 중...' : '삭제'}
               </Button>
             )}
             <Button

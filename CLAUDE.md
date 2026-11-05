@@ -90,7 +90,8 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   이미지뿐이면 다운로드 버튼도 없다. 한 파일은 원본, 여러 파일은 ZIP으로 받는다.
   다운로드 모달은 `document.body` portal로 헤더/백로그 stacking context 밖에서 기존 Modal 레이어를 사용한다.
 - 다운로드 모달에서 현재 업로더의 본인 파일만 체크 삭제할 수 있다. 본인 파일이 없거나 history이면 삭제 버튼이 없고,
-  타인/unknown/중복 ID가 섞이면 삭제를 막는다. `내 파일` 표시와 2단계 확인을 제공하며 선택 변경 시 확인을 초기화한다.
+  타인/unknown/중복 ID가 섞이면 삭제를 막는다. `내 파일` 표시와 빨간 삭제 버튼을 제공하며 브라우저 confirm 승인 후만 삭제한다.
+  마지막 일반 파일 삭제로 다운로드 대상이 0개이면 버튼과 모달이 함께 사라진다(이미지만 남아도 동일).
   삭제/다운로드 중에는 선택/닫기/다른 작업을 막는다. 삭제는 API의 metadata tombstone이며 R2 원본은 보존한다.
 - 삭제 응답은 캡처한 사용자+메모 journal에 먼저 기록하고, 현재 scope가 같을 때만 UI를 갱신한다. A→B→A나
   늦은 GET/upload 응답도 삭제 항목을 부활시키지 못한다. refresh는 기존 snapshot을 교체하되 동시 신규 업로드는 보존한다.
