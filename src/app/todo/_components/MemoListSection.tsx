@@ -7,7 +7,7 @@ import { useSync } from '@/contexts/SyncContext';
 import { SORT_OPTIONS } from "@/lib/constants";
 import { MemoInterface, ProjectInterface, ProjectRole, SortOption, UserInterface } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
-import { useMemo, useState, useRef, useEffect, useCallback } from "react";
+import { useMemo, useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import * as api from "@/lib/api";
 import { isTypingContext, MemoSection, SHOW_MEMO_LIST_EVENT } from "./MemoSection";
 import { SyncStatusIndicator } from './SyncStatusIndicator';
@@ -28,12 +28,16 @@ import {
   siblingSubprojects,
 } from '@/lib/projectHierarchy';
 import { ProjectMemberModal } from './ProjectMemberModal';
+import {
+  TASKS_DEFAULT_WIDTH, TASKS_MIN_WIDTH, EDITOR_MIN_WIDTH,
+  TASKS_RATIO_KEY, LEGACY_TASKS_WIDTH_KEY,
+  clampPanelWidth, clearPanelRatio, panelWidthForRatio,
+  readTasksPanelRatio, writePanelRatio,
+} from '@/lib/panelLayout';
 
-const DEFAULT_PANE_WIDTH = 400;
+const DEFAULT_PANE_WIDTH = TASKS_DEFAULT_WIDTH;
 // Tasks (n) 헤더 + 멤버초대 버튼 라인이 줄바꿈되지 않는 최소폭
-const MIN_PANE_WIDTH = 264;
-const MAX_PANE_WIDTH = 760;
-const PANE_WIDTH_STORAGE_KEY = "todo:tasksPaneWidth";
+const MIN_PANE_WIDTH = TASKS_MIN_WIDTH;
 
 export default function MemoListSection() {
   const {
@@ -61,6 +65,9 @@ export default function MemoListSection() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   // tasks 영역 폭 (경계 드래그로 조절, localStorage 유지)
   const [tasksPaneWidth, setTasksPaneWidth] = useState(DEFAULT_PANE_WIDTH);
+  const mainContainerRef = useRef<HTMLDivElement>(null);
+  const tasksRatioRef = useRef<number | null>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   // Cmd/Ctrl+Enter 에디터 전체화면 — ESC 로 종료
   const [detailFullscreen, setDetailFullscreen] = useState(false);
@@ -91,37 +98,68 @@ export default function MemoListSection() {
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
 
-  // 저장된 tasks 영역 폭 복원/유지
-  useEffect(() => {
-    const saved = Number(window.localStorage.getItem(PANE_WIDTH_STORAGE_KEY));
-    if (saved >= MIN_PANE_WIDTH && saved <= MAX_PANE_WIDTH) {
-      setTasksPaneWidth(saved);
-    }
-  }, []);
+  // 실제 grid 폭을 기준으로 복원한다. 모바일 표시/자동 clamp는 선호 비율을 덮지 않는다.
+  useLayoutEffect(() => {
+    const container = mainContainerRef.current;
+    if (!container || isMobile) return;
+    tasksRatioRef.current = readTasksPanelRatio(container.getBoundingClientRect().width);
+    const restore = () => {
+      const available = container.getBoundingClientRect().width;
+      if (available <= 0) return;
+      setTasksPaneWidth(panelWidthForRatio(
+        tasksRatioRef.current, available, DEFAULT_PANE_WIDTH, MIN_PANE_WIDTH, EDITOR_MIN_WIDTH,
+      ));
+    };
+    restore();
+    const observer = new ResizeObserver(restore);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [isMobile, selectedProject?.id]);
 
-  useEffect(() => {
-    window.localStorage.setItem(PANE_WIDTH_STORAGE_KEY, String(tasksPaneWidth));
-  }, [tasksPaneWidth]);
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
 
   const startPaneResize = (e: React.PointerEvent) => {
     e.preventDefault();
+    resizeCleanupRef.current?.();
+    const container = mainContainerRef.current;
+    if (!container || isMobile) return;
     const startX = e.clientX;
     const startWidth = e.currentTarget.closest('.main')?.getBoundingClientRect().width ?? tasksPaneWidth;
+    const previousUserSelect = document.body.style.userSelect;
     setIsResizing(true);
     document.body.style.userSelect = 'none';
     const onMove = (ev: PointerEvent) => {
-      setTasksPaneWidth(
-        Math.min(MAX_PANE_WIDTH, Math.max(MIN_PANE_WIDTH, startWidth + ev.clientX - startX)),
+      if (ev.pointerId !== e.pointerId) return;
+      const available = container.getBoundingClientRect().width;
+      if (available <= 0) return;
+      const width = clampPanelWidth(
+        startWidth + ev.clientX - startX, available, MIN_PANE_WIDTH, EDITOR_MIN_WIDTH,
       );
+      tasksRatioRef.current = width / available;
+      setTasksPaneWidth(width);
+      writePanelRatio(TASKS_RATIO_KEY, tasksRatioRef.current);
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      document.body.style.userSelect = '';
+      window.removeEventListener('pointercancel', onUp);
+      document.body.style.userSelect = previousUserSelect;
+      resizeCleanupRef.current = null;
       setIsResizing(false);
     };
+    resizeCleanupRef.current = onUp;
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
+
+  const resetPaneWidth = () => {
+    resizeCleanupRef.current?.();
+    tasksRatioRef.current = null;
+    clearPanelRatio(TASKS_RATIO_KEY);
+    clearPanelRatio(LEGACY_TASKS_WIDTH_KEY);
+    const available = mainContainerRef.current?.getBoundingClientRect().width ?? DEFAULT_PANE_WIDTH + EDITOR_MIN_WIDTH;
+    setTasksPaneWidth(clampPanelWidth(DEFAULT_PANE_WIDTH, available, MIN_PANE_WIDTH, EDITOR_MIN_WIDTH));
   };
 
   // 메모 선택이 풀리면 전체화면도 해제
@@ -544,6 +582,7 @@ export default function MemoListSection() {
     <>
     <div className="content">
       <div
+        ref={mainContainerRef}
         className={`main-container${detailFullscreen ? ' detail-fullscreen' : ''}${
           isMobile
             ? mobileView === 'detail'
@@ -745,7 +784,7 @@ export default function MemoListSection() {
           <div
             className={`pane-resizer${isResizing ? ' dragging' : ''}`}
             onPointerDown={startPaneResize}
-            onDoubleClick={() => setTasksPaneWidth(DEFAULT_PANE_WIDTH)}
+            onDoubleClick={resetPaneWidth}
             title="드래그로 폭 조절 · 더블클릭 초기화"
           />
         </div>

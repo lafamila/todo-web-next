@@ -105,7 +105,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 8px;
 }
 
 .backlog-editor-toolbar .memo-editor-toolbar-status {
@@ -113,6 +113,7 @@
   display: flex;
   justify-content: flex-end;
   overflow: hidden;
+  font-size: 0.6em;
 }
 
 .backlog-editor-toolbar .memo-editor-toolbar-status > span {
@@ -120,10 +121,15 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  font-size: inherit;
 }
 
 .backlog-editor-toolbar-right > .todo-action-button {
   flex: 0 0 auto;
+}
+
+.backlog-close-button {
+  display: none;
 }
 
 .backlog-panel-message {
@@ -204,12 +210,16 @@
   }
 
   .backlog-editor-toolbar-right {
-    gap: 4px;
+    gap: 8px;
     flex: 1 1 auto;
   }
 
   .backlog-editor-toolbar .memo-editor-toolbar-status > span {
     max-width: 92px;
+  }
+
+  .backlog-close-button {
+    display: inline-flex;
   }
 
 }

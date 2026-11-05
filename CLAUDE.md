@@ -61,7 +61,7 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   대상 프로젝트를 따른다. 실패·제목 충돌은 전체 취소, 늦은 응답은 기존 selection epoch gate를 따른다.
 - `BacklogPanel`은 선택된 leaf 프로젝트의 singleton 백로그를 불러오며 일반 목록에 섞지 않는다. `MemoSection`의 문서 override로
   동일한 InlineEditor/Monaco/Raw/IME/CAS/lease/기기 초안 기능을 재사용하고 기존 메모와 별도 버퍼·소켓을 가진다.
-- Cmd/Ctrl+Shift+S는 백로그 열기, Cmd/Ctrl+S는 마지막으로 포커스한 편집기 저장이다. 백로그 열기는 focus를 이동하고
+- Cmd/Ctrl+Shift+S는 백로그 열기/닫기 토글, Cmd/Ctrl+S는 마지막으로 포커스한 편집기 저장이다. 백로그 열기는 focus를 이동하고
   닫기는 기존 focus를 복원한다. 체크박스 즉시 저장은 패널을 닫지 않고 명시 저장의 최신 snapshot 성공만 닫는다.
   저장 실패·대기·충돌은 유지하며 수동 닫기에도 debounce 전 초안을 flush한다.
 - 데스크톱 백로그는 절반 폭으로 시작하는 우측 overlay, pointer/keyboard resize, edge-hover 손잡이를 제공한다.
@@ -70,6 +70,13 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   slide를 양방향으로 사용하며 closing은 inert/키 입력 차단, 종료 후 focus 복원한다. session guard가 이전 저장/animation
   콜백의 재열린 패널 닫기를 막는다. 백로그 ? 버튼은 없고 desktop 저장은 단축키, 모바일은 저장 버튼을 제공한다.
   dirty/lease/기기 초안/서버 저장 상태는 닫기 액션과 같은 상단 우측 행에만 표시한다.
+- 열린 백로그의 연속된 두 Esc는 패널을 닫는다. 첫 Esc는 기존 편집 종료를 허용하고 다른 키/포인터/새 세션은 카운트를
+  초기화한다. repeat/IME/열린 모달의 Esc는 닫기 횟수에 포함하지 않는다. 상태 글자는 0.6em, 액션 간격은8px,
+  닫기 버튼은 모바일에만 보인다. 복구 전 초안은 현재 editor가 실제 쓴 revision만 정리하는 ownership 검사로 보존한다.
+- `panelLayout.ts`는 `todo:backlogWidthRatio`(viewport 대비)와 `todo:tasksPaneRatio`(실제 main grid 대비)를
+  localStorage에 보존한다. 사용자 조절만 선호 비율을 바꾸며 window resize/mobile은 최소폭을 지키는 표시만 변경한다.
+  `todo:tasksPaneWidth`는 새 비율이 없을 때만 한 번 이관한다. Tasks 경계 double-click은 두 키를 지우고400px 기본값으로
+  돌아간다. 저장소 차단/잘못된 값은 기본 레이아웃으로 처리하며 서버에 설정을 보내지 않는다.
 - Cmd/Ctrl+Enter는 전체화면 진입/해제 토글이며 IME/repeat를 무시한다. API 추가 계약은 root
   `.idea/completed/TODO_SUBPROJECT_BACKLOG_PLAN.md`, 안전한 브라우저 검증은 `../.scripts/tests/todo-workspace-qa.md` 참조.
 

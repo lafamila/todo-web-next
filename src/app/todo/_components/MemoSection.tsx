@@ -37,7 +37,13 @@ import {
   shouldResetMemoEditorState,
 } from '@/lib/memoVersionPolicy';
 import { classifyLockDenial } from '@/lib/memoLeasePolicy';
-import { isLatestSavedSnapshot, isMemoSaveShortcut } from '@/lib/backlogPolicy';
+import {
+  type DraftWriteOwnership,
+  canClaimDraftWrite,
+  isLatestSavedSnapshot,
+  isMemoSaveShortcut,
+  ownsDraftRecord,
+} from '@/lib/backlogPolicy';
 import { MemoResolutionPanel } from './MemoResolutionPanel';
 import { MemoVersionBar } from './MemoVersionBar';
 import {
@@ -179,7 +185,7 @@ const editorFeatureHelp = [
 
 const shortcutHelp = [
   { keys: 'Ctrl/⌘ + S', description: '현재 메모를 저장합니다.' },
-  { keys: 'Ctrl/⌘ + Shift + S', description: '선택한 프로젝트의 백로그를 엽니다. 데스크톱은 오른쪽, 모바일은 아래에서 펼쳐집니다.' },
+  { keys: 'Ctrl/⌘ + Shift + S', description: '선택한 프로젝트의 백로그를 열거나 닫습니다. 데스크톱은 오른쪽, 모바일은 아래에서 펼쳐집니다.' },
   { keys: 'Ctrl/⌘ + Enter', description: '현재 메모 편집기를 전체화면으로 열거나 원래 화면으로 돌아갑니다.' },
   { keys: 'Ctrl/⌘ + E', description: 'Raw 모드를 켜고 끕니다. 본문 전체를 하나의 텍스트로 선택·복사할 때 씁니다.' },
   {
@@ -200,7 +206,7 @@ const shortcutHelp = [
   { keys: 'Ctrl/⌘ + Shift + P', description: '현재 프로젝트의 메모 검색창으로 이동합니다.' },
   { keys: 'Ctrl/⌘ + Shift + O', description: '관리자에게 멤버 관리 모달을 엽니다.' },
   { keys: 'Ctrl/⌘ + 메모 클릭', description: '메모 목록에서 여러 메모를 선택합니다.' },
-  { keys: 'Esc', description: '편집 중인 줄을 확정하거나, 검색 추천 목록·모달을 닫습니다.' },
+  { keys: 'Esc', description: '편집 중인 줄을 확정하거나 검색 추천 목록·모달을 닫습니다. 백로그는 연속 두 번 눌러 닫습니다.' },
 ];
 
 export const BACKLOG_VISIBILITY_EVENT = 'todo:backlogVisibility';
@@ -347,6 +353,7 @@ export function MemoSection({
   const localRevisionRef = useRef(0);
   const draftCreatedAtRef = useRef(0);
   const draftFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ownedDraftWriteRef = useRef<DraftWriteOwnership | null>(null);
   const flushDraftOnUnmountRef = useRef<() => void>(() => {});
   const pendingSaveRef = useRef<PendingMemoSave | null>(null);
   const saveInFlightRef = useRef(false);
@@ -546,7 +553,9 @@ export function MemoSection({
       snapshotLocalRevision = localRevisionRef.current,
     ): Promise<boolean> => {
       if (!selectedMemo || !user || isViewingVersion) return true;
-      const key = ownDraftKey(selectedMemo.id);
+      const memoId = selectedMemo.id;
+      const flushEditorEpoch = editorEpochRef.current;
+      const key = ownDraftKey(memoId);
       if (!key) return false;
 
       if (draftFlushTimerRef.current) {
@@ -556,9 +565,17 @@ export function MemoSection({
 
       try {
         if (snapshotContent === originalContentRef.current) {
-          const existing = await loadMemoDraft(key);
-          if (existing) {
-            await deleteMemoDraftIfRevision(key, existing.localRevision);
+          const owned = ownedDraftWriteRef.current;
+          if (ownsDraftRecord(owned, memoId, key)) {
+            const deleted = await deleteMemoDraftIfRevision(key, owned.localRevision);
+            if (
+              deleted &&
+              ownedDraftWriteRef.current?.memoId === memoId &&
+              ownedDraftWriteRef.current.key === key &&
+              ownedDraftWriteRef.current.localRevision === owned.localRevision
+            ) {
+              ownedDraftWriteRef.current = null;
+            }
           }
           if (!pendingSaveRef.current) setDraftStatus('idle');
           return true;
@@ -585,7 +602,36 @@ export function MemoSection({
           lastError: draftError,
           ...(sourceLineage ? { sourceLineage } : {}),
         };
-        await putMemoDraft(record);
+        const accepted = await putMemoDraft(record);
+        if (canClaimDraftWrite({
+          accepted,
+          flushMemoId: memoId,
+          currentMemoId: initializedMemoIdRef.current,
+          flushEditorEpoch,
+          currentEditorEpoch: editorEpochRef.current,
+        })) {
+          const currentOwner = ownedDraftWriteRef.current;
+          if (
+            !ownsDraftRecord(currentOwner, memoId, key) ||
+            currentOwner.localRevision <= snapshotLocalRevision
+          ) {
+            ownedDraftWriteRef.current = {
+              memoId,
+              key,
+              localRevision: snapshotLocalRevision,
+            };
+          }
+          const owned = ownedDraftWriteRef.current;
+          if (
+            contentRef.current === originalContentRef.current &&
+            ownsDraftRecord(owned, memoId, key)
+          ) {
+            const deleted = await deleteMemoDraftIfRevision(key, owned.localRevision);
+            if (deleted && ownedDraftWriteRef.current === owned) {
+              ownedDraftWriteRef.current = null;
+            }
+          }
+        }
         if (!pendingSaveRef.current && !draftConflictActive) {
           setDraftStatus('local-saved');
         }
@@ -892,6 +938,7 @@ export function MemoSection({
     }
     initializedMemoIdRef.current = nextMemoId;
     editorEpochRef.current += 1;
+    ownedDraftWriteRef.current = null;
     remoteRefreshSequenceRef.current += 1;
     remoteRefreshAbortRef.current?.abort();
     remoteRefreshAbortRef.current = null;
@@ -2243,7 +2290,7 @@ export function MemoSection({
               )}
               <button
                 type="button"
-                className="todo-action-button todo-action-button--secondary"
+                className="backlog-close-button todo-action-button todo-action-button--secondary"
                 onClick={onClose}
               >
                 닫기

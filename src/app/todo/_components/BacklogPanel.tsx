@@ -5,14 +5,23 @@ import { useApp } from '@/contexts/AppContext';
 import { getProjectBacklog, ensureProjectBacklog } from '@/lib/api';
 import type { MemoInterface } from '@/lib/types';
 import {
+  advanceBacklogEscape,
   backlogAcceptsInput,
+  backlogToggleAction,
   backlogTransitionWaitMs,
   type BacklogPanelPhase,
+  BACKLOG_MIN_WIDTH_PX,
+  BACKLOG_REMAINING_MAIN_PX,
   canCloseBacklogSession,
-  clampBacklogWidth,
-  initialBacklogWidth,
   isBacklogShortcut,
+  isBacklogShortcutChord,
 } from '@/lib/backlogPolicy';
+import {
+  BACKLOG_RATIO_KEY,
+  panelWidthForRatio,
+  readPanelRatio,
+  writePanelRatio,
+} from '@/lib/panelLayout';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import {
   BACKLOG_VISIBILITY_EVENT,
@@ -38,13 +47,23 @@ export function BacklogPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [width, setWidth] = useState(() =>
-    typeof window === 'undefined' ? 640 : initialBacklogWidth(window.innerWidth, false),
+    typeof window === 'undefined'
+      ? 640
+      : panelWidthForRatio(
+          readPanelRatio(BACKLOG_RATIO_KEY),
+          window.innerWidth,
+          window.innerWidth / 2,
+          BACKLOG_MIN_WIDTH_PX,
+          BACKLOG_REMAINING_MAIN_PX,
+        ),
   );
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const previousWasMainEditorRef = useRef(false);
   const panelRef = useRef<HTMLElement | null>(null);
   const loadingSequenceRef = useRef(0);
   const resizePointerRef = useRef<number | null>(null);
+  const widthRef = useRef(width);
+  const escapeArmedRef = useRef(false);
   const phaseRef = useRef<BacklogPanelPhase>('closed');
   const sessionRef = useRef(0);
   const [reducedMotion, setReducedMotion] = useState(false);
@@ -52,6 +71,20 @@ export function BacklogPanel() {
   const eligible = Boolean(
     selectedProject && !selectedProject.isGroup && !selectedProject.navigationOnly,
   );
+
+  const restorePreferredWidth = useCallback((available: number, mobile: boolean) => {
+    const next = mobile
+      ? available
+      : panelWidthForRatio(
+          readPanelRatio(BACKLOG_RATIO_KEY),
+          available,
+          available / 2,
+          BACKLOG_MIN_WIDTH_PX,
+          BACKLOG_REMAINING_MAIN_PX,
+        );
+    widthRef.current = next;
+    setWidth(next);
+  }, []);
 
   useEffect(() => {
     const query = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -87,6 +120,7 @@ export function BacklogPanel() {
       currentSession: sessionRef.current,
     })) return;
     loadingSequenceRef.current += 1;
+    escapeArmedRef.current = false;
     phaseRef.current = 'closing';
     setPhase('closing');
   }, []);
@@ -123,8 +157,9 @@ export function BacklogPanel() {
         previousFocusRef.current?.closest('main.detail') &&
           !previousFocusRef.current?.closest('.backlog-panel'),
       );
-      setWidth(initialBacklogWidth(window.innerWidth, isMobile));
     }
+    escapeArmedRef.current = false;
+    restorePreferredWidth(window.innerWidth, isMobile);
     const nextSession = sessionRef.current + 1;
     sessionRef.current = nextSession;
     setPanelSession(nextSession);
@@ -132,7 +167,7 @@ export function BacklogPanel() {
     setPhase('opening');
     dispatchPanelState(true);
     void loadBacklog();
-  }, [eligible, isMobile, loadBacklog]);
+  }, [eligible, isMobile, loadBacklog, restorePreferredWidth]);
 
   useEffect(() => {
     if (phase !== 'opening' && phase !== 'closing') return;
@@ -162,14 +197,42 @@ export function BacklogPanel() {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
-      if (!isBacklogShortcut(event) || !eligible) return;
+      if (isBacklogShortcutChord(event) && eligible) {
+        event.preventDefault();
+        event.stopPropagation();
+        escapeArmedRef.current = false;
+        if (isBacklogShortcut(event)) {
+          if (backlogToggleAction(phaseRef.current) === 'open') openPanel();
+          else closePanel(sessionRef.current);
+        }
+        return;
+      }
+
+      const escape = advanceBacklogEscape({
+        armed: escapeArmedRef.current,
+        key: event.key,
+        repeat: event.repeat,
+        isComposing: event.isComposing,
+        keyCode: event.keyCode,
+        modalOpen: Boolean(document.querySelector('[role="dialog"]')),
+        acceptsInput: backlogAcceptsInput(phaseRef.current),
+      });
+      escapeArmedRef.current = escape.armed;
+      if (!escape.shouldClose) return;
       event.preventDefault();
       event.stopPropagation();
-      if (phaseRef.current === 'closed' || phaseRef.current === 'closing') openPanel();
+      closePanel(sessionRef.current);
+    };
+    const resetEscape = () => {
+      escapeArmedRef.current = false;
     };
     window.addEventListener('keydown', handleShortcut, { capture: true });
-    return () => window.removeEventListener('keydown', handleShortcut, { capture: true });
-  }, [eligible, openPanel]);
+    window.addEventListener('pointerdown', resetEscape, { capture: true });
+    return () => {
+      window.removeEventListener('keydown', handleShortcut, { capture: true });
+      window.removeEventListener('pointerdown', resetEscape, { capture: true });
+    };
+  }, [closePanel, eligible, openPanel]);
 
   useEffect(() => {
     if (phase !== 'opening') return;
@@ -192,11 +255,15 @@ export function BacklogPanel() {
 
   useEffect(() => {
     const handleResize = () => {
-      setWidth((current) => clampBacklogWidth(current, window.innerWidth, isMobile));
+      restorePreferredWidth(
+        window.innerWidth,
+        window.matchMedia('(max-width: 768px)').matches,
+      );
     };
+    handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [isMobile]);
+  }, [isMobile, restorePreferredWidth]);
 
   useEffect(() => () => dispatchPanelState(false), []);
 
@@ -209,7 +276,15 @@ export function BacklogPanel() {
 
   const handleResizePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     if (resizePointerRef.current !== event.pointerId || isMobile) return;
-    setWidth(clampBacklogWidth(window.innerWidth - event.clientX, window.innerWidth, false));
+    const next = panelWidthForRatio(
+      null,
+      window.innerWidth,
+      window.innerWidth - event.clientX,
+      BACKLOG_MIN_WIDTH_PX,
+      BACKLOG_REMAINING_MAIN_PX,
+    );
+    widthRef.current = next;
+    setWidth(next);
   };
 
   const handleResizePointerEnd = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -218,13 +293,25 @@ export function BacklogPanel() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    if (!isMobile) {
+      writePanelRatio(BACKLOG_RATIO_KEY, widthRef.current / window.innerWidth);
+    }
   };
 
   const handleResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (isMobile || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
     event.preventDefault();
     const delta = event.key === 'ArrowLeft' ? 24 : -24;
-    setWidth((current) => clampBacklogWidth(current + delta, window.innerWidth, false));
+    const next = panelWidthForRatio(
+      null,
+      window.innerWidth,
+      widthRef.current + delta,
+      BACKLOG_MIN_WIDTH_PX,
+      BACKLOG_REMAINING_MAIN_PX,
+    );
+    widthRef.current = next;
+    setWidth(next);
+    writePanelRatio(BACKLOG_RATIO_KEY, next / window.innerWidth);
   };
 
   if (!eligible) return null;
@@ -289,7 +376,7 @@ export function BacklogPanel() {
                 </button>
                 <button
                   type="button"
-                  className="todo-action-button todo-action-button--secondary"
+                  className="backlog-close-button todo-action-button todo-action-button--secondary"
                   onClick={() => closePanel(panelSession)}
                 >
                   닫기

@@ -2,6 +2,11 @@ export const BACKLOG_MIN_WIDTH_PX = 320;
 export const BACKLOG_REMAINING_MAIN_PX = 240;
 export const BACKLOG_TRANSITION_MS = 220;
 export type BacklogPanelPhase = 'closed' | 'opening' | 'open' | 'closing';
+export interface DraftWriteOwnership {
+  memoId: string;
+  key: string;
+  localRevision: number;
+}
 
 interface ShortcutLike {
   key: string;
@@ -10,9 +15,14 @@ interface ShortcutLike {
   shiftKey?: boolean;
   isComposing?: boolean;
   keyCode?: number;
+  repeat?: boolean;
 }
 
 export function isBacklogShortcut(event: ShortcutLike): boolean {
+  return isBacklogShortcutChord(event) && !event.repeat;
+}
+
+export function isBacklogShortcutChord(event: ShortcutLike): boolean {
   return Boolean(
     (event.metaKey || event.ctrlKey) &&
       event.shiftKey &&
@@ -20,6 +30,36 @@ export function isBacklogShortcut(event: ShortcutLike): boolean {
       !event.isComposing &&
       event.keyCode !== 229,
   );
+}
+
+export function backlogToggleAction(
+  phase: BacklogPanelPhase,
+): 'open' | 'close' {
+  return phase === 'closed' || phase === 'closing' ? 'open' : 'close';
+}
+
+export function advanceBacklogEscape(input: {
+  armed: boolean;
+  key: string;
+  repeat?: boolean;
+  isComposing?: boolean;
+  keyCode?: number;
+  modalOpen: boolean;
+  acceptsInput: boolean;
+}): { armed: boolean; shouldClose: boolean } {
+  if (
+    !input.acceptsInput ||
+    input.modalOpen ||
+    input.repeat ||
+    input.isComposing ||
+    input.keyCode === 229
+  ) {
+    return { armed: false, shouldClose: false };
+  }
+  if (input.key !== 'Escape') return { armed: false, shouldClose: false };
+  return input.armed
+    ? { armed: false, shouldClose: true }
+    : { armed: true, shouldClose: false };
 }
 
 export function isMemoSaveShortcut(event: ShortcutLike): boolean {
@@ -30,20 +70,6 @@ export function isMemoSaveShortcut(event: ShortcutLike): boolean {
       !event.isComposing &&
       event.keyCode !== 229,
   );
-}
-
-export function initialBacklogWidth(viewportWidth: number, mobile: boolean): number {
-  return mobile ? viewportWidth : clampBacklogWidth(viewportWidth / 2, viewportWidth, false);
-}
-
-export function clampBacklogWidth(
-  requestedWidth: number,
-  viewportWidth: number,
-  mobile: boolean,
-): number {
-  if (mobile) return Math.max(0, viewportWidth);
-  const maximum = Math.max(BACKLOG_MIN_WIDTH_PX, viewportWidth - BACKLOG_REMAINING_MAIN_PX);
-  return Math.min(maximum, Math.max(BACKLOG_MIN_WIDTH_PX, requestedWidth));
 }
 
 export function isLatestSavedSnapshot(input: {
@@ -80,4 +106,26 @@ export function backlogAcceptsInput(phase: BacklogPanelPhase): boolean {
 
 export function backlogTransitionWaitMs(reducedMotion: boolean): number {
   return reducedMotion ? 0 : BACKLOG_TRANSITION_MS + 40;
+}
+
+export function ownsDraftRecord(
+  ownership: DraftWriteOwnership | null,
+  memoId: string,
+  key: string,
+): ownership is DraftWriteOwnership {
+  return ownership?.memoId === memoId && ownership.key === key;
+}
+
+export function canClaimDraftWrite(input: {
+  accepted: boolean;
+  flushMemoId: string;
+  currentMemoId: string | null;
+  flushEditorEpoch: number;
+  currentEditorEpoch: number;
+}): boolean {
+  return Boolean(
+    input.accepted &&
+      input.flushMemoId === input.currentMemoId &&
+      input.flushEditorEpoch === input.currentEditorEpoch,
+  );
 }
