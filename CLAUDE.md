@@ -59,6 +59,8 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 - 다중 선택 이동은 양쪽 root의 실제 소유자가 관리하는 leaf 사이에서 가능하다. 출발·도착 프로젝트 이름을 각각 정확히
   입력해야 하며 API가 전체를 한 트랜잭션으로 검증/이동한다. 선택 중인 dirty 편집기를 유지하고 이동 후 같은 메모 ID로
   대상 프로젝트를 따른다. 실패·제목 충돌은 전체 취소, 늦은 응답은 기존 selection epoch gate를 따른다.
+- 선택 메모 이동/삭제/취소는 Tasks 헤더가 아니라 우측 메모 내용 영역에 표시한다. `selectionActions` slot으로
+  MemoSection 부모 상태/초안/소켓을 유지하고 전역 편집 단축키만 중지한다. 취소하면 미저장 본문을 복원한다.
 - `BacklogPanel`은 선택된 leaf 프로젝트+로그인 계정별 비공개 백로그를 불러오며 일반 목록에 섞지 않는다.
   다른 멤버·프로젝트 owner에게 공유하지 않으며 viewer도 자기 백로그는 생성·편집할 수 있다. `MemoSection`의 문서 override로
   동일한 InlineEditor/Monaco/Raw/IME/CAS/lease/기기 초안 기능을 재사용하고 기존 메모와 별도 버퍼·소켓을 가진다.
@@ -87,6 +89,11 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   현재 숨기되 API/게시 데이터는 유지한다. 완료된 일반 파일만 `다운로드(N)`에 세고 이미지들은 모달·전체선택에서 제외한다.
   이미지뿐이면 다운로드 버튼도 없다. 한 파일은 원본, 여러 파일은 ZIP으로 받는다.
   다운로드 모달은 `document.body` portal로 헤더/백로그 stacking context 밖에서 기존 Modal 레이어를 사용한다.
+- 다운로드 모달에서 현재 업로더의 본인 파일만 체크 삭제할 수 있다. 본인 파일이 없거나 history이면 삭제 버튼이 없고,
+  타인/unknown/중복 ID가 섞이면 삭제를 막는다. `내 파일` 표시와 2단계 확인을 제공하며 선택 변경 시 확인을 초기화한다.
+  삭제/다운로드 중에는 선택/닫기/다른 작업을 막는다. 삭제는 API의 metadata tombstone이며 R2 원본은 보존한다.
+- 삭제 응답은 캡처한 사용자+메모 journal에 먼저 기록하고, 현재 scope가 같을 때만 UI를 갱신한다. A→B→A나
+  늦은 GET/upload 응답도 삭제 항목을 부활시키지 못한다. refresh는 기존 snapshot을 교체하되 동시 신규 업로드는 보존한다.
 - 업로드는 service permission `superadmin`만 허용한다(`owner`/`admin`·boolean 플래그 대체 금지).
   파일 버튼·일반/Raw image paste·retry·IndexedDB 자동재개에 같은 가드를 적용한다. 권한 회수 시
   전송을 abort하지만 Blob·초안은 삭제하지 않는다. 목록·이미지 보기·다운로드·텍스트 편집은 기존 권한을 유지한다.

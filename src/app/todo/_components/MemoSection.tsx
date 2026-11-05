@@ -316,6 +316,7 @@ export function MemoSection({
     retryUpload: retryAttachmentUpload,
     cancelUpload: cancelAttachmentUpload,
     refreshAttachments,
+    deleteAttachments,
     blocksMemoSave: attachmentBlocksMemoSave,
   } = useMemoAttachments(selectedMemo?.id ?? null, user?.id ?? null, canUploadAttachments);
 
@@ -2545,14 +2546,19 @@ export function MemoSection({
   const canAttach = !isViewingVersion && Boolean(isBacklog || selectedProject.canWrite);
   const attachmentActions = (
     <MemoAttachments
+      key={`${selectedMemo.id}:${user?.id ?? 'anonymous'}`}
       memoId={selectedMemo.id}
       readyAttachments={readyAttachments}
       uploads={attachmentUploads}
       canUpload={canUploadAttachments}
+      currentUserId={user?.id ?? null}
+      readOnly={isViewingVersion}
       disabled={!canAttach}
       onFiles={handleAttachmentFiles}
       onRetry={retryAttachmentUpload}
       onCancel={handleCancelAttachment}
+      onDelete={deleteAttachments}
+      onRefresh={refreshAttachments}
     />
   );
   const documentActions = (

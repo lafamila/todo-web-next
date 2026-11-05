@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   blocksMemoSaveForUploads,
   isInlineImageFile,
+  isAttachmentScopeCurrent,
   shouldApplyAttachmentResult,
   insertAttachmentTokensAtSelection,
   removeAttachmentTokenRows,
@@ -13,6 +14,7 @@ import {
   hasFileDragData,
   canAcceptMemoFileDrop,
   downloadableMemoAttachments,
+  attachmentDeleteEligibility,
   attachmentDropCaretOffset,
   isAttachmentDropSnapshotCurrent,
 } from './attachmentUploadPolicy.ts';
@@ -40,6 +42,23 @@ test('다운로드 목록·전체선택 대상에는 이미지가 없고 일반 
     { id: 'image', isImage: true }, fileA, { id: 'image2', isImage: true }, fileB,
   ]), [fileA, fileB]);
   assert.deepEqual(downloadableMemoAttachments([{ id: 'image', isImage: true }]), []);
+});
+
+test('첨부 삭제는 현재 업로더 파일만 선택했고 history가 아닐 때만 허용한다', () => {
+  const files = [
+    { id: 'mine', createdBy: 'me' },
+    { id: 'other', createdBy: 'them' },
+  ];
+  assert.deepEqual(attachmentDeleteEligibility(files, ['mine'], 'me', false), {
+    show: true, allowed: true, includesOtherOwner: false,
+  });
+  assert.deepEqual(attachmentDeleteEligibility(files, ['mine', 'other'], 'me', false), {
+    show: true, allowed: false, includesOtherOwner: true,
+  });
+  assert.equal(attachmentDeleteEligibility(files, ['mine'], 'me', true).show, false);
+  assert.equal(attachmentDeleteEligibility(files, ['other'], 'nobody', false).show, false);
+  assert.equal(attachmentDeleteEligibility(files, ['mine', 'missing'], 'me', false).allowed, false);
+  assert.equal(attachmentDeleteEligibility(files, ['mine', 'mine'], 'me', false).allowed, false);
 });
 
 test('파일 drag만 소비하고 텍스트·링크 drag는 기존 편집 동작을 유지한다', () => {
@@ -89,6 +108,25 @@ test('이전 memo/account/generation 업로드 결과는 현재 편집기에 적
   assert.equal(shouldApplyAttachmentResult({ ...current, currentMemoId: 'memo-b' }), false);
   assert.equal(shouldApplyAttachmentResult({ ...current, currentUserId: 'user-b' }), false);
   assert.equal(shouldApplyAttachmentResult({ ...current, currentGeneration: 4 }), false);
+});
+
+test('삭제 성공은 A→B→A 전환으로 generation이 바뀌어도 돌아온 A에 적용한다', () => {
+  const captured = { expectedMemoId: 'memo-a', expectedUserId: 'user-a' };
+  assert.equal(isAttachmentScopeCurrent({
+    ...captured,
+    currentMemoId: 'memo-b',
+    currentUserId: 'user-a',
+  }), false);
+  assert.equal(isAttachmentScopeCurrent({
+    ...captured,
+    currentMemoId: 'memo-a',
+    currentUserId: 'user-a',
+  }), true);
+  assert.equal(isAttachmentScopeCurrent({
+    ...captured,
+    currentMemoId: 'memo-a',
+    currentUserId: 'user-b',
+  }), false);
 });
 
 test('진행 중 업로드와 실패한 inline token은 정상 서버 저장을 막는다', () => {

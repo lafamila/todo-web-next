@@ -15,6 +15,7 @@ import type {
   DayDetailInterface,
   MemoInterface,
   MemoAttachmentInterface,
+  DeleteMemoAttachmentsResponseInterface,
   MemoLeaseInterface,
   MemoMergeResultInterface,
   MemoVersionSummaryInterface,
@@ -475,6 +476,20 @@ export async function downloadMemoAttachments(
       attachmentIds.length === 1 ? "attachment" : "todo-attachments.zip",
     ),
   };
+}
+
+export async function deleteMemoAttachments(
+  memoId: string,
+  attachmentIds: string[],
+): Promise<DeleteMemoAttachmentsResponseInterface> {
+  return fetchJson<DeleteMemoAttachmentsResponseInterface>(
+    `/memos/${memoId}/attachments/delete`,
+    {
+      method: "POST",
+      body: JSON.stringify({ attachmentIds }),
+    },
+    "첨부파일을 삭제하지 못했습니다.",
+  );
 }
 
 export async function moveMemo(

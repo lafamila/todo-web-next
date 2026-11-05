@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   getMemoAttachments,
+  deleteMemoAttachments,
   uploadMemoAttachment,
 } from '@/lib/api';
 import type {
@@ -19,6 +20,7 @@ import {
 import {
   blocksMemoSaveForUploads,
   isInlineImageFile,
+  isAttachmentScopeCurrent,
   shouldApplyAttachmentResult,
   shouldRestartPendingUploadAfterFlight,
   mergeAttachmentStateById,
@@ -52,6 +54,7 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
   const [attachments, setAttachments] = useState<MemoAttachmentInterface[]>([]);
   const [uploads, setUploads] = useState<UploadView[]>([]);
   const [listError, setListError] = useState<string | null>(null);
+  const attachmentsRef = useRef<MemoAttachmentInterface[]>([]);
   const generationRef = useRef(0);
   const scopeRef = useRef({ memoId, userId });
   const uploadAllowedRef = useRef(canUpload);
@@ -61,6 +64,8 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
   const restartAfterFlightRef = useRef(new Set<string>());
   const uploadControllersRef = useRef(new Map<string, AbortController>());
   const settledUploadIdsRef = useRef(new Set<string>());
+  const deletedAttachmentIdsByScopeRef = useRef(new Map<string, Set<string>>());
+  const refreshSequenceRef = useRef(0);
   const runUploadRef = useRef<(
     record: AttachmentUploadRecord,
     generation: number,
@@ -76,10 +81,22 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
     objectUrlsRef.current.clear();
     recordsRef.current.clear();
     settledUploadIdsRef.current.clear();
+    refreshSequenceRef.current += 1;
+    attachmentsRef.current = [];
     setAttachments([]);
     setUploads([]);
     setListError(null);
   }, [memoId, userId, canUpload]);
+
+  const deletedIdsForScope = useCallback((scopeUserId: string, scopeMemoId: string) => {
+    const key = `${scopeUserId}\u0000${scopeMemoId}`;
+    let ids = deletedAttachmentIdsByScopeRef.current.get(key);
+    if (!ids) {
+      ids = new Set<string>();
+      deletedAttachmentIdsByScopeRef.current.set(key, ids);
+    }
+    return ids;
+  }, []);
 
   const revokeObjectUrl = useCallback((attachmentId: string, expectedUrl?: string) => {
     const url = objectUrlsRef.current.get(attachmentId);
@@ -127,6 +144,8 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
         record.memoId === scopeRef.current.memoId &&
         record.userId === scopeRef.current.userId;
       if (sameVisibleScope) settledUploadIdsRef.current.add(record.attachmentId);
+      const locallyDeleted = deletedIdsForScope(record.userId, record.memoId)
+        .has(record.attachmentId);
       const appliesToCurrent = shouldApplyAttachmentResult({
         expectedMemoId: record.memoId,
         expectedUserId: record.userId,
@@ -137,11 +156,26 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
       }) || (sameVisibleScope && recordsRef.current.has(record.attachmentId));
       if (sameVisibleScope) recordsRef.current.delete(record.attachmentId);
       revokeObjectUrl(record.attachmentId, expectedObjectUrl);
+      if (locallyDeleted) {
+        if (sameVisibleScope) {
+          setUploads((current) => current.filter((upload) => upload.id !== record.attachmentId));
+          setAttachments((current) => {
+            const next = current.filter((attachment) => attachment.id !== record.attachmentId);
+            attachmentsRef.current = next;
+            return next;
+          });
+        }
+        return;
+      }
       if (appliesToCurrent) {
-        setAttachments((current) => [
-          ...current.filter((attachment) => attachment.id !== ready.id),
-          ready,
-        ]);
+        setAttachments((current) => {
+          const next = [
+            ...current.filter((attachment) => attachment.id !== ready.id),
+            ready,
+          ];
+          attachmentsRef.current = next;
+          return next;
+        });
         setUploads((current) => current.map((upload) =>
           upload.id === ready.id
             ? { ...upload, status: 'ready', objectUrl: undefined, error: undefined }
@@ -150,6 +184,17 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
       }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') return;
+      const locallyDeleted = deletedIdsForScope(record.userId, record.memoId)
+        .has(record.attachmentId);
+      if (locallyDeleted) {
+        await deleteAttachmentUpload(record.key).catch(() => undefined);
+        if (record.memoId === scopeRef.current.memoId && record.userId === scopeRef.current.userId) {
+          recordsRef.current.delete(record.attachmentId);
+          setUploads((current) => current.filter((upload) => upload.id !== record.attachmentId));
+        }
+        revokeObjectUrl(record.attachmentId, expectedObjectUrl);
+        return;
+      }
       const message = error instanceof Error ? error.message : '첨부파일 업로드에 실패했습니다.';
       const failed: AttachmentUploadRecord = {
         ...record,
@@ -183,7 +228,8 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
       }
       if (restartAfterFlightRef.current.delete(record.attachmentId)) {
         const pending = recordsRef.current.get(record.attachmentId);
-        if (shouldRestartPendingUploadAfterFlight({
+        if (!deletedIdsForScope(record.userId, record.memoId).has(record.attachmentId) &&
+          shouldRestartPendingUploadAfterFlight({
           status: pending?.status ?? null,
           recordMemoId: pending?.memoId ?? null,
           recordUserId: pending?.userId ?? null,
@@ -194,7 +240,7 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
         }
       }
     }
-  }, [revokeObjectUrl]);
+  }, [deletedIdsForScope, revokeObjectUrl]);
 
   useEffect(() => {
     runUploadRef.current = (record, generation) => {
@@ -212,7 +258,8 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
       listAttachmentUploads(window.location.origin, userId, memoId),
     ]).then(([serverResult, queueResult]) => {
       if (cancelled || generation !== generationRef.current) return;
-      const serverAttachments = serverResult.status === 'fulfilled' ? serverResult.value : [];
+      const serverAttachments = (serverResult.status === 'fulfilled' ? serverResult.value : [])
+        .filter((attachment) => !deletedIdsForScope(userId, memoId).has(attachment.id));
       const queued = queueResult.status === 'fulfilled' ? queueResult.value : [];
       const error = serverResult.status === 'rejected'
         ? serverResult.reason
@@ -222,7 +269,11 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
       if (error) {
         setListError(error instanceof Error ? error.message : '첨부파일 목록을 불러오지 못했습니다.');
       }
-      setAttachments((current) => mergeAttachmentStateById(serverAttachments, current));
+      setAttachments((current) => {
+        const next = mergeAttachmentStateById(serverAttachments, current);
+        attachmentsRef.current = next;
+        return next;
+      });
       const readyIds = new Set(
         serverAttachments
           .filter((attachment) => attachment.status === 'ready')
@@ -272,7 +323,7 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
     return () => {
       cancelled = true;
     };
-  }, [canUpload, memoId, runUpload, userId]);
+  }, [canUpload, deletedIdsForScope, memoId, runUpload, userId]);
 
   useEffect(() => () => {
     generationRef.current += 1;
@@ -381,9 +432,13 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
     const currentMemoId = scopeRef.current.memoId;
     const currentUserId = scopeRef.current.userId;
     const generation = generationRef.current;
+    const requestSequence = refreshSequenceRef.current + 1;
+    refreshSequenceRef.current = requestSequence;
+    const knownIdsAtStart = new Set(attachmentsRef.current.map((attachment) => attachment.id));
     if (!currentMemoId || !currentUserId) return;
+    const localDeletedIds = deletedIdsForScope(currentUserId, currentMemoId);
     const fresh = await getMemoAttachments(currentMemoId);
-    if (!shouldApplyAttachmentResult({
+    if (requestSequence !== refreshSequenceRef.current || !shouldApplyAttachmentResult({
       expectedMemoId: currentMemoId,
       expectedUserId: currentUserId,
       expectedGeneration: generation,
@@ -391,8 +446,20 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
       currentUserId: scopeRef.current.userId,
       currentGeneration: generationRef.current,
     })) return;
-    setAttachments((current) => mergeAttachmentStateById(fresh, current));
-    const readyImages = fresh.filter(
+    const authoritative = fresh.filter(
+      (attachment) => !localDeletedIds.has(attachment.id),
+    );
+    setAttachments((current) => {
+      const concurrent = current.filter(
+        (attachment) =>
+          !knownIdsAtStart.has(attachment.id) &&
+          !localDeletedIds.has(attachment.id),
+      );
+      const next = mergeAttachmentStateById(authoritative, concurrent);
+      attachmentsRef.current = next;
+      return next;
+    });
+    const readyImages = authoritative.filter(
       (attachment) => attachment.isImage && attachment.status === 'ready',
     );
     setUploads((current) => mergeAttachmentStateById(
@@ -404,7 +471,33 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
       })),
       current,
     ));
-  }, []);
+  }, [deletedIdsForScope]);
+
+  const deleteAttachments = useCallback(async (attachmentIds: string[]) => {
+    const currentMemoId = scopeRef.current.memoId;
+    const currentUserId = scopeRef.current.userId;
+    if (!currentMemoId || !currentUserId || attachmentIds.length === 0) {
+      return { deletedIds: [], deletedCount: 0 };
+    }
+    const result = await deleteMemoAttachments(currentMemoId, attachmentIds);
+    const deletedIds = deletedIdsForScope(currentUserId, currentMemoId);
+    result.deletedIds.forEach((id) => deletedIds.add(id));
+    if (!isAttachmentScopeCurrent({
+      expectedMemoId: currentMemoId,
+      expectedUserId: currentUserId,
+      currentMemoId: scopeRef.current.memoId,
+      currentUserId: scopeRef.current.userId,
+    })) return result;
+    setAttachments((current) => {
+      const next = current.filter((attachment) => !deletedIds.has(attachment.id));
+      attachmentsRef.current = next;
+      return next;
+    });
+    setUploads((current) => current.filter(
+      (upload) => !deletedIds.has(upload.id),
+    ));
+    return result;
+  }, [deletedIdsForScope]);
 
   const cancelUpload = useCallback(async (attachmentId: string) => {
     if (inFlightRef.current.has(attachmentId)) return false;
@@ -434,6 +527,7 @@ export function useMemoAttachments(memoId: string | null, userId: string | null,
     retryUpload,
     cancelUpload,
     refreshAttachments,
+    deleteAttachments,
     blocksMemoSave: blocksMemoSaveForUploads(uploads),
   };
 }

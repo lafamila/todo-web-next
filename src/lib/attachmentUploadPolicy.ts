@@ -27,6 +27,30 @@ export const downloadableMemoAttachments = <T extends { isImage: boolean }>(
   attachments: readonly T[],
 ): T[] => attachments.filter((attachment) => !attachment.isImage);
 
+export function attachmentDeleteEligibility<T extends { id: string; createdBy: string }>(
+  attachments: readonly T[],
+  selectedIds: readonly string[],
+  currentUserId: string | null | undefined,
+  readOnly: boolean,
+): { show: boolean; allowed: boolean; includesOtherOwner: boolean } {
+  const show = !readOnly && Boolean(currentUserId) && attachments.some(
+    (attachment) => attachment.createdBy === currentUserId,
+  );
+  const selected = attachments.filter((attachment) => selectedIds.includes(attachment.id));
+  const uniqueRequested = new Set(selectedIds);
+  const allRequestedResolved =
+    uniqueRequested.size === selectedIds.length &&
+    selected.length === uniqueRequested.size;
+  const includesOtherOwner = selected.some(
+    (attachment) => attachment.createdBy !== currentUserId,
+  );
+  return {
+    show,
+    allowed: show && selected.length > 0 && allRequestedResolved && !includesOtherOwner,
+    includesOtherOwner,
+  };
+}
+
 export const attachmentDropCaretOffset = (selection: {
   selectionStart: number;
   selectionEnd: number;
@@ -55,6 +79,15 @@ export const shouldApplyAttachmentResult = (input: {
   input.expectedMemoId === input.currentMemoId &&
   input.expectedUserId === input.currentUserId &&
   input.expectedGeneration === input.currentGeneration;
+
+export const isAttachmentScopeCurrent = (input: {
+  expectedMemoId: string;
+  expectedUserId: string;
+  currentMemoId: string | null;
+  currentUserId: string | null;
+}): boolean =>
+  input.expectedMemoId === input.currentMemoId &&
+  input.expectedUserId === input.currentUserId;
 
 export const blocksMemoSaveForUploads = (
   uploads: ReadonlyArray<{ status: 'uploading' | 'ready' | 'failed'; inlineImage?: boolean }>,

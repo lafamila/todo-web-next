@@ -68,6 +68,11 @@ export interface MemoAttachmentInterface {
   updatedAtUtc: string | null;
 }
 
+export interface DeleteMemoAttachmentsResponseInterface {
+  deletedIds: string[];
+  deletedCount: number;
+}
+
 export interface AttachmentPreviewState {
   id: string;
   status: MemoAttachmentStatus;

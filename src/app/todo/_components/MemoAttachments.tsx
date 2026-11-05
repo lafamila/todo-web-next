@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { downloadMemoAttachments } from '@/lib/api';
 import type { MemoAttachmentInterface } from '@/lib/types';
-import { downloadableMemoAttachments } from '@/lib/attachmentUploadPolicy';
+import {
+  attachmentDeleteEligibility,
+  downloadableMemoAttachments,
+} from '@/lib/attachmentUploadPolicy';
 
 interface UploadView {
   id: string;
@@ -20,10 +23,14 @@ interface MemoAttachmentsProps {
   readyAttachments: MemoAttachmentInterface[];
   uploads: UploadView[];
   canUpload: boolean;
+  currentUserId: string | null;
+  readOnly: boolean;
   disabled?: boolean;
   onFiles: (files: File[]) => void;
   onRetry: (attachmentId: string) => void;
   onCancel: (attachmentId: string) => void;
+  onDelete: (attachmentIds: string[]) => Promise<unknown>;
+  onRefresh: () => Promise<void>;
 }
 
 export function MemoAttachments({
@@ -31,16 +38,23 @@ export function MemoAttachments({
   readyAttachments,
   uploads,
   canUpload,
+  currentUserId,
+  readOnly,
   disabled = false,
   onFiles,
   onRetry,
   onCancel,
+  onDelete,
+  onRefresh,
 }: MemoAttachmentsProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirming, setDeleteConfirming] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const downloadableAttachments = useMemo(
     () => downloadableMemoAttachments(readyAttachments),
@@ -52,15 +66,36 @@ export function MemoAttachments({
   );
   useEffect(() => setPortalTarget(document.body), []);
   const uploadingCount = uploads.filter((upload) => upload.status === 'uploading').length;
+  const busy = downloading || deleting;
+  const deleteEligibility = attachmentDeleteEligibility(
+    downloadableAttachments,
+    selectedIds,
+    currentUserId,
+    readOnly,
+  );
 
   const openDownloads = () => {
     setSelectedIds(downloadableAttachments.map((attachment) => attachment.id));
     setDownloadError(null);
+    setDeleteError(null);
+    setDeleteConfirming(false);
     setDownloadOpen(true);
+    void onRefresh().catch((error) => {
+      setDownloadError(
+        error instanceof Error ? error.message : '첨부파일 목록을 새로 고치지 못했습니다.',
+      );
+    });
   };
 
+  useEffect(() => {
+    if (busy) return;
+    const available = new Set(downloadableAttachments.map((attachment) => attachment.id));
+    setSelectedIds((current) => current.filter((id) => available.has(id)));
+    setDeleteConfirming(false);
+  }, [busy, downloadableAttachments]);
+
   const downloadSelected = async () => {
-    if (selectedIds.length === 0) return;
+    if (busy || selectedIds.length === 0) return;
     setDownloading(true);
     setDownloadError(null);
     try {
@@ -80,6 +115,27 @@ export function MemoAttachments({
       );
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (
+      selectedIds.length === 0 ||
+      !deleteEligibility.allowed ||
+      busy
+    ) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDelete(selectedIds);
+      setSelectedIds([]);
+      setDeleteConfirming(false);
+    } catch (error) {
+      setDeleteError(
+        error instanceof Error ? error.message : '첨부파일을 삭제하지 못했습니다.',
+      );
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -146,7 +202,7 @@ export function MemoAttachments({
 
       {portalTarget && createPortal(<Modal
         isOpen={downloadOpen}
-        onClose={() => !downloading && setDownloadOpen(false)}
+        onClose={() => !busy && setDownloadOpen(false)}
         title={`첨부파일 다운로드 (${downloadableAttachments.length})`}
         size="md"
       >
@@ -154,14 +210,19 @@ export function MemoAttachments({
           <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
             <input
               type="checkbox"
+              disabled={busy}
               checked={
                 downloadableAttachments.length > 0 && selectedIds.length === downloadableAttachments.length
               }
-              onChange={(event) => setSelectedIds(
-                event.target.checked
-                  ? downloadableAttachments.map((attachment) => attachment.id)
-                  : [],
-              )}
+              onChange={(event) => {
+                if (busy) return;
+                setDeleteConfirming(false);
+                setSelectedIds(
+                  event.target.checked
+                    ? downloadableAttachments.map((attachment) => attachment.id)
+                    : [],
+                );
+              }}
             />
             전체 선택
           </label>
@@ -170,14 +231,22 @@ export function MemoAttachments({
               <label key={attachment.id} className="flex items-center gap-2 text-sm text-gray-700">
                 <input
                   type="checkbox"
+                  disabled={busy}
                   checked={selectedIds.includes(attachment.id)}
-                  onChange={(event) => setSelectedIds((current) =>
-                    event.target.checked
-                      ? [...current, attachment.id]
-                      : current.filter((id) => id !== attachment.id),
-                  )}
+                  onChange={(event) => {
+                    if (busy) return;
+                    setDeleteConfirming(false);
+                    setSelectedIds((current) =>
+                      event.target.checked
+                        ? [...current, attachment.id]
+                        : current.filter((id) => id !== attachment.id),
+                    );
+                  }}
                 />
                 <span className="min-w-0 flex-1 truncate">{attachment.fileName}</span>
+                {attachment.createdBy === currentUserId && (
+                  <span className="shrink-0 text-xs text-gray-500">내 파일</span>
+                )}
                 <span className="text-xs text-gray-400">
                   {Math.max(1, Math.ceil(attachment.byteSize / 1024))} KB
                 </span>
@@ -187,18 +256,47 @@ export function MemoAttachments({
           <p className="text-xs text-gray-500">
             한 파일은 원본으로, 여러 파일은 ZIP 하나로 다운로드합니다.
           </p>
+          {deleteEligibility.show && deleteEligibility.includesOtherOwner && (
+            <p className="text-sm text-red-600">
+              다른 사용자가 올린 파일이 포함되어 있어 삭제할 수 없습니다. 내 파일만 선택하세요.
+            </p>
+          )}
+          {deleteEligibility.show && deleteConfirming && deleteEligibility.allowed && (
+            <p className="text-sm text-red-600">
+              선택한 내 첨부파일 {selectedIds.length}개를 목록에서 삭제합니다. 원본 저장소 객체는 보존됩니다.
+            </p>
+          )}
           {downloadError && <p className="text-sm text-red-600">{downloadError}</p>}
+          {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
           <div className="flex justify-end gap-2">
             <Button
               onClick={() => void downloadSelected()}
-              disabled={downloading || selectedIds.length === 0}
+              disabled={busy || selectedIds.length === 0}
             >
               {downloading ? '다운로드 중...' : '다운로드'}
             </Button>
+            {deleteEligibility.show && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (deleteConfirming) void deleteSelected();
+                  else setDeleteConfirming(true);
+                }}
+                disabled={
+                  busy ||
+                  selectedIds.length === 0 ||
+                  !deleteEligibility.allowed
+                }
+              >
+                {deleting ? '삭제 중...' : deleteConfirming ? '삭제 확인' : '삭제'}
+              </Button>
+            )}
             <Button
               variant="secondary"
-              onClick={() => setDownloadOpen(false)}
-              disabled={downloading}
+              onClick={() => {
+                if (!busy) setDownloadOpen(false);
+              }}
+              disabled={busy}
             >
               취소
             </Button>
