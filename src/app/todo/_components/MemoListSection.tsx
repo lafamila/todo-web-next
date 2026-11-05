@@ -578,6 +578,41 @@ export default function MemoListSection() {
   const isMultiSelectMode = selectedMemoIds.length > 0;
 
   if (!selectedProject) return <>{memberModal}</>;
+  const selectionActions = isMultiSelectMode ? (
+    <div className="h-full flex flex-col items-center justify-center gap-4">
+      <p className="text-lg text-gray-300">{selectedMemoIds.length}개의 메모가 선택됨</p>
+      <div className="flex flex-wrap justify-center gap-3">
+        {selectedProject.ownerId === user?.id && bulkMoveTargets.length > 0 && (
+          <button
+            type="button"
+            onClick={openBulkMove}
+            disabled={isBulkMoving || isDeleting}
+            className="todo-action-button todo-action-button--secondary"
+          >
+            이동
+          </button>
+        )}
+        {selectedProject.canManage && (
+          <button
+            type="button"
+            onClick={handleBulkDelete}
+            disabled={isDeleting || isBulkMoving}
+            className="todo-action-button"
+          >
+            {isDeleting ? '삭제 중...' : '삭제'}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={clearSelectedMemos}
+          disabled={isDeleting || isBulkMoving}
+          className="todo-action-button todo-action-button--secondary"
+        >
+          취소
+        </button>
+      </div>
+    </div>
+  ) : undefined;
   return (
     <>
     <div className="content">
@@ -585,7 +620,7 @@ export default function MemoListSection() {
         ref={mainContainerRef}
         className={`main-container${detailFullscreen ? ' detail-fullscreen' : ''}${
           isMobile
-            ? mobileView === 'detail'
+            ? mobileView === 'detail' || isMultiSelectMode
               ? ' mobile-view-detail'
               : ' mobile-view-list'
             : ''
@@ -638,45 +673,6 @@ export default function MemoListSection() {
                 </button>
               )}
             </div>
-            {isMultiSelectMode && (
-              <div
-                className="flex basis-full flex-wrap items-center justify-between gap-2 rounded border border-gray-300 bg-gray-50 px-3 py-2"
-                role="toolbar"
-                aria-label="선택한 메모 작업"
-              >
-                <strong>{selectedMemoIds.length}개 선택</strong>
-                <div className="flex flex-wrap items-center gap-2">
-                  {selectedProject.ownerId === user?.id && bulkMoveTargets.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={openBulkMove}
-                      disabled={isBulkMoving || isDeleting}
-                      className="todo-action-button todo-action-button--secondary"
-                    >
-                      이동
-                    </button>
-                  )}
-                  {selectedProject.canManage && (
-                    <button
-                      type="button"
-                      onClick={handleBulkDelete}
-                      disabled={isDeleting || isBulkMoving}
-                      className="todo-action-button"
-                    >
-                      {isDeleting ? '삭제 중...' : '삭제'}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={clearSelectedMemos}
-                    disabled={isDeleting || isBulkMoving}
-                    className="todo-action-button todo-action-button--secondary"
-                  >
-                    취소
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
           <div className="new-task-container" style={{ position: 'relative' }}>
             <Input
@@ -789,7 +785,10 @@ export default function MemoListSection() {
           />
         </div>
 
-        <MemoSection />
+        <MemoSection
+          keyboardActive={!isMultiSelectMode}
+          selectionActions={selectionActions}
+        />
       </div>
     </div>
 

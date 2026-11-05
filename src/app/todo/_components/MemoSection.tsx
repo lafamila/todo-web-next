@@ -252,6 +252,8 @@ interface MemoSectionProps {
   variant?: 'main' | 'backlog';
   keyboardActive?: boolean;
   onClose?: () => void;
+  /** 다중 선택 중 editor state는 유지한 채 우측 내용만 작업 화면으로 교체한다. */
+  selectionActions?: React.ReactNode;
 }
 
 export function MemoSection({
@@ -260,6 +262,7 @@ export function MemoSection({
   variant = 'main',
   keyboardActive = true,
   onClose,
+  selectionActions,
 }: MemoSectionProps = {}) {
   const isMobile = useIsMobile();
   // 데스크톱: 상태·액션을 헤더 슬롯으로 포털해 에디터가 패널 전체 높이를 쓴다.
@@ -2447,6 +2450,19 @@ export function MemoSection({
       </div>
     </section>
   ));
+
+  if (selectionActions) {
+    return (
+      <main
+        ref={surfaceRef}
+        className="detail min-h-0"
+        onPointerDownCapture={activateSurface}
+        onFocusCapture={activateSurface}
+      >
+        {selectionActions}
+      </main>
+    );
+  }
 
   if (!selectedProject || !selectedMemo) {
     return <div className="detail memo-draft-failure-surface">{failedDraftWarnings}</div>;
