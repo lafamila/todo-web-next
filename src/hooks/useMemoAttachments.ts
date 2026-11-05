@@ -23,6 +23,7 @@ import {
   shouldRestartPendingUploadAfterFlight,
   mergeAttachmentStateById,
   shouldLoadQueuedUploadRecord,
+  ATTACHMENT_UPLOAD_DENIED_MESSAGE,
 } from '@/lib/attachmentUploadPolicy';
 
 interface UploadView extends AttachmentPreviewState {
@@ -47,12 +48,13 @@ export const newAttachmentId = (): string => {
 
 const useBrowserLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
-export function useMemoAttachments(memoId: string | null, userId: string | null) {
+export function useMemoAttachments(memoId: string | null, userId: string | null, canUpload: boolean) {
   const [attachments, setAttachments] = useState<MemoAttachmentInterface[]>([]);
   const [uploads, setUploads] = useState<UploadView[]>([]);
   const [listError, setListError] = useState<string | null>(null);
   const generationRef = useRef(0);
   const scopeRef = useRef({ memoId, userId });
+  const uploadAllowedRef = useRef(canUpload);
   const recordsRef = useRef(new Map<string, AttachmentUploadRecord>());
   const objectUrlsRef = useRef(new Map<string, string>());
   const inFlightRef = useRef(new Set<string>());
@@ -66,6 +68,7 @@ export function useMemoAttachments(memoId: string | null, userId: string | null)
 
   useBrowserLayoutEffect(() => {
     scopeRef.current = { memoId, userId };
+    uploadAllowedRef.current = canUpload;
     generationRef.current += 1;
     uploadControllersRef.current.forEach((controller) => controller.abort());
     uploadControllersRef.current.clear();
@@ -76,7 +79,7 @@ export function useMemoAttachments(memoId: string | null, userId: string | null)
     setAttachments([]);
     setUploads([]);
     setListError(null);
-  }, [memoId, userId]);
+  }, [memoId, userId, canUpload]);
 
   const revokeObjectUrl = useCallback((attachmentId: string, expectedUrl?: string) => {
     const url = objectUrlsRef.current.get(attachmentId);
@@ -89,6 +92,7 @@ export function useMemoAttachments(memoId: string | null, userId: string | null)
     record: AttachmentUploadRecord,
     expectedGeneration: number,
   ) => {
+    if (!uploadAllowedRef.current) return;
     if (!shouldApplyAttachmentResult({
       expectedMemoId: record.memoId,
       expectedUserId: record.userId,
@@ -243,8 +247,8 @@ export function useMemoAttachments(memoId: string | null, userId: string | null)
         return {
           id: record.attachmentId,
           fileName: record.fileName,
-          status: record.status === 'pending' ? 'uploading' : 'failed',
-          error: record.error ?? undefined,
+          status: canUpload && record.status === 'pending' ? 'uploading' : 'failed',
+          error: canUpload ? record.error ?? undefined : ATTACHMENT_UPLOAD_DENIED_MESSAGE,
           objectUrl,
           inlineImage: record.inlineImage,
         };
@@ -268,7 +272,7 @@ export function useMemoAttachments(memoId: string | null, userId: string | null)
     return () => {
       cancelled = true;
     };
-  }, [memoId, runUpload, userId]);
+  }, [canUpload, memoId, runUpload, userId]);
 
   useEffect(() => () => {
     generationRef.current += 1;
@@ -284,6 +288,9 @@ export function useMemoAttachments(memoId: string | null, userId: string | null)
     inlineImages: boolean,
     providedIds?: readonly string[],
   ): Promise<EnqueueResult> => {
+    if (!canUpload || !uploadAllowedRef.current) {
+      throw new Error(ATTACHMENT_UPLOAD_DENIED_MESSAGE);
+    }
     const currentMemoId = memoId;
     const currentUserId = userId;
     if (!currentMemoId || !currentUserId || files.length === 0) {
@@ -359,9 +366,10 @@ export function useMemoAttachments(memoId: string | null, userId: string | null)
       imageAttachmentIds: records.filter((record) => record.inlineImage)
         .map((record) => record.attachmentId),
     };
-  }, [memoId, runUpload, userId]);
+  }, [canUpload, memoId, runUpload, userId]);
 
   const retryUpload = useCallback((attachmentId: string) => {
+    if (!uploadAllowedRef.current) return;
     const record = recordsRef.current.get(attachmentId);
     if (!record) return;
     const pending = { ...record, status: 'pending' as const, error: null, updatedAt: Date.now() };

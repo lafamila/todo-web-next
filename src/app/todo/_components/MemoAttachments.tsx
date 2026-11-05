@@ -18,6 +18,7 @@ interface MemoAttachmentsProps {
   memoId: string;
   readyAttachments: MemoAttachmentInterface[];
   uploads: UploadView[];
+  canUpload: boolean;
   disabled?: boolean;
   onFiles: (files: File[]) => void;
   onRetry: (attachmentId: string) => void;
@@ -28,6 +29,7 @@ export function MemoAttachments({
   memoId,
   readyAttachments,
   uploads,
+  canUpload,
   disabled = false,
   onFiles,
   onRetry,
@@ -78,7 +80,7 @@ export function MemoAttachments({
 
   return (
     <>
-      <input
+      {canUpload && <input
         ref={inputRef}
         type="file"
         multiple
@@ -88,15 +90,15 @@ export function MemoAttachments({
           event.currentTarget.value = '';
           if (files.length > 0) onFiles(files);
         }}
-      />
-      <button
+      />}
+      {canUpload && <button
         type="button"
         className="todo-action-button todo-action-button--secondary"
         onClick={() => inputRef.current?.click()}
         disabled={disabled}
       >
         첨부
-      </button>
+      </button>}
       {readyAttachments.length > 0 && (
         <button
           type="button"
@@ -121,7 +123,7 @@ export function MemoAttachments({
             className="todo-action-button todo-action-button--secondary"
             title={upload.error}
             onClick={() => onRetry(upload.id)}
-            disabled={disabled}
+            disabled={disabled || !canUpload}
           >
             재시도
           </button>

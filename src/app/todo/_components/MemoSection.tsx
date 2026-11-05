@@ -24,6 +24,8 @@ import {
   insertAttachmentTokensAtSelection,
   isInlineImageFile,
   removeAttachmentTokenRows,
+  canUploadMemoAttachments,
+  ATTACHMENT_UPLOAD_DENIED_MESSAGE,
 } from '@/lib/attachmentUploadPolicy';
 import {
   ApiError,
@@ -286,6 +288,7 @@ export function MemoSection({
     canMerge,
   } = useSync();
   const isAdmin = user?.isAdmin ?? false;
+  const canUploadAttachments = canUploadMemoAttachments(user);
   const {
     readyAttachments,
     uploads: attachmentUploads,
@@ -296,7 +299,7 @@ export function MemoSection({
     cancelUpload: cancelAttachmentUpload,
     refreshAttachments,
     blocksMemoSave: attachmentBlocksMemoSave,
-  } = useMemoAttachments(selectedMemo?.id ?? null, user?.id ?? null);
+  } = useMemoAttachments(selectedMemo?.id ?? null, user?.id ?? null, canUploadAttachments);
 
   // 헤더 슬롯은 같은 트리(MemoListSection)가 렌더하므로 마운트 후에 존재한다.
   useEffect(() => {
@@ -1948,18 +1951,23 @@ export function MemoSection({
   );
 
   const handleAttachmentFiles = useCallback((files: File[]) => {
+    if (!canUploadAttachments) return;
     if (isViewingVersion || (!isBacklog && !selectedProject?.canWrite)) return;
     void enqueueAttachmentFiles(files, false).catch((error) => {
       setSaveMessage(
         error instanceof Error ? error.message : '첨부파일 임시저장에 실패했습니다.',
       );
     });
-  }, [enqueueAttachmentFiles, isBacklog, isViewingVersion, selectedProject?.canWrite]);
+  }, [canUploadAttachments, enqueueAttachmentFiles, isBacklog, isViewingVersion, selectedProject?.canWrite]);
 
   const handlePasteImages = useCallback((files: File[]): boolean => {
     if (!selectedMemo || !canEdit || isViewingVersion) return false;
     const images = files.filter(isInlineImageFile);
     if (images.length === 0) return false;
+    if (!canUploadAttachments) {
+      setSaveMessage(ATTACHMENT_UPLOAD_DENIED_MESSAGE);
+      return true;
+    }
     const ids = images.map(() => newAttachmentId());
     inlineEditorRef.current?.insertAttachmentImageRows(ids);
     void enqueueAttachmentFiles(images, true, ids).catch((error) => {
@@ -1968,13 +1976,17 @@ export function MemoSection({
       );
     });
     return true;
-  }, [canEdit, enqueueAttachmentFiles, isViewingVersion, selectedMemo]);
+  }, [canEdit, canUploadAttachments, enqueueAttachmentFiles, isViewingVersion, selectedMemo]);
 
   const handleRawAttachmentPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     if (!selectedMemo || !canEdit || isViewingVersion) return;
     const images = Array.from(event.clipboardData.files).filter(isInlineImageFile);
     if (images.length === 0) return;
     event.preventDefault();
+    if (!canUploadAttachments) {
+      setSaveMessage(ATTACHMENT_UPLOAD_DENIED_MESSAGE);
+      return;
+    }
     const ids = images.map(() => newAttachmentId());
     const textarea = event.currentTarget;
     const result = insertAttachmentTokensAtSelection(
@@ -1993,7 +2005,7 @@ export function MemoSection({
         error instanceof Error ? error.message : '붙여넣은 이미지 임시저장에 실패했습니다.',
       );
     });
-  }, [applyContentMutation, canEdit, enqueueAttachmentFiles, isViewingVersion, selectedMemo]);
+  }, [applyContentMutation, canEdit, canUploadAttachments, enqueueAttachmentFiles, isViewingVersion, selectedMemo]);
 
   const handleCancelAttachment = useCallback((attachmentId: string) => {
     void cancelAttachmentUpload(attachmentId).then((cancelled) => {
@@ -2404,6 +2416,7 @@ export function MemoSection({
       memoId={selectedMemo.id}
       readyAttachments={readyAttachments}
       uploads={attachmentUploads}
+      canUpload={canUploadAttachments}
       disabled={!canAttach}
       onFiles={handleAttachmentFiles}
       onRetry={retryAttachmentUpload}
@@ -2670,7 +2683,7 @@ export function MemoSection({
                 mentionActive={showMemoSearch}
                 onMentionKeyDown={handleMentionKeyDown}
                 attachmentStateById={attachmentStateById}
-                onRetryAttachment={retryAttachmentUpload}
+                onRetryAttachment={canUploadAttachments ? retryAttachmentUpload : undefined}
                 onPasteImages={handlePasteImages}
                 readOnly={!canEdit}
                 onReadOnlyEditIntent={

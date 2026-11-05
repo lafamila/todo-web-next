@@ -287,7 +287,7 @@ export interface FeatureFlagsInterface {
   memoVersionHistory: boolean;
 }
 
-export type TodoPermission = "owner" | "admin" | "user" | "visitor";
+export type TodoPermission = "superadmin" | "owner" | "admin" | "user" | "visitor";
 export type ProjectRole = "owner" | "editor" | "viewer";
 
 export interface UserInterface {

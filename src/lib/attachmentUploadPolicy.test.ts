@@ -9,8 +9,19 @@ import {
   shouldRestartPendingUploadAfterFlight,
   mergeAttachmentStateById,
   shouldLoadQueuedUploadRecord,
+  canUploadMemoAttachments,
 } from './attachmentUploadPolicy.ts';
 import { attachmentUploadKey } from './attachmentUploadStore.ts';
+
+test('업로드 권한은 superadmin만 허용하고 owner/admin·누락·boolean 대체는 거부한다', () => {
+  assert.equal(canUploadMemoAttachments({ permission: 'superadmin' }), true);
+  for (const permission of [undefined, 'owner', 'admin', 'user', 'visitor', 'SUPERADMIN']) {
+    const user = { permission, isAdmin: true, isSuperAdmin: true };
+    assert.equal(canUploadMemoAttachments(user), false);
+  }
+  assert.equal(canUploadMemoAttachments(null), false);
+  assert.equal(canUploadMemoAttachments(undefined), false);
+});
 
 test('inline preview는 magic-safe image MIME만 허용한다', () => {
   assert.equal(isInlineImageFile({ type: 'image/png' } as File), true);

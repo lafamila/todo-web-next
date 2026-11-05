@@ -86,6 +86,9 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 - `useMemoAttachments`는 파일 선택·클립보드 이미지를 Todo 인증 API로 업로드한다. 완료 첨부가 있으면 게시/재게시 자리에
   `다운로드(N)`을 표시한다. 모달은 전체선택/개별선택을 지원하며 한 파일은 원본, 여러 파일은 ZIP으로 받는다.
   다운로드 모달은 `document.body` portal로 헤더/백로그 stacking context 밖에서 기존 Modal 레이어를 사용한다.
+- 업로드는 service permission `superadmin`만 허용한다(`owner`/`admin`·boolean 플래그 대체 금지).
+  파일 버튼·일반/Raw image paste·retry·IndexedDB 자동재개에 같은 가드를 적용한다. 권한 회수 시
+  전송을 abort하지만 Blob·초안은 삭제하지 않는다. 목록·이미지 보기·다운로드·텍스트 편집은 기존 권한을 유지한다.
 - 이미지의 저장 문법은 독립된 `![이미지](todo-attachment:<UUID>)` 행이다. 문장 중간 paste는 앞/이미지/뒤 행으로
   나누고 코드펜스·표 source 안에서는 블록 뒤에 삽입한다. `attachmentImage.ts`의 parser를 InlineEditor/ContentBlocks가
   공유한다. 코드펜스 안의 토큰은 코드로 유지한다. 공개 게시글이라고 비공개 첨부 권한을 풀지 않는다.

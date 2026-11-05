@@ -1,5 +1,11 @@
 const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
+export const ATTACHMENT_UPLOAD_DENIED_MESSAGE = '파일과 이미지 업로드는 superadmin만 사용할 수 있습니다.';
+
+export const canUploadMemoAttachments = (
+  user: { permission?: string } | null | undefined,
+): boolean => user?.permission === 'superadmin';
+
 export const isInlineImageFile = (file: Pick<File, 'type'>): boolean =>
   INLINE_IMAGE_TYPES.has(file.type.toLowerCase());
 
