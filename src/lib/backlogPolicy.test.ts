@@ -10,7 +10,6 @@ import {
   canClaimDraftWrite,
   isBacklogShortcut,
   isBacklogShortcutChord,
-  isLatestSavedSnapshot,
   isMemoSaveShortcut,
   ownsDraftRecord,
 } from './backlogPolicy.ts';
@@ -96,7 +95,16 @@ test('backlog shortcut toggles and two discrete Esc presses close only without a
   }
 });
 
-test('closing panel blocks input and stale save cannot close a reopened session', () => {
+test('식별 불가 입력 이벤트는 두 Esc 사이의 닫기 대기를 초기화하지 않는다', () => {
+  const base = { repeat: false, modalOpen: false, acceptsInput: true };
+  const first = advanceBacklogEscape({ ...base, key: 'Escape', armed: false });
+  const internal = advanceBacklogEscape({ ...base, key: 'Unidentified', armed: first.armed });
+  const second = advanceBacklogEscape({ ...base, key: 'Escape', armed: internal.armed });
+  assert.equal(internal.shouldClose, false);
+  assert.equal(second.shouldClose, true);
+});
+
+test('closing panel blocks input and stale close callbacks cannot close a reopened session', () => {
   assert.equal(backlogAcceptsInput('open'), true);
   assert.equal(backlogAcceptsInput('opening'), true);
   assert.equal(backlogAcceptsInput('closing'), false);
@@ -105,19 +113,4 @@ test('closing panel blocks input and stale save cannot close a reopened session'
   assert.equal(canCloseBacklogSession({ phase: 'open', requestedSession: 4, currentSession: 5 }), false);
   assert.equal(backlogTransitionWaitMs(false), 260);
   assert.equal(backlogTransitionWaitMs(true), 0);
-});
-
-test('panel closes only after the explicit snapshot remains latest', () => {
-  const base = {
-    saved: true,
-    snapshotContent: 'saved',
-    currentContent: 'saved',
-    acceptedContent: 'saved',
-    snapshotRevision: 3,
-    currentRevision: 3,
-  };
-  assert.equal(isLatestSavedSnapshot(base), true);
-  assert.equal(isLatestSavedSnapshot({ ...base, saved: false }), false);
-  assert.equal(isLatestSavedSnapshot({ ...base, currentContent: 'new typing' }), false);
-  assert.equal(isLatestSavedSnapshot({ ...base, currentRevision: 4 }), false);
 });

@@ -49,7 +49,6 @@ import { classifyLockDenial } from '@/lib/memoLeasePolicy';
 import {
   type DraftWriteOwnership,
   canClaimDraftWrite,
-  isLatestSavedSnapshot,
   isMemoSaveShortcut,
   ownsDraftRecord,
 } from '@/lib/backlogPolicy';
@@ -201,7 +200,7 @@ const editorFeatureHelp = [
 ];
 
 const shortcutHelp = [
-  { keys: 'Ctrl/⌘ + S', description: '현재 메모를 저장합니다.' },
+  { keys: 'Ctrl/⌘ + S', description: '현재 편집 중인 메모를 저장합니다. 백로그도 닫지 않고 저장만 합니다.' },
   { keys: 'Ctrl/⌘ + Shift + S', description: '선택한 프로젝트의 백로그를 열거나 닫습니다. 데스크톱은 오른쪽, 모바일은 아래에서 펼쳐집니다.' },
   { keys: 'Ctrl/⌘ + Enter', description: '현재 메모 편집기를 전체화면으로 열거나 원래 화면으로 돌아갑니다.' },
   { keys: 'Ctrl/⌘ + E', description: 'Raw 모드를 켜고 끕니다. 본문 전체를 하나의 텍스트로 선택·복사할 때 씁니다.' },
@@ -234,7 +233,6 @@ interface MemoSectionProps {
   project?: ProjectInterface | null;
   variant?: 'main' | 'backlog';
   keyboardActive?: boolean;
-  onLatestSaveSuccess?: () => void;
   onClose?: () => void;
 }
 
@@ -243,7 +241,6 @@ export function MemoSection({
   project: projectOverride,
   variant = 'main',
   keyboardActive = true,
-  onLatestSaveSuccess,
   onClose,
 }: MemoSectionProps = {}) {
   const isMobile = useIsMobile();
@@ -1508,26 +1505,8 @@ export function MemoSection({
     [queueMemoSave],
   );
 
-  /**
-   * 사용자가 직접 실행한 저장만 패널 닫기 신호를 낸다. 체크박스의 즉시 저장은
-   * 같은 `handleSaveMemo` 경로를 사용하지만 편집 흐름을 닫아서는 안 된다.
-   */
-  const handleExplicitSave = useCallback(async () => {
-    const snapshotContent = contentRef.current;
-    const snapshotRevision = localRevisionRef.current;
-    const saved = await queueMemoSave(snapshotContent, false, true);
-    if (isLatestSavedSnapshot({
-      saved,
-      snapshotContent,
-      currentContent: contentRef.current,
-      acceptedContent: originalContentRef.current,
-      snapshotRevision,
-      currentRevision: localRevisionRef.current,
-    })) {
-      onLatestSaveSuccess?.();
-    }
-    return saved;
-  }, [onLatestSaveSuccess, queueMemoSave]);
+  // 저장과 패널 닫기는 별개다. 백로그도 Cmd/Ctrl+S와 모바일 저장 버튼으로 닫히지 않는다.
+  const handleExplicitSave = handleSaveMemo;
 
   // 게시 / 재게시 핸들러
   const handlePublish = useCallback(async () => {

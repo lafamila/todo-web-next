@@ -56,6 +56,8 @@ export function advanceBacklogEscape(input: {
   ) {
     return { armed: false, shouldClose: false };
   }
+  // 일부 입력 컨트롤/브라우저가 발생시키는 식별 불가 이벤트는 사용자 단축키로 취급하지 않는다.
+  if (input.key === 'Unidentified') return { armed: input.armed, shouldClose: false };
   if (input.key !== 'Escape') return { armed: false, shouldClose: false };
   return input.armed
     ? { armed: false, shouldClose: true }
@@ -72,23 +74,7 @@ export function isMemoSaveShortcut(event: ShortcutLike): boolean {
   );
 }
 
-export function isLatestSavedSnapshot(input: {
-  saved: boolean;
-  snapshotContent: string;
-  currentContent: string;
-  acceptedContent: string;
-  snapshotRevision: number;
-  currentRevision: number;
-}): boolean {
-  return (
-    input.saved &&
-    input.snapshotContent === input.currentContent &&
-    input.snapshotContent === input.acceptedContent &&
-    input.snapshotRevision === input.currentRevision
-  );
-}
-
-/** A delayed save may close only the same visible panel session that started it. */
+/** A delayed close/animation callback may affect only the same visible panel session. */
 export function canCloseBacklogSession(input: {
   phase: BacklogPanelPhase;
   requestedSession: number;

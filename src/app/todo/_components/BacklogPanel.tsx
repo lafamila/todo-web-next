@@ -364,7 +364,6 @@ export function BacklogPanel() {
               project={selectedProject}
               variant="backlog"
               keyboardActive={backlogAcceptsInput(phase)}
-              onLatestSaveSuccess={() => closePanel(panelSession)}
               onClose={() => closePanel(panelSession)}
             />
           ) : (
