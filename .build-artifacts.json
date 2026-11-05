@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "id": "next-production",
+      "description": "Next.js standalone production 빌드 출력",
+      "strategy": "in_place",
+      "paths": [".next/"]
+    }
+  ]
+}

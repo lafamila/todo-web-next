@@ -7,3 +7,5 @@ dist
 .omx/
 .omc/
 *.tsbuildinfo
+.build-artifacts-state.json
+.build-artifacts-staging/
