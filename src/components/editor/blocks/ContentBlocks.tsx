@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useState, type AnchorHTMLAttributes, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type AnchorHTMLAttributes, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
@@ -171,18 +171,54 @@ export function AttachmentImageBlock({
   attachmentId,
   preview,
   onRetry,
+  widthPercent,
+  onWidthChange,
+  onRequestWrite,
+  onEditingChange,
 }: {
   attachmentId: string;
   preview?: AttachmentPreviewState;
   onRetry?: () => void;
+  widthPercent?: number;
+  onWidthChange?: (widthPercent?: number) => void;
+  onRequestWrite?: () => void;
+  onEditingChange?: (active: boolean) => void;
 }) {
   const [loadFailed, setLoadFailed] = useState(false);
+  const [previewWidth, setPreviewWidth] = useState<number | undefined>(widthPercent);
+  const previewWidthRef = useRef<number | undefined>(widthPercent);
+  const committedWidthRef = useRef<number | undefined>(widthPercent);
+  const editingActiveRef = useRef(false);
+  const editingChangeRef = useRef(onEditingChange);
   const status = preview?.status ?? 'ready';
   const source = status === 'ready'
     ? attachmentImageUrl(attachmentId)
     : preview?.objectUrl;
 
   useEffect(() => setLoadFailed(false), [source]);
+  useEffect(() => {
+    editingChangeRef.current = onEditingChange;
+  }, [onEditingChange]);
+  useEffect(() => () => {
+    if (editingActiveRef.current) editingChangeRef.current?.(false);
+  }, []);
+  useEffect(() => {
+    if (!onWidthChange && editingActiveRef.current) {
+      editingActiveRef.current = false;
+      editingChangeRef.current?.(false);
+    }
+  }, [onWidthChange]);
+  useEffect(() => {
+    previewWidthRef.current = widthPercent;
+    committedWidthRef.current = widthPercent;
+    setPreviewWidth(widthPercent);
+  }, [widthPercent]);
+
+  const commitWidth = (next = previewWidthRef.current) => {
+    if (next === committedWidthRef.current) return;
+    committedWidthRef.current = next;
+    onWidthChange?.(next);
+  };
 
   if (status === 'failed' || loadFailed || !source) {
     return (
@@ -203,12 +239,79 @@ export function AttachmentImageBlock({
       <img
         src={source}
         alt={preview?.fileName || '첨부 이미지'}
+        style={previewWidth === undefined
+          ? undefined
+          : { width: `${previewWidth}%`, height: 'auto', maxHeight: 'none' }}
         onError={() => setLoadFailed(true)}
       />
       {status === 'uploading' && (
         <div className="attachment-image-loading" role="status" aria-label="이미지 업로드 중">
           <span className="attachment-image-spinner" />
         </div>
+      )}
+      {onWidthChange && (
+        <div
+          className="attachment-image-controls"
+          role="group"
+          aria-label="이미지 너비"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onFocusCapture={() => {
+            if (editingActiveRef.current) return;
+            editingActiveRef.current = true;
+            editingChangeRef.current?.(true);
+          }}
+          onBlurCapture={(event) => {
+            if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+            if (!editingActiveRef.current) return;
+            editingActiveRef.current = false;
+            editingChangeRef.current?.(false);
+          }}
+        >
+          <label>
+            <span>이미지 너비 {previewWidth === undefined ? '자동' : `${previewWidth}%`}</span>
+            <input
+              type="range"
+              min={10}
+              max={100}
+              step={1}
+              value={previewWidth ?? 100}
+              aria-label="이미지 너비"
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                previewWidthRef.current = next;
+                setPreviewWidth(next);
+              }}
+              onPointerUp={() => commitWidth()}
+              onPointerCancel={() => commitWidth()}
+              onKeyUp={() => commitWidth()}
+              onBlur={() => commitWidth()}
+            />
+          </label>
+          <button
+            type="button"
+            disabled={previewWidth === undefined}
+            onClick={() => {
+              previewWidthRef.current = undefined;
+              setPreviewWidth(undefined);
+              commitWidth(undefined);
+            }}
+          >
+            자동
+          </button>
+        </div>
+      )}
+      {!onWidthChange && onRequestWrite && (
+        <button
+          type="button"
+          className="attachment-image-request-write todo-action-button todo-action-button--secondary"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRequestWrite();
+          }}
+        >
+          너비 조절
+        </button>
       )}
     </div>
   );

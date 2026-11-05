@@ -644,6 +644,11 @@ body {
   opacity: 0.5;
 }
 
+.memo-editor-shell.memo-file-drag-over {
+  outline: 1px dashed #9ca3af;
+  outline-offset: -4px;
+}
+
 .memo-editor-shell {
   position: relative;
   flex: 1 1 auto;

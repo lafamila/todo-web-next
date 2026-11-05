@@ -7,8 +7,8 @@ import {
   type EditorActivitySources,
 } from './editorActivity.ts';
 
-function transitions(events: Array<['line' | 'monaco', boolean]>) {
-  let sources: EditorActivitySources = { line: false, monaco: false };
+function transitions(events: Array<['line' | 'monaco' | 'image', boolean]>) {
+  let sources: EditorActivitySources = { line: false, monaco: false, image: false };
   const emitted: boolean[] = [];
   for (const [source, active] of events) {
     const result = updateEditorActivity(sources, source, active);
@@ -54,7 +54,7 @@ test('duplicate focus and blur events are ignored', () => {
   );
 });
 
-function trackedTransitions(events: Array<['line' | 'monaco', boolean]>) {
+function trackedTransitions(events: Array<['line' | 'monaco' | 'image', boolean]>) {
   const emitted: boolean[] = [];
   const scheduled: Array<() => void> = [];
   const tracker = createEditorActivityTracker(
@@ -99,6 +99,36 @@ test('reset/dispose clears stale Monaco focus on read-only transition and unmoun
   // reset의 deferred false를 여기서는 dispose가 즉시 확정한다.
   first.tracker.dispose();
   assert.deepEqual(first.emitted, [true, false]);
+});
+
+test('image controls alone keep the editor active until their focus leaves', () => {
+  assert.deepEqual(
+    trackedTransitions([
+      ['image', true],
+      ['image', true],
+      ['image', false],
+    ]).emitted,
+    [true, false],
+  );
+});
+
+test('line to image control handoff never releases the editor lease', () => {
+  assert.deepEqual(
+    trackedTransitions([
+      ['line', true],
+      ['line', false],
+      ['image', true],
+      ['image', false],
+    ]).emitted,
+    [true, false],
+  );
+});
+
+test('reset clears active image controls', () => {
+  const tracked = trackedTransitions([['image', true]]);
+  tracked.tracker.reset();
+  tracked.tracker.dispose();
+  assert.deepEqual(tracked.emitted, [true, false]);
 });
 
 test('read-only Monaco requests a lease only when an edit-intent handler exists', () => {

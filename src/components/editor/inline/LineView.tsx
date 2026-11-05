@@ -63,6 +63,9 @@ export interface LineViewProps {
   asPlainText?: boolean;
   attachmentPreview?: AttachmentPreviewState;
   onRetryAttachment?: (id: string) => void;
+  onAttachmentWidthChange?: (lineId: number, widthPercent?: number) => void;
+  onRequestAttachmentWrite?: () => void;
+  onAttachmentEditingChange?: (active: boolean) => void;
 }
 
 function LineViewImpl({
@@ -80,6 +83,9 @@ function LineViewImpl({
   asPlainText = false,
   attachmentPreview,
   onRetryAttachment,
+  onAttachmentWidthChange,
+  onRequestAttachmentWrite,
+  onAttachmentEditingChange,
 }: LineViewProps) {
   const cls = classifyLine(line.text);
   const isEditing = mode === 'editing';
@@ -147,6 +153,12 @@ function LineViewImpl({
             attachmentId={cls.attachmentId}
             preview={attachmentPreview}
             onRetry={onRetryAttachment ? () => onRetryAttachment(cls.attachmentId!) : undefined}
+            widthPercent={cls.attachmentWidthPercent}
+            onWidthChange={onAttachmentWidthChange
+              ? (widthPercent) => onAttachmentWidthChange(line.id, widthPercent)
+              : undefined}
+            onRequestWrite={onRequestAttachmentWrite}
+            onEditingChange={onAttachmentEditingChange}
           />
         ) : null;
       case 'blank':

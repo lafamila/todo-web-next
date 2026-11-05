@@ -6,6 +6,7 @@ import { CODE_FENCE_MARK, formatCodeFence, isCodeFenceLine } from '@/lib/codeFen
 import { toggleCheckbox } from '@/lib/utils';
 import {
   buildLineGroups,
+  attachmentInsertionIndexForCursor,
   classifyLine,
   editableLineIds,
   isAutoRenderTarget,
@@ -19,6 +20,7 @@ import {
   insertAttachmentRowsAtIndex,
   insertAttachmentRowsAtSelection,
 } from '@/lib/attachmentImage';
+import { updateAttachmentImageLineWidth } from '@/lib/attachmentImage';
 
 /** 자동 렌더 안정화 타이머. MemoSection 의 6초 락 해제 타이머와는 별개로 관리한다. */
 export const RENDER_SETTLE_MS = 2000;
@@ -106,6 +108,8 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
   const renderSettleTimerRef = useRef<NodeJS.Timeout | null>(null);
   const flashTimerRef = useRef<NodeJS.Timeout | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lastCursorLineIdRef = useRef<number | null>(null);
+  const lastCursorColumnRef = useRef(0);
   const historyRef = useRef(createEditorHistory());
   const fireRenderSettleRef = useRef<() => void>(() => {});
 
@@ -212,6 +216,8 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
       switchingRef.current = true;
       pendingCaretRef.current = caret;
       textAtActivationRef.current = linesRef.current.find((line) => line.id === id)?.text ?? '';
+      lastCursorLineIdRef.current = id;
+      if (caret != null) lastCursorColumnRef.current = caret;
       setActive(id, mode);
     },
     [clearRenderSettleTimer, currentEditableIds, setActive],
@@ -798,6 +804,12 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
   }, [armRenderSettleTimer]);
 
   const handleLineBlur = useCallback(() => {
+    const id = activeLineIdRef.current;
+    const el = textareaRef.current;
+    if (id != null && el) {
+      lastCursorLineIdRef.current = id;
+      lastCursorColumnRef.current = el.selectionStart;
+    }
     if (composingRef.current) return;
     if (switchingRef.current) return;
     closeMention();
@@ -1060,6 +1072,110 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     [activateLine, closeMention, commitHistory, commitLines, findIndex],
   );
 
+  const insertAttachmentImageRowsAfterCaret = useCallback(
+    (
+      attachmentIds: string[],
+      cursorOffset?: number | null,
+      afterCodeOpenLineId?: number | null,
+    ): boolean => {
+      if (optionsRef.current.readOnly || attachmentIds.length === 0) return false;
+      const current = linesRef.current;
+      const groups = buildLineGroups(current);
+      let insertionIndex = current.length;
+
+      const codeGroup = cursorOffset === undefined && afterCodeOpenLineId != null
+        ? groups.find(
+            (group): group is Extract<LineGroup, { type: 'code' }> =>
+              group.type === 'code' && group.open.id === afterCodeOpenLineId,
+          ) ?? null
+        : null;
+      if (cursorOffset === null) {
+        insertionIndex = current.length;
+      } else if (cursorOffset !== undefined) {
+        insertionIndex = attachmentInsertionIndexForCursor(current, cursorOffset);
+      } else if (codeGroup) {
+        const last = codeGroup.close ?? codeGroup.body.at(-1) ?? codeGroup.open;
+        insertionIndex = current.findIndex((line) => line.id === last.id) + 1;
+      } else {
+        const cursorLineId = lastCursorLineIdRef.current;
+        const lineIndex = current.findIndex((line) => line.id === cursorLineId);
+        if (lineIndex >= 0) {
+          const structural = groups.find((group) =>
+            (group.type === 'code' && (
+              group.open.id === cursorLineId ||
+              group.body.some((line) => line.id === cursorLineId) ||
+              group.close?.id === cursorLineId
+            )) ||
+            (group.type === 'table' && group.lines.some((line) => line.id === cursorLineId)),
+          );
+          const last = structural?.type === 'code'
+            ? (structural.close ?? structural.body.at(-1) ?? structural.open)
+            : structural?.type === 'table'
+              ? structural.lines.at(-1)!
+              : current[lineIndex];
+          insertionIndex = current.findIndex((line) => line.id === last.id) + 1;
+        }
+      }
+
+      const result = insertAttachmentRowsAtIndex({
+        lines: current, insertionIndex, attachmentIds, makeId: nextLineId,
+      });
+      if (!result) return false;
+      commitHistory(false);
+      commitLines(result.lines);
+      forceHistoryBoundaryRef.current = true;
+      closeMention();
+      activateLine(result.caretLineId, result.caret, 'editing');
+      return true;
+    },
+    [activateLine, closeMention, commitHistory, commitLines],
+  );
+
+  const getAttachmentDropCursorOffset = useCallback(
+    (afterCodeOpenLineId?: number | null): number | null => {
+      const current = linesRef.current;
+      if (afterCodeOpenLineId != null) {
+        const code = buildLineGroups(current).find(
+          (group): group is Extract<LineGroup, { type: 'code' }> =>
+            group.type === 'code' && group.open.id === afterCodeOpenLineId,
+        );
+        if (code) {
+          const openIndex = current.findIndex((line) => line.id === code.open.id);
+          return current.slice(0, openIndex).reduce((sum, line) => sum + line.text.length + 1, 0);
+        }
+      }
+      const lineId = lastCursorLineIdRef.current;
+      const lineIndex = current.findIndex((line) => line.id === lineId);
+      if (lineIndex < 0) return null;
+      const liveCaret = activeLineIdRef.current === lineId
+        ? textareaRef.current?.selectionStart
+        : undefined;
+      const column = Math.min(
+        Math.max(liveCaret ?? lastCursorColumnRef.current, 0),
+        current[lineIndex].text.length,
+      );
+      return current.slice(0, lineIndex).reduce((sum, line) => sum + line.text.length + 1, 0) + column;
+    },
+    [],
+  );
+
+  const updateAttachmentImageWidth = useCallback(
+    (lineId: number, widthPercent?: number): boolean => {
+      if (optionsRef.current.readOnly) return false;
+      const index = findIndex(lineId);
+      if (index < 0) return false;
+      const nextText = updateAttachmentImageLineWidth(linesRef.current[index].text, widthPercent);
+      if (!nextText || nextText === linesRef.current[index].text) return false;
+      commitHistory(false);
+      commitLines(linesRef.current.map((line, at) =>
+        at === index ? { ...line, text: nextText } : line,
+      ));
+      forceHistoryBoundaryRef.current = true;
+      return true;
+    },
+    [commitHistory, commitLines, findIndex],
+  );
+
   // 활성 라인 하나에만 전달되지만, 안정적이어야 LineView 의 memo 가 유지된다.
   // ref 는 여기 섞지 않는다 — 섞으면 객체 전체가 ref 취급돼 렌더 중 접근으로 잡힌다.
   const lineHandlers = useMemo(
@@ -1094,6 +1210,9 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     focusOffset,
     insertAtCaret,
     insertAttachmentImageRows,
+    insertAttachmentImageRowsAfterCaret,
+    getAttachmentDropCursorOffset,
+    updateAttachmentImageWidth,
     pendingCodeFocusId,
     consumeCodeFocus,
     selectDomRange,

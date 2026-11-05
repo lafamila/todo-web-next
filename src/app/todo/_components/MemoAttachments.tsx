@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { downloadMemoAttachments } from '@/lib/api';
 import type { MemoAttachmentInterface } from '@/lib/types';
+import { downloadableMemoAttachments } from '@/lib/attachmentUploadPolicy';
 
 interface UploadView {
   id: string;
@@ -41,6 +42,10 @@ export function MemoAttachments({
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  const downloadableAttachments = useMemo(
+    () => downloadableMemoAttachments(readyAttachments),
+    [readyAttachments],
+  );
   const failed = useMemo(
     () => uploads.filter((upload) => upload.status === 'failed'),
     [uploads],
@@ -49,7 +54,7 @@ export function MemoAttachments({
   const uploadingCount = uploads.filter((upload) => upload.status === 'uploading').length;
 
   const openDownloads = () => {
-    setSelectedIds(readyAttachments.map((attachment) => attachment.id));
+    setSelectedIds(downloadableAttachments.map((attachment) => attachment.id));
     setDownloadError(null);
     setDownloadOpen(true);
   };
@@ -96,16 +101,17 @@ export function MemoAttachments({
         className="todo-action-button todo-action-button--secondary"
         onClick={() => inputRef.current?.click()}
         disabled={disabled}
+        title="파일을 메모 영역에 끌어 놓아도 첨부할 수 있습니다."
       >
         첨부
       </button>}
-      {readyAttachments.length > 0 && (
+      {downloadableAttachments.length > 0 && (
         <button
           type="button"
           className="todo-action-button"
           onClick={openDownloads}
         >
-          다운로드({readyAttachments.length})
+          다운로드({downloadableAttachments.length})
         </button>
       )}
       {uploadingCount > 0 && (
@@ -141,7 +147,7 @@ export function MemoAttachments({
       {portalTarget && createPortal(<Modal
         isOpen={downloadOpen}
         onClose={() => !downloading && setDownloadOpen(false)}
-        title={`첨부파일 다운로드 (${readyAttachments.length})`}
+        title={`첨부파일 다운로드 (${downloadableAttachments.length})`}
         size="md"
       >
         <div className="space-y-4">
@@ -149,18 +155,18 @@ export function MemoAttachments({
             <input
               type="checkbox"
               checked={
-                readyAttachments.length > 0 && selectedIds.length === readyAttachments.length
+                downloadableAttachments.length > 0 && selectedIds.length === downloadableAttachments.length
               }
               onChange={(event) => setSelectedIds(
                 event.target.checked
-                  ? readyAttachments.map((attachment) => attachment.id)
+                  ? downloadableAttachments.map((attachment) => attachment.id)
                   : [],
               )}
             />
             전체 선택
           </label>
           <div className="max-h-64 space-y-2 overflow-y-auto rounded border border-gray-200 p-2">
-            {readyAttachments.map((attachment) => (
+            {downloadableAttachments.map((attachment) => (
               <label key={attachment.id} className="flex items-center gap-2 text-sm text-gray-700">
                 <input
                   type="checkbox"

@@ -11,6 +11,7 @@ import {
   type InlineEditorHandle,
   type MentionState,
 } from '@/components/editor/inline/InlineEditor';
+import { insertAttachmentImagesAfterCursorLine } from '@/components/editor/inline/classifyLine';
 import type {
   ArticleInterface,
   MemoInterface,
@@ -26,6 +27,10 @@ import {
   removeAttachmentTokenRows,
   canUploadMemoAttachments,
   ATTACHMENT_UPLOAD_DENIED_MESSAGE,
+  hasFileDragData,
+  canAcceptMemoFileDrop,
+  attachmentDropCaretOffset,
+  isAttachmentDropSnapshotCurrent,
 } from '@/lib/attachmentUploadPolicy';
 import {
   ApiError,
@@ -90,6 +95,8 @@ const HEADER_SLOT_ID = 'memo-status-slot';
 const DRAFT_FLUSH_DELAY_MS = 350;
 const MAX_AUTOMATIC_SAVE_RETRIES = 8;
 const MAX_LEASE_SAVE_RETRIES = 2;
+// 게시 API와 기존 게시글은 유지하되, 현재 메모 툴바에서는 사용하지 않는다.
+const SHOW_PUBLISH_BUTTONS = false;
 
 type DraftStatus =
   | 'idle'
@@ -125,6 +132,17 @@ interface PendingAttachmentSave {
   content: string;
   localRevision: number;
   resolve: (saved: boolean) => void;
+}
+
+interface PendingMemoFileDrop {
+  memoId: string;
+  userId: string;
+  editorEpoch: number;
+  contentSnapshot: string;
+  baseRevision?: string;
+  rawMode: boolean;
+  cursorOffset: number | null;
+  files: File[];
 }
 
 /**
@@ -383,6 +401,8 @@ export function MemoSection({
   const flushDraftOnUnmountRef = useRef<() => void>(() => {});
   const pendingSaveRef = useRef<PendingMemoSave | null>(null);
   const pendingAttachmentSaveRef = useRef<PendingAttachmentSave | null>(null);
+  const pendingFileDropRef = useRef<PendingMemoFileDrop | null>(null);
+  const [fileDragActive, setFileDragActive] = useState(false);
   const saveInFlightRef = useRef(false);
   const saveRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resumePendingSaveRef = useRef<() => void>(() => {});
@@ -1929,16 +1949,6 @@ export function MemoSection({
     [isViewingVersion, queueMemoSave]
   );
 
-  const handleAttachmentFiles = useCallback((files: File[]) => {
-    if (!canUploadAttachments) return;
-    if (isViewingVersion || (!isBacklog && !selectedProject?.canWrite)) return;
-    void enqueueAttachmentFiles(files, false).catch((error) => {
-      setSaveMessage(
-        error instanceof Error ? error.message : '첨부파일 임시저장에 실패했습니다.',
-      );
-    });
-  }, [canUploadAttachments, enqueueAttachmentFiles, isBacklog, isViewingVersion, selectedProject?.canWrite]);
-
   const handlePasteImages = useCallback((files: File[]): boolean => {
     if (!selectedMemo || !canEdit || isViewingVersion) return false;
     const images = files.filter(isInlineImageFile);
@@ -1985,6 +1995,133 @@ export function MemoSection({
       );
     });
   }, [applyContentMutation, canEdit, canUploadAttachments, enqueueAttachmentFiles, isViewingVersion, selectedMemo]);
+
+  const acceptsFileDrop = canAcceptMemoFileDrop({
+    canUpload: canUploadAttachments,
+    canWrite: Boolean(selectedProject && selectedMemo && !selectedProject.isGroup && (
+      isBacklog ? selectedMemo.createdBy === user?.id : selectedProject.canWrite
+    )),
+    isViewingVersion,
+    isResolving: Boolean(actionableIssue || showRemoteCompare || recoveryDraft || draftConflictActive),
+    accessRevoked,
+  });
+
+  const performFileDrop = useCallback((drop: PendingMemoFileDrop) => {
+    if (
+      !acceptsFileDrop || !selectedMemo || user?.id !== drop.userId ||
+      !isCurrentEditorRequest({
+        expectedMemoId: drop.memoId, expectedEpoch: drop.editorEpoch,
+        currentMemoId: initializedMemoIdRef.current, currentEpoch: editorEpochRef.current,
+      }) ||
+      rawModeRef.current !== drop.rawMode ||
+      !isAttachmentDropSnapshotCurrent(drop, contentRef.current, baseRevisionRef.current) ||
+      !hasCurrentLease(drop.memoId)
+    ) return;
+
+    const ids = drop.files.map(() => newAttachmentId());
+    const imageIds = ids.filter((_, index) => isInlineImageFile(drop.files[index]));
+    if (imageIds.length > 0) {
+      if (drop.rawMode) {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        const result = insertAttachmentImagesAfterCursorLine(
+          contentRef.current, drop.cursorOffset ?? contentRef.current.length, imageIds,
+        );
+        applyContentMutation(result.content);
+        requestAnimationFrame(() => {
+          if (textareaRef.current !== textarea || initializedMemoIdRef.current !== drop.memoId) return;
+          textarea.focus();
+          textarea.setSelectionRange(result.caret, result.caret);
+        });
+      } else if (!inlineEditorRef.current?.insertAttachmentImageRowsAfterCaret(imageIds, drop.cursorOffset)) {
+        setSaveMessage('편집 상태를 확인한 뒤 다시 파일을 놓아주세요.');
+        return;
+      }
+    }
+
+    activateSurface();
+    holdLock();
+    setSaveMessage(null);
+    void enqueueAttachmentFiles(drop.files, true, ids).catch((error) => {
+      if (!isCurrentEditorRequest({
+        expectedMemoId: drop.memoId, expectedEpoch: drop.editorEpoch,
+        currentMemoId: initializedMemoIdRef.current, currentEpoch: editorEpochRef.current,
+      })) return;
+      setSaveMessage(error instanceof Error ? error.message : '첨부파일 임시저장에 실패했습니다.');
+    });
+  }, [acceptsFileDrop, activateSurface, applyContentMutation, enqueueAttachmentFiles, hasCurrentLease, holdLock, selectedMemo, user?.id]);
+
+  useEffect(() => {
+    const pending = pendingFileDropRef.current;
+    if (!pending) return;
+    if (selectedMemo?.id !== pending.memoId || user?.id !== pending.userId ||
+      editorEpochRef.current !== pending.editorEpoch) {
+      pendingFileDropRef.current = null;
+      return;
+    }
+    // 로컬 초안 카운터가 아니라 실제 본문/base revision의 완전 일치로 재개 여부를 검증한다.
+    if (!acceptsFileDrop ||
+      !isAttachmentDropSnapshotCurrent(pending, contentRef.current, baseRevisionRef.current) ||
+      rawMode !== pending.rawMode || leaseState === 'denied') {
+      pendingFileDropRef.current = null;
+      setSaveMessage('편집 상태가 바뀌어 첨부를 취소했습니다. 다시 파일을 놓아주세요.');
+      return;
+    }
+    if (!canEdit || !hasCurrentLease(pending.memoId)) return;
+    pendingFileDropRef.current = null;
+    performFileDrop(pending);
+  }, [acceptsFileDrop, canEdit, hasCurrentLease, leaseState, performFileDrop, rawMode, selectedMemo?.id, user?.id]);
+
+  useEffect(() => {
+    setFileDragActive(false);
+    return () => { pendingFileDropRef.current = null; };
+  }, [selectedMemo?.id]);
+
+  const handleAttachmentFiles = useCallback((files: File[]) => {
+    if (!canUploadAttachments) {
+      setSaveMessage(ATTACHMENT_UPLOAD_DENIED_MESSAGE);
+      return;
+    }
+    if (!acceptsFileDrop || !selectedMemo || !user || initializedMemoIdRef.current !== selectedMemo.id) {
+      setSaveMessage('현재 화면에서는 파일을 첨부할 수 없습니다. 편집 가능한 메모를 선택하세요.');
+      return;
+    }
+    if (files.length === 0) return;
+    const drop: PendingMemoFileDrop = {
+      memoId: selectedMemo.id, userId: user.id,
+      editorEpoch: editorEpochRef.current,
+      contentSnapshot: contentRef.current, baseRevision: baseRevisionRef.current,
+      rawMode: rawModeRef.current,
+      cursorOffset: rawModeRef.current
+        ? attachmentDropCaretOffset(textareaRef.current)
+        : inlineEditorRef.current?.getAttachmentDropCursorOffset() ?? null,
+      files,
+    };
+    const previous = pendingFileDropRef.current;
+    if (previous?.memoId === drop.memoId && previous.editorEpoch === drop.editorEpoch &&
+      previous.rawMode === drop.rawMode &&
+      isAttachmentDropSnapshotCurrent(previous, drop.contentSnapshot, drop.baseRevision)) {
+      setSaveMessage('이전 첨부의 편집 잠금을 확보하는 중입니다. 잠시 후 다시 놓아주세요.');
+      return;
+    }
+    pendingFileDropRef.current = null;
+    if (canEdit && hasCurrentLease(drop.memoId)) {
+      performFileDrop(drop);
+      return;
+    }
+    pendingFileDropRef.current = drop;
+    activateSurface();
+    setSaveMessage('편집 잠금 확보 후 첨부합니다.');
+    holdLock();
+  }, [acceptsFileDrop, activateSurface, canEdit, canUploadAttachments, hasCurrentLease, holdLock, performFileDrop, selectedMemo, user]);
+
+  const handleMemoFileDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!hasFileDragData(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setFileDragActive(false);
+    handleAttachmentFiles(Array.from(event.dataTransfer.files));
+  }, [handleAttachmentFiles]);
 
   const handleCancelAttachment = useCallback((attachmentId: string) => {
     void cancelAttachmentUpload(attachmentId).then((cancelled) => {
@@ -2369,7 +2506,7 @@ export function MemoSection({
     </div>
   );
 
-  const publishPrimaryAction = !isBacklog && isAdmin && features.articles && (
+  const publishPrimaryAction = SHOW_PUBLISH_BUTTONS && !isBacklog && isAdmin && features.articles && (
       <button
         type="button"
         onClick={handlePublish}
@@ -2379,7 +2516,7 @@ export function MemoSection({
         {isPublishing ? '게시 중...' : articleStatus ? `재게시 (v${articleStatus.publishedVersion})` : '게시'}
       </button>
   );
-  const unpublishAction = !isBacklog && isAdmin && features.articles && articleStatus && (
+  const unpublishAction = SHOW_PUBLISH_BUTTONS && !isBacklog && isAdmin && features.articles && articleStatus && (
         <button
           type="button"
           onClick={handleUnpublish}
@@ -2405,7 +2542,7 @@ export function MemoSection({
   const documentActions = (
     <>
       {attachmentActions}
-      {readyAttachments.length === 0 && publishPrimaryAction}
+      {publishPrimaryAction}
       {unpublishAction}
     </>
   );
@@ -2574,11 +2711,28 @@ export function MemoSection({
         )}
 
         <div
-          className={`memo-editor-shell${
+          className={`memo-editor-shell${fileDragActive && acceptsFileDrop ? ' memo-file-drag-over' : ''}${
             remoteContent !== null && !showRemoteCompare
               ? ' has-remote-banner'
               : ''
           }`}
+          data-memo-drop-target
+          onDragEnterCapture={(event) => {
+            if (!hasFileDragData(event.dataTransfer)) return;
+            event.preventDefault();
+            setFileDragActive(acceptsFileDrop);
+          }}
+          onDragOverCapture={(event) => {
+            if (!hasFileDragData(event.dataTransfer)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = acceptsFileDrop ? 'copy' : 'none';
+          }}
+          onDragLeaveCapture={(event) => {
+            if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+            setFileDragActive(false);
+          }}
+          onDropCapture={handleMemoFileDrop}
         >
           {remoteContent !== null && !showRemoteCompare && (
             <button
@@ -2669,7 +2823,7 @@ export function MemoSection({
                   isViewingVersion ? undefined : handleReadOnlyEditIntent
                 }
                 onReadOnlyCodeEditIntent={
-                  isViewingVersion ? undefined : handleReadOnlyCodeEditIntent
+                  canAttach ? handleReadOnlyCodeEditIntent : undefined
                 }
                 onReadOnlyCheckboxIntent={
                   isViewingVersion ? undefined : handleReadOnlyCheckboxIntent

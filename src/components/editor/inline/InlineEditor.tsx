@@ -23,6 +23,13 @@ export interface InlineEditorHandle {
   insertMemoLink: (linkText: string) => void;
   /** 첨부 이미지를 현재 선택 위치(코드편집기면 펜스 뒤)의 standalone 행으로 넣는다. */
   insertAttachmentImageRows: (attachmentIds: string[]) => void;
+  /** 파일 drop 이미지: 현재 커서 줄/구조 뒤에 넣고 현재 줄은 변경하지 않는다. */
+  insertAttachmentImageRowsAfterCaret: (
+    attachmentIds: string[],
+    cursorOffset?: number | null,
+  ) => boolean;
+  /** 파일 drop 시점의 마지막 실제 cursor 문서 offset. 이력이 없으면 null. */
+  getAttachmentDropCursorOffset: () => number | null;
   isActive: () => boolean;
 }
 
@@ -122,16 +129,27 @@ export function InlineEditor({
   }, [activityTracker, machine.pendingCodeFocusId, readOnly]);
 
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const lastCodeFocusIdRef = useRef<number | null>(null);
   /** 드래그 중인지 — document mouseup 이 남의 선택까지 승격하지 않게 하는 게이트. */
   const draggingRef = useRef(false);
   const dragAnchorRef = useRef<{ lineId: number; column: number } | null>(null);
   const promoteRef = useRef<((event: MouseEvent) => void) | null>(null);
+  const activateLineAndRemember = (lineId: number, caret: number | null) => {
+    lastCodeFocusIdRef.current = null;
+    machine.activateLine(lineId, caret);
+  };
 
   useImperativeHandle(
     ref,
     () => ({
-      focusLastLine: machine.focusLastLine,
-      focusOffset: machine.focusOffset,
+      focusLastLine: () => {
+        lastCodeFocusIdRef.current = null;
+        machine.focusLastLine();
+      },
+      focusOffset: (offset: number) => {
+        lastCodeFocusIdRef.current = null;
+        machine.focusOffset(offset);
+      },
       insertMemoLink: (linkText: string) => machine.insertAtCaret(linkText, true),
       insertAttachmentImageRows: (attachmentIds: string[]) => {
         const active = document.activeElement instanceof Element ? document.activeElement : null;
@@ -141,6 +159,35 @@ export function InlineEditor({
           attachmentIds,
           Number.isFinite(codeOpenLineId) ? codeOpenLineId : null,
         );
+      },
+      insertAttachmentImageRowsAfterCaret: (
+        attachmentIds: string[],
+        cursorOffset?: number | null,
+      ) => {
+        const active = document.activeElement instanceof Element ? document.activeElement : null;
+        const wrapper = active?.closest<HTMLElement>('[data-code-open-line-id]');
+        const activeCodeId = wrapper ? Number(wrapper.dataset.codeOpenLineId) : null;
+        const codeOpenLineId = Number.isFinite(activeCodeId)
+          ? activeCodeId
+          : machine.activeLineId === null
+            ? lastCodeFocusIdRef.current
+            : null;
+        return machine.insertAttachmentImageRowsAfterCaret(
+          attachmentIds,
+          cursorOffset,
+          cursorOffset === undefined ? codeOpenLineId : null,
+        );
+      },
+      getAttachmentDropCursorOffset: () => {
+        const active = document.activeElement instanceof Element ? document.activeElement : null;
+        const wrapper = active?.closest<HTMLElement>('[data-code-open-line-id]');
+        const activeCodeId = wrapper ? Number(wrapper.dataset.codeOpenLineId) : null;
+        const codeOpenLineId = Number.isFinite(activeCodeId)
+          ? activeCodeId
+          : machine.activeLineId === null
+            ? lastCodeFocusIdRef.current
+            : null;
+        return machine.getAttachmentDropCursorOffset(codeOpenLineId);
       },
       isActive: () => machine.activeMode !== null,
     }),
@@ -161,6 +208,7 @@ export function InlineEditor({
       onReadOnlyEditIntent?.(value.length);
       return;
     }
+    lastCodeFocusIdRef.current = null;
     machine.focusLastLine();
   };
 
@@ -278,7 +326,7 @@ export function InlineEditor({
 
     const element = e.target instanceof Element ? e.target : null;
     // 라인 textarea·코드편집기 안에서 시작한 드래그는 그쪽의 네이티브 선택이다.
-    if (element?.closest('textarea, button, a, select, .monaco-editor')) {
+    if (element?.closest('textarea, input, button, a, select, .monaco-editor')) {
       draggingRef.current = false;
       dragAnchorRef.current = null;
       return;
@@ -297,6 +345,23 @@ export function InlineEditor({
       event.preventDefault();
       event.stopPropagation();
     }
+  };
+
+  const handleSurfaceKeyDownCapture = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (
+      readOnly ||
+      !target?.closest('.attachment-image-controls') ||
+      event.repeat ||
+      event.nativeEvent.isComposing ||
+      event.keyCode === 229 ||
+      !(event.metaKey || event.ctrlKey) ||
+      event.key.toLowerCase() !== 'z'
+    ) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.shiftKey) machine.redo();
+    else machine.undo();
   };
 
   const handleReadOnlyLineIntent = (lineId: number, caret: number) => {
@@ -350,6 +415,7 @@ export function InlineEditor({
       onClick={handleSurfaceClick}
       onMouseDown={handleSurfaceMouseDown}
       onPasteCapture={handleSurfacePaste}
+      onKeyDownCapture={handleSurfaceKeyDownCapture}
     >
       {groups.flatMap<React.ReactNode>((group) => {
         if (group.type === 'table') {
@@ -369,7 +435,7 @@ export function InlineEditor({
                   mode={line.id === activeLineId ? activeMode : null}
                   flash={line.id === flashLineId}
                   readOnly={readOnly}
-                  onActivate={machine.activateLine}
+                  onActivate={activateLineAndRemember}
                   onReadOnlyEditIntent={handleReadOnlyLineIntent}
                   onToggleCheckbox={machine.toggleCheckboxLine}
                   textareaRef={machine.textareaRef}
@@ -384,7 +450,7 @@ export function InlineEditor({
           const activateSource = (lineId: number, column: number) => {
             pendingCheckboxRef.current = null;
             if (readOnly) handleReadOnlyLineIntent(lineId, column);
-            else machine.activateLine(lineId, column);
+            else activateLineAndRemember(lineId, column);
           };
           return (
             <div key={group.key} className="editor-box-table">
@@ -407,7 +473,7 @@ export function InlineEditor({
                 mode={group.open.id === activeLineId ? activeMode : null}
                 flash={false}
                 readOnly={readOnly}
-                onActivate={machine.activateLine}
+                onActivate={activateLineAndRemember}
                 onReadOnlyEditIntent={handleReadOnlyLineIntent}
                 onToggleCheckbox={machine.toggleCheckboxLine}
                 textareaRef={machine.textareaRef}
@@ -432,7 +498,10 @@ export function InlineEditor({
                 onFocusChange={
                   readOnly
                     ? undefined
-                    : (focused) => activityTracker.update('monaco', focused)
+                    : (focused) => {
+                        if (focused) lastCodeFocusIdRef.current = group.open.id;
+                        activityTracker.update('monaco', focused);
+                      }
                 }
                 onReadOnlyEditIntent={onReadOnlyCodeEditIntent ? handleReadOnlyCodeIntent : undefined}
               />
@@ -442,7 +511,7 @@ export function InlineEditor({
                   mode={group.close.id === activeLineId ? activeMode : null}
                   flash={false}
                   readOnly={readOnly}
-                  onActivate={machine.activateLine}
+                  onActivate={activateLineAndRemember}
                   onReadOnlyEditIntent={handleReadOnlyLineIntent}
                   onToggleCheckbox={machine.toggleCheckboxLine}
                   textareaRef={machine.textareaRef}
@@ -461,7 +530,7 @@ export function InlineEditor({
             mode={group.line.id === activeLineId ? activeMode : null}
             flash={group.line.id === flashLineId}
             readOnly={readOnly}
-            onActivate={machine.activateLine}
+            onActivate={activateLineAndRemember}
             onReadOnlyEditIntent={handleReadOnlyLineIntent}
             onReadOnlyCheckboxIntent={onReadOnlyCheckboxIntent ? handleReadOnlyCheckboxIntent : undefined}
             onToggleCheckbox={machine.toggleCheckboxLine}
@@ -471,6 +540,13 @@ export function InlineEditor({
               ? attachmentStateById?.get(group.cls.attachmentId)
               : undefined}
             onRetryAttachment={!readOnly ? onRetryAttachment : undefined}
+            onAttachmentWidthChange={!readOnly ? machine.updateAttachmentImageWidth : undefined}
+            onRequestAttachmentWrite={
+              readOnly && onReadOnlyCodeEditIntent ? handleReadOnlyCodeIntent : undefined
+            }
+            onAttachmentEditingChange={
+              !readOnly ? (active) => activityTracker.update('image', active) : undefined
+            }
           />
         );
       })}

@@ -3,29 +3,59 @@ export const ATTACHMENT_IMAGE_LABEL = '이미지';
 const UUID_PATTERN =
   '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}';
 const ATTACHMENT_IMAGE_PATTERN = new RegExp(
-  `^!\\[${ATTACHMENT_IMAGE_LABEL}\\]\\(todo-attachment:(${UUID_PATTERN})\\)$`,
+  `^!\\[${ATTACHMENT_IMAGE_LABEL}\\]\\(todo-attachment:(${UUID_PATTERN})\\)(?: \\{width=(\\d{1,3})%\\})?$`,
 );
 const ATTACHMENT_ID_PATTERN = new RegExp(`^${UUID_PATTERN}$`);
 
 export interface AttachmentImageToken {
   attachmentId: string;
+  widthPercent?: number;
 }
 
 /** 줄 전체가 attachment 토큰인 경우만 이미지로 분류한다. */
 export function parseAttachmentImageLine(line: string): AttachmentImageToken | null {
   const match = ATTACHMENT_IMAGE_PATTERN.exec(line);
-  return match ? { attachmentId: match[1].toLowerCase() } : null;
+  if (!match) return null;
+  const widthPercent = match[2] === undefined ? undefined : Number(match[2]);
+  if (widthPercent !== undefined && !isAttachmentWidthPercent(widthPercent)) return null;
+  return {
+    attachmentId: match[1].toLowerCase(),
+    ...(widthPercent === undefined ? {} : { widthPercent }),
+  };
 }
 
 export function isAttachmentId(value: string): boolean {
   return ATTACHMENT_ID_PATTERN.test(value);
 }
 
-export function formatAttachmentImageLine(attachmentId: string): string {
+export function isAttachmentWidthPercent(value: number): boolean {
+  return Number.isInteger(value) && value >= 10 && value <= 100;
+}
+
+export function clampAttachmentWidthPercent(value: number): number {
+  if (!Number.isFinite(value)) return 100;
+  return Math.min(100, Math.max(10, Math.round(value)));
+}
+
+export function formatAttachmentImageLine(
+  attachmentId: string,
+  widthPercent?: number,
+): string {
   if (!isAttachmentId(attachmentId)) {
     throw new Error(`Invalid attachment id: ${attachmentId}`);
   }
-  return `![${ATTACHMENT_IMAGE_LABEL}](todo-attachment:${attachmentId.toLowerCase()})`;
+  const token = `![${ATTACHMENT_IMAGE_LABEL}](todo-attachment:${attachmentId.toLowerCase()})`;
+  return widthPercent === undefined
+    ? token
+    : `${token} {width=${clampAttachmentWidthPercent(widthPercent)}%}`;
+}
+
+export function updateAttachmentImageLineWidth(
+  line: string,
+  widthPercent?: number,
+): string | null {
+  const parsed = parseAttachmentImageLine(line);
+  return parsed ? formatAttachmentImageLine(parsed.attachmentId, widthPercent) : null;
 }
 
 export interface TextLine<TId = number> {
@@ -84,4 +114,20 @@ export function insertAttachmentRowsAtIndex<TId>(input: {
     caretLineId: caretLine.id,
     caret: 0,
   };
+}
+
+/** drop 전용: 현재 줄은 그대로 두고 그 바로 다음에 이미지와 빈 캐럿 행을 넣는다. */
+export function insertAttachmentRowsAfterLine<TId>(input: {
+  lines: readonly TextLine<TId>[];
+  lineIndex: number;
+  attachmentIds: readonly string[];
+  makeId: () => TId;
+}): { lines: TextLine<TId>[]; caretLineId: TId; caret: number } | null {
+  if (!input.lines[input.lineIndex]) return null;
+  return insertAttachmentRowsAtIndex({
+    lines: input.lines,
+    insertionIndex: input.lineIndex + 1,
+    attachmentIds: input.attachmentIds,
+    makeId: input.makeId,
+  });
 }

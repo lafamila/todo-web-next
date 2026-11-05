@@ -63,16 +63,16 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   다른 멤버·프로젝트 owner에게 공유하지 않으며 viewer도 자기 백로그는 생성·편집할 수 있다. `MemoSection`의 문서 override로
   동일한 InlineEditor/Monaco/Raw/IME/CAS/lease/기기 초안 기능을 재사용하고 기존 메모와 별도 버퍼·소켓을 가진다.
 - Cmd/Ctrl+Shift+S는 백로그 열기/닫기 토글, Cmd/Ctrl+S는 마지막으로 포커스한 편집기 저장이다. 백로그 열기는 focus를 이동하고
-  닫기는 기존 focus를 복원한다. 체크박스 즉시 저장은 패널을 닫지 않고 명시 저장의 최신 snapshot 성공만 닫는다.
+  닫기는 기존 focus를 복원한다. Cmd/Ctrl+S·모바일 저장·체크박스 저장은 패널을 닫지 않고 저장만 한다.
   저장 실패·대기·충돌은 유지하며 수동 닫기에도 debounce 전 초안을 flush한다.
 - 데스크톱 백로그는 절반 폭으로 시작하는 우측 overlay, pointer/keyboard resize, edge-hover 손잡이를 제공한다.
   모바일은 전체 폭과 항상 접근 가능한 손잡이. z-index 1250으로 fullscreen(1200) 위, Modal(1300) 아래다.
 - 백로그는 closed/opening/open/closing 전환으로 DOM을 닫힘 애니메이션 끝까지 유지한다. desktop은 우측, mobile은 하단
-  slide를 양방향으로 사용하며 closing은 inert/키 입력 차단, 종료 후 focus 복원한다. session guard가 이전 저장/animation
+  slide를 양방향으로 사용하며 closing은 inert/키 입력 차단, 종료 후 focus 복원한다. session guard가 이전 닫기/animation
   콜백의 재열린 패널 닫기를 막는다. 백로그 ? 버튼은 없고 desktop 저장은 단축키, 모바일은 저장 버튼을 제공한다.
   dirty/lease/기기 초안/서버 저장 상태는 닫기 액션과 같은 상단 우측 행에만 표시한다.
 - 열린 백로그의 연속된 두 Esc는 패널을 닫는다. 첫 Esc는 기존 편집 종료를 허용하고 다른 키/포인터/새 세션은 카운트를
-  초기화한다. repeat/IME/열린 모달의 Esc는 닫기 횟수에 포함하지 않는다. 상태 글자는 0.6em, 액션 간격은8px,
+  초기화한다. 식별 불가 `Unidentified` 이벤트는 연속 입력을 끊지 않는다. repeat/IME/열린 모달의 Esc는 닫기 횟수에 포함하지 않는다. 상태 글자는 0.6em, 액션 간격은8px,
   닫기 버튼은 모바일에만 보인다. 복구 전 초안은 현재 editor가 실제 쓴 revision만 정리하는 ownership 검사로 보존한다.
 - `panelLayout.ts`는 `todo:backlogWidthRatio`(viewport 대비)와 `todo:tasksPaneRatio`(실제 main grid 대비)를
   localStorage에 보존한다. 사용자 조절만 선호 비율을 바꾸며 window resize/mobile은 최소폭을 지키는 표시만 변경한다.
@@ -83,8 +83,9 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 
 ### 첨부파일과 이미지 행
 
-- `useMemoAttachments`는 파일 선택·클립보드 이미지를 Todo 인증 API로 업로드한다. 완료 첨부가 있으면 게시/재게시 자리에
-  `다운로드(N)`을 표시한다. 모달은 전체선택/개별선택을 지원하며 한 파일은 원본, 여러 파일은 ZIP으로 받는다.
+- `useMemoAttachments`는 파일 선택·클립보드·본문 파일 drop을 Todo 인증 API로 업로드한다. 게시/재게시/게시 취소 버튼은
+  현재 숨기되 API/게시 데이터는 유지한다. 완료된 일반 파일만 `다운로드(N)`에 세고 이미지들은 모달·전체선택에서 제외한다.
+  이미지뿐이면 다운로드 버튼도 없다. 한 파일은 원본, 여러 파일은 ZIP으로 받는다.
   다운로드 모달은 `document.body` portal로 헤더/백로그 stacking context 밖에서 기존 Modal 레이어를 사용한다.
 - 업로드는 service permission `superadmin`만 허용한다(`owner`/`admin`·boolean 플래그 대체 금지).
   파일 버튼·일반/Raw image paste·retry·IndexedDB 자동재개에 같은 가드를 적용한다. 권한 회수 시
@@ -92,11 +93,20 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 - 이미지의 저장 문법은 독립된 `![이미지](todo-attachment:<UUID>)` 행이다. 문장 중간 paste는 앞/이미지/뒤 행으로
   나누고 코드펜스·표 source 안에서는 블록 뒤에 삽입한다. `attachmentImage.ts`의 parser를 InlineEditor/ContentBlocks가
   공유한다. 코드펜스 안의 토큰은 코드로 유지한다. 공개 게시글이라고 비공개 첨부 권한을 풀지 않는다.
+- 첨부 버튼/OS 파일 drop의 이미지는 현재 커서가 있는 줄 다음에 넣고 원래 줄·선택 텍스트는 유지한다.
+  Raw/Monaco/표는 공유 classifier로 블록 뒤에 넣으며 커서 이력이 없으면 EOF다. 파일 drag만 capture하여
+  기본 파일 열기를 막고 일반 텍스트 drag는 유지한다. lease가 없으면 요청 후 memo/user/epoch/본문/baseRevision/
+  Raw 모드가 같은 경우에만 실행한다. IDB local revision floor 초기화만으로는 취소하지 않는다.
+  대기 중 두 번째 drop은 합치지 않고 안내 후 거부한다.
+- 폭 조절은 ` {width=60%}` suffix로 본문에 저장한다.10~100 정수만 허용하고 기존 무-suffix 자동 크기는 유지한다.
+  편집 lease가 있는 화면에서만 조절하며 slider는 미리보기 후 gesture 끝에 한 번만 Undo/본문을 갱신한다.
+  폭은 메모 열 대비 %, 높이는 auto로 비율을 유지한다. history/article/viewer는 저장 폭만 렌더한다.
+  이미지 컨트롤 focus는 별도 editor activity source로 lease를 유지하고 control 내부 Cmd/Ctrl+Z도 문서 history를 사용한다.
 - 즉시 object URL 미리보기+회전 표시를 제공하고 완료 후 인증 이미지 URL로 전환한다. Blob 큐는 IndexedDB에
   origin/account/memo/attachment별로 격리하며 새로고침 후 재개·실패 재시도·로컬 취소를 지원한다.
   memo/account 전환은 업로드를 abort하고 scope/epoch를 검증하여 다른 본문을 변경하지 않는다.
 - 미완료/실패 업로드가 있으면 서버 저장을 완료로 처리하지 않는다. 사용자의 명시적 저장 요청만 완료 후 재개하며,
-  그 사이 본문/선택/epoch가 바뀌면 기존 요청으로 저장하거나 패널을 닫지 않는다. 기존 기기 초안은 별도로 보존한다.
+  그 사이 본문/선택/epoch가 바뀌면 기존 요청으로 저장하지 않는다. 저장으로 패널을 닫지는 않으며 기존 기기 초안은 별도로 보존한다.
 - 저장소 비밀은 Web 환경값에 넣지 않는다. API의 신규 환경키·양쪽 sync v4 갱신·private R2 설정은
   `../todo-api-fastapi/docs/memo-attachments.md` 참조. Web Dockerfile/의존성 변경은 필요 없다.
 

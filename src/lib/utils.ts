@@ -83,7 +83,10 @@ export function parseContent(content: string): ContentBlockInterface[] {
       blocks.push({
         type: "attachment-image",
         content: line,
-        metadata: { attachmentId: attachmentImage.attachmentId },
+        metadata: {
+          attachmentId: attachmentImage.attachmentId,
+          attachmentWidthPercent: attachmentImage.widthPercent,
+        },
       });
       continue;
     }

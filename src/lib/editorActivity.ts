@@ -1,12 +1,13 @@
 export interface EditorActivitySources {
   line: boolean;
   monaco: boolean;
+  image: boolean;
 }
 
 export type EditorActivitySource = keyof EditorActivitySources;
 
 export function combinedEditorActivity(sources: EditorActivitySources): boolean {
-  return sources.line || sources.monaco;
+  return sources.line || sources.monaco || sources.image;
 }
 
 export function shouldRequestCodeWrite(
@@ -51,7 +52,7 @@ export function createEditorActivityTracker(
     return () => clearTimeout(timer);
   },
 ): EditorActivityTracker {
-  let sources: EditorActivitySources = { line: false, monaco: false };
+  let sources: EditorActivitySources = { line: false, monaco: false, image: false };
   let reported = false;
   let onChange = initialOnChange;
   let cancelScheduledEnd: (() => void) | null = null;
@@ -85,11 +86,12 @@ export function createEditorActivityTracker(
     reset: () => {
       update('line', false);
       update('monaco', false);
+      update('image', false);
     },
     dispose: () => {
       cancelScheduledEnd?.();
       cancelScheduledEnd = null;
-      sources = { line: false, monaco: false };
+      sources = { line: false, monaco: false, image: false };
       if (reported) onChange(false);
       reported = false;
     },

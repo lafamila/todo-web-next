@@ -216,6 +216,8 @@ export interface ContentBlockInterface {
     table?: BoxTableData;
     /** standalone todo attachment image token의 UUID. */
     attachmentId?: string;
+    /** 메모 본문 열 대비 이미지 폭. 없으면 기존 자동 크기. */
+    attachmentWidthPercent?: number;
   };
 }
 

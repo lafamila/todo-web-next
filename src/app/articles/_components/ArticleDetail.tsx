@@ -40,7 +40,11 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
       switch (block.type) {
         case 'attachment-image':
           return block.metadata?.attachmentId
-            ? <AttachmentImageBlock key={index} attachmentId={block.metadata.attachmentId} />
+            ? <AttachmentImageBlock
+                key={index}
+                attachmentId={block.metadata.attachmentId}
+                widthPercent={block.metadata.attachmentWidthPercent}
+              />
             : <pre key={index}>{block.content}</pre>;
         case 'table':
           return block.metadata?.table

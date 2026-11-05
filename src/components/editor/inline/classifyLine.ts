@@ -3,7 +3,10 @@ import { matchCheckbox, splitIndent } from '@/lib/lineMarks';
 import { parseContent } from '@/lib/utils';
 import type { ContentBlockInterface } from '@/lib/types';
 import { readBoxTable, type BoxTableData } from '@/lib/boxTable';
-import { parseAttachmentImageLine } from '@/lib/attachmentImage';
+import {
+  insertAttachmentRowsAtIndex,
+  parseAttachmentImageLine,
+} from '@/lib/attachmentImage';
 
 /**
  * 인라인 에디터의 문서 모델.
@@ -34,6 +37,7 @@ export interface LineClassification {
   memoId?: string;
   memoTitle?: string;
   attachmentId?: string;
+  attachmentWidthPercent?: number;
 }
 
 // 체크박스/들여쓰기 문법은 `lib/lineMarks.ts` 가 단일 소스다 (parseContent 와 공유).
@@ -71,6 +75,7 @@ export function classifyLine(text: string): LineClassification {
     return {
       kind: 'attachment-image', content: text, checked: false, indent: 0,
       attachmentId: attachmentImage.attachmentId,
+      attachmentWidthPercent: attachmentImage.widthPercent,
     };
   }
 
@@ -135,7 +140,7 @@ export type LineGroup =
  * 2차 패스: 코드펜스와 상자 문자 표를 각각 하나의 멀티라인 그룹으로 묶는다.
  * 코드 그룹 본문(body)은 Monaco 가 통째로 소유하며 라인 편집 대상이 아니다.
  */
-export function buildLineGroups(lines: EditorLine[]): LineGroup[] {
+export function buildLineGroups(lines: readonly EditorLine[]): LineGroup[] {
   const groups: LineGroup[] = [];
   const texts = lines.map((line) => line.text);
 
@@ -199,6 +204,61 @@ export function linesToText(lines: EditorLine[]): string {
   return lines.map((line) => line.text).join('\n');
 }
 
+export function attachmentInsertionIndexForCursor(
+  lines: readonly EditorLine[],
+  cursorOffset: number,
+): number {
+  if (lines.length === 0) return 0;
+  const contentLength = lines.reduce((total, line, index) =>
+    total + line.text.length + (index < lines.length - 1 ? 1 : 0), 0);
+  let remaining = Math.max(0, Math.min(cursorOffset, contentLength));
+  let cursorLineIndex = lines.length - 1;
+  for (let index = 0; index < lines.length; index++) {
+    if (remaining <= lines[index].text.length) {
+      cursorLineIndex = index;
+      break;
+    }
+    remaining -= lines[index].text.length + 1;
+  }
+
+  const cursorLineId = lines[cursorLineIndex].id;
+  const structural = buildLineGroups(lines).find((group) =>
+    (group.type === 'code' && (
+      group.open.id === cursorLineId ||
+      group.body.some((line) => line.id === cursorLineId) ||
+      group.close?.id === cursorLineId
+    )) ||
+    (group.type === 'table' && group.lines.some((line) => line.id === cursorLineId)),
+  );
+  const lastLine = structural?.type === 'code'
+    ? (structural.close ?? structural.body.at(-1) ?? structural.open)
+    : structural?.type === 'table'
+      ? structural.lines.at(-1)!
+      : lines[cursorLineIndex];
+  return lines.findIndex((line) => line.id === lastLine.id) + 1;
+}
+
+/** Raw drop도 인라인과 같은 줄·code/table 경계 뒤에 삽입한다. */
+export function insertAttachmentImagesAfterCursorLine(
+  content: string,
+  cursorOffset: number,
+  attachmentIds: readonly string[],
+): { content: string; caret: number } {
+  if (attachmentIds.length === 0) return { content, caret: Math.max(0, Math.min(cursorOffset, content.length)) };
+  const lines: EditorLine[] = content.split('\n').map((text, index) => ({ id: index + 1, text }));
+  const insertionIndex = attachmentInsertionIndexForCursor(lines, cursorOffset);
+  let nextId = lines.length;
+  const inserted = insertAttachmentRowsAtIndex({
+    lines, insertionIndex, attachmentIds, makeId: () => ++nextId,
+  });
+  if (!inserted) return { content, caret: cursorOffset };
+  const caretLineIndex = inserted.lines.findIndex((line) => line.id === inserted.caretLineId);
+  const caret = inserted.lines
+    .slice(0, caretLineIndex)
+    .reduce((total, line) => total + line.text.length + 1, 0);
+  return { content: linesToText(inserted.lines), caret };
+}
+
 function groupsToBlocks(groups: LineGroup[]): ContentBlockInterface[] {
   return groups.map((group): ContentBlockInterface => {
     if (group.type === 'code') {
@@ -239,7 +299,10 @@ function groupsToBlocks(groups: LineGroup[]): ContentBlockInterface[] {
         return {
           type: 'attachment-image',
           content: group.line.text,
-          metadata: { attachmentId: group.cls.attachmentId },
+          metadata: {
+            attachmentId: group.cls.attachmentId,
+            attachmentWidthPercent: group.cls.attachmentWidthPercent,
+          },
         };
       default:
         return {
@@ -277,7 +340,8 @@ export function assertClassifierMatchesParseContent(lines: EditorLine[]): void {
       Boolean(a.metadata?.checked) !== Boolean(b.metadata?.checked) ||
       (a.metadata?.indent ?? 0) !== (b.metadata?.indent ?? 0) ||
       JSON.stringify(a.metadata?.table) !== JSON.stringify(b.metadata?.table) ||
-      a.metadata?.attachmentId !== b.metadata?.attachmentId
+      a.metadata?.attachmentId !== b.metadata?.attachmentId ||
+      a.metadata?.attachmentWidthPercent !== b.metadata?.attachmentWidthPercent
     ) {
       console.warn('[inline-editor] classifier/parseContent 판정 불일치', {
         index: i,
