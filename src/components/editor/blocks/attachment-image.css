@@ -1,14 +1,29 @@
 .attachment-image-block {
   position: relative;
   display: flex;
-  min-height: 120px;
+  min-width: 0;
   margin: 8px 0;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
-  border: 1px solid #404040;
+}
+
+.attachment-image-block[data-alignment='left'] { justify-content: flex-start; }
+.attachment-image-block[data-alignment='right'] { justify-content: flex-end; }
+.attachment-image-block[data-has-alignment] { min-height: 44px; align-items: flex-start; }
+
+.attachment-image-frame {
+  position: relative;
+  display: flex;
+  max-width: 100%;
+  min-width: 0;
   border-radius: 4px;
-  background: #111;
+}
+
+.attachment-image-frame[data-uploading] {
+  min-width: min(320px, 100%);
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
 }
 
 .attachment-image-block img {
@@ -17,6 +32,7 @@
   max-width: 100%;
   max-height: min(72vh, 900px);
   object-fit: contain;
+  border-radius: inherit;
 }
 
 .attachment-image-loading {
@@ -29,52 +45,88 @@
   z-index: 1;
 }
 
-.attachment-image-controls {
+.attachment-image-alignment {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
-  z-index: 2;
+  left: 50%;
+  top: 8px;
+  transform: translateX(-50%);
+  z-index: 4;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border: 1px solid #525252;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid rgb(255 255 255 / 18%);
   border-radius: 4px;
-  background: rgb(17 17 17 / 88%);
+  background: rgb(17 17 17 / 62%);
+  backdrop-filter: blur(8px);
   color: #fff;
-  font-size: 11px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
 }
 
-.attachment-image-controls label {
-  display: flex;
-  align-items: center;
-  gap: 7px;
+.attachment-image-block[data-alignment='left'] .attachment-image-alignment { left: 0; transform: none; }
+.attachment-image-block[data-alignment='right'] .attachment-image-alignment { left: auto; right: 0; transform: none; }
+
+.attachment-image-frame:hover .attachment-image-alignment,
+.attachment-image-frame:focus-within .attachment-image-alignment {
+  opacity: 1;
+  pointer-events: auto;
 }
 
-.attachment-image-controls input[type='range'] {
-  width: min(18vw, 150px);
-  accent-color: #d4d4d4;
-  outline-color: #d4d4d4;
-}
+.attachment-image-frame[data-resizing] .attachment-image-alignment { opacity: 0; pointer-events: none; }
 
-.attachment-image-controls button {
+.attachment-image-alignment button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: 0;
+  border-radius: 3px;
   background: transparent;
-  color: #fff;
-  font-size: inherit;
-  text-decoration: underline;
+  color: inherit;
+  cursor: pointer;
 }
 
-.attachment-image-controls button:disabled {
-  opacity: 0.45;
-  text-decoration: none;
-}
+.attachment-image-alignment button:hover,
+.attachment-image-alignment button[aria-pressed='true'] { background: rgb(255 255 255 / 20%); }
+.attachment-image-alignment button:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
 
-.attachment-image-request-write {
+.attachment-image-resize-edge {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
-  z-index: 2;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  width: 12px;
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+  outline: none;
+}
+
+.attachment-image-resize-edge--left { left: 0; }
+.attachment-image-resize-edge--right { right: 0; }
+.attachment-image-resize-edge::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 5px;
+  width: 2px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 85%);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 30%);
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.attachment-image-resize-edge:hover::after,
+.attachment-image-resize-edge:focus-visible::after,
+.attachment-image-frame[data-resizing] .attachment-image-resize-edge::after { opacity: 1; }
+
+@media (hover: none) {
+  .attachment-image-alignment { opacity: 1; pointer-events: auto; }
 }
 
 .attachment-image-spinner {
@@ -95,6 +147,7 @@
   gap: 8px;
   padding: 16px;
   color: #fca5a5;
+  background: #111;
   text-align: center;
 }
 
@@ -104,4 +157,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .attachment-image-spinner { animation-duration: 1800ms; }
+  .attachment-image-alignment, .attachment-image-resize-edge::after { transition: none; }
 }

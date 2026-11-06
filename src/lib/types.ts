@@ -1,4 +1,5 @@
 import type { BoxTableData } from "./boxTable";
+import type { AttachmentImageAlignment } from "./attachmentImage";
 
 export interface ProjectInterface {
   id: string;
@@ -223,6 +224,7 @@ export interface ContentBlockInterface {
     attachmentId?: string;
     /** 메모 본문 열 대비 이미지 폭. 없으면 기존 자동 크기. */
     attachmentWidthPercent?: number;
+    attachmentAlignment?: AttachmentImageAlignment;
   };
 }
 

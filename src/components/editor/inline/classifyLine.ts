@@ -6,6 +6,7 @@ import { readBoxTable, type BoxTableData } from '@/lib/boxTable';
 import {
   insertAttachmentRowsAtIndex,
   parseAttachmentImageLine,
+  type AttachmentImageAlignment,
 } from '@/lib/attachmentImage';
 
 /**
@@ -38,6 +39,7 @@ export interface LineClassification {
   memoTitle?: string;
   attachmentId?: string;
   attachmentWidthPercent?: number;
+  attachmentAlignment?: AttachmentImageAlignment;
 }
 
 // 체크박스/들여쓰기 문법은 `lib/lineMarks.ts` 가 단일 소스다 (parseContent 와 공유).
@@ -76,6 +78,7 @@ export function classifyLine(text: string): LineClassification {
       kind: 'attachment-image', content: text, checked: false, indent: 0,
       attachmentId: attachmentImage.attachmentId,
       attachmentWidthPercent: attachmentImage.widthPercent,
+      attachmentAlignment: attachmentImage.alignment,
     };
   }
 
@@ -302,6 +305,7 @@ function groupsToBlocks(groups: LineGroup[]): ContentBlockInterface[] {
           metadata: {
             attachmentId: group.cls.attachmentId,
             attachmentWidthPercent: group.cls.attachmentWidthPercent,
+            attachmentAlignment: group.cls.attachmentAlignment,
           },
         };
       default:
@@ -341,7 +345,8 @@ export function assertClassifierMatchesParseContent(lines: EditorLine[]): void {
       (a.metadata?.indent ?? 0) !== (b.metadata?.indent ?? 0) ||
       JSON.stringify(a.metadata?.table) !== JSON.stringify(b.metadata?.table) ||
       a.metadata?.attachmentId !== b.metadata?.attachmentId ||
-      a.metadata?.attachmentWidthPercent !== b.metadata?.attachmentWidthPercent
+      a.metadata?.attachmentWidthPercent !== b.metadata?.attachmentWidthPercent ||
+      a.metadata?.attachmentAlignment !== b.metadata?.attachmentAlignment
     ) {
       console.warn('[inline-editor] classifier/parseContent 판정 불일치', {
         index: i,

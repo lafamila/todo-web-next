@@ -44,6 +44,7 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
                 key={index}
                 attachmentId={block.metadata.attachmentId}
                 widthPercent={block.metadata.attachmentWidthPercent}
+                alignment={block.metadata.attachmentAlignment}
               />
             : <pre key={index}>{block.content}</pre>;
         case 'table':

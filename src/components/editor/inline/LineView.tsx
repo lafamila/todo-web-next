@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { classifyLine, type EditorLine } from './classifyLine';
 import type { LineHandlers, LineMode } from './useLineStateMachine';
 import type { AttachmentPreviewState } from '@/lib/types';
+import type { AttachmentImageAlignment } from '@/lib/attachmentImage';
 
 interface CaretPositionSource {
   caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
@@ -64,8 +65,10 @@ export interface LineViewProps {
   attachmentPreview?: AttachmentPreviewState;
   onRetryAttachment?: (id: string) => void;
   onAttachmentWidthChange?: (lineId: number, widthPercent?: number) => void;
+  onAttachmentAlignmentChange?: (lineId: number, alignment: AttachmentImageAlignment) => void;
   onRequestAttachmentWrite?: () => void;
   onAttachmentEditingChange?: (active: boolean) => void;
+  attachmentDocumentSnapshot?: string;
 }
 
 function LineViewImpl({
@@ -84,8 +87,10 @@ function LineViewImpl({
   attachmentPreview,
   onRetryAttachment,
   onAttachmentWidthChange,
+  onAttachmentAlignmentChange,
   onRequestAttachmentWrite,
   onAttachmentEditingChange,
+  attachmentDocumentSnapshot,
 }: LineViewProps) {
   const cls = classifyLine(line.text);
   const isEditing = mode === 'editing';
@@ -154,11 +159,16 @@ function LineViewImpl({
             preview={attachmentPreview}
             onRetry={onRetryAttachment ? () => onRetryAttachment(cls.attachmentId!) : undefined}
             widthPercent={cls.attachmentWidthPercent}
+            alignment={cls.attachmentAlignment}
             onWidthChange={onAttachmentWidthChange
               ? (widthPercent) => onAttachmentWidthChange(line.id, widthPercent)
               : undefined}
+            onAlignmentChange={onAttachmentAlignmentChange
+              ? (alignment) => onAttachmentAlignmentChange(line.id, alignment)
+              : undefined}
             onRequestWrite={onRequestAttachmentWrite}
             onEditingChange={onAttachmentEditingChange}
+            documentSnapshot={attachmentDocumentSnapshot}
           />
         ) : null;
       case 'blank':

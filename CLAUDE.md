@@ -107,8 +107,13 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   Raw 모드가 같은 경우에만 실행한다. IDB local revision floor 초기화만으로는 취소하지 않는다.
   대기 중 두 번째 drop은 합치지 않고 안내 후 거부한다.
 - 폭 조절은 ` {width=60%}` suffix로 본문에 저장한다.10~100 정수만 허용하고 기존 무-suffix 자동 크기는 유지한다.
-  편집 lease가 있는 화면에서만 조절하며 slider는 미리보기 후 gesture 끝에 한 번만 Undo/본문을 갱신한다.
-  폭은 메모 열 대비 %, 높이는 auto로 비율을 유지한다. history/article/viewer는 저장 폭만 렌더한다.
+  slider/너비 버튼 없이 실제 이미지 좌우 세로 테두리를 드래그한다. preview 후 gesture 끝에 한 번만 Undo/본문을 갱신한다.
+  폭은 메모 열 대비 %, 높이는 auto로 비율을 유지한다. 고정측 edge도 preview offset으로 pointer를 따르고 완료 시 저장 정렬에 맞춘다.
+  열 너비100%보다 작은 이미지만 hover/focus에 반투명 좌/가운데/우 아이콘을 보인다(touch는 항상 접근 가능).
+  정렬은 `{width=60% align=left}`/`{align=right}`로 저장하고 기본 가운데는 생략한다. 폭/정렬 변경은 서로 보존한다.
+  잠금 응답보다 빠른 drag/키보드/정렬 의도는5초 이내 동일 attachment/source/폭/정렬/본문일 때 한 번만 적용한다.
+  Esc/blur/새 gesture/원격 본문 변경/메모·계정·버전 전환은 대기를 취소한다. history/article/viewer는 저장 배치만 렌더한다.
+  이미지 frame의 mouse/click 전파를 막아 resize 종료가 원문 편집으로 바뀌지 않는다. 최소 이미지의 컨트롤은 다음 문장과 겹치지 않는다.
   이미지 컨트롤 focus는 별도 editor activity source로 lease를 유지하고 control 내부 Cmd/Ctrl+Z도 문서 history를 사용한다.
 - 즉시 object URL 미리보기+회전 표시를 제공하고 완료 후 인증 이미지 URL로 전환한다. Blob 큐는 IndexedDB에
   origin/account/memo/attachment별로 격리하며 새로고침 후 재개·실패 재시도·로컬 취소를 지원한다.

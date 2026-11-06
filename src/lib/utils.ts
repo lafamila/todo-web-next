@@ -86,6 +86,7 @@ export function parseContent(content: string): ContentBlockInterface[] {
         metadata: {
           attachmentId: attachmentImage.attachmentId,
           attachmentWidthPercent: attachmentImage.widthPercent,
+          attachmentAlignment: attachmentImage.alignment,
         },
       });
       continue;

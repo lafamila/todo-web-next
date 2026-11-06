@@ -10,6 +10,13 @@ import { cn } from '@/lib/utils';
 import type { BoxTableData } from '@/lib/boxTable';
 import type { AttachmentPreviewState } from '@/lib/types';
 import { TODO_API_BASE_URL } from '@/lib/constants';
+import {
+  attachmentWidthFromDrag,
+  clampAttachmentWidthPercent,
+  isAttachmentLayoutSnapshotCurrent,
+  type AttachmentImageAlignment,
+  type AttachmentResizeEdge,
+} from '@/lib/attachmentImage';
 
 /**
  * 메모 본문 블록의 단일 표현.
@@ -167,57 +174,229 @@ export function attachmentImageUrl(attachmentId: string): string {
   return `${TODO_API_BASE_URL}/attachments/${encodeURIComponent(attachmentId)}/content?inline=true`;
 }
 
+interface ImageResizeDrag {
+  pointerId: number;
+  handle: HTMLDivElement;
+  edge: AttachmentResizeEdge;
+  startX: number;
+  lastX: number;
+  startWidthPx: number;
+  containerWidthPx: number;
+  initialWidth?: number;
+  alignment: AttachmentImageAlignment;
+  snapshot: Parameters<typeof isAttachmentLayoutSnapshotCurrent>[0];
+}
+
+function widthForImageDrag(drag: ImageResizeDrag, clientX: number): number {
+  const next = attachmentWidthFromDrag({ ...drag, deltaX: clientX - drag.startX });
+  const anchoredEdge = (drag.alignment === 'left' && drag.edge === 'left') ||
+    (drag.alignment === 'right' && drag.edge === 'right');
+  // A border already against the memo edge cannot be dragged outside that column.
+  return anchoredEdge ? Math.min(next, clampAttachmentWidthPercent(drag.startWidthPx / drag.containerWidthPx * 100)) : next;
+}
+
 export function AttachmentImageBlock({
   attachmentId,
   preview,
   onRetry,
   widthPercent,
+  alignment = 'center',
   onWidthChange,
+  onAlignmentChange,
   onRequestWrite,
   onEditingChange,
+  documentSnapshot,
 }: {
   attachmentId: string;
   preview?: AttachmentPreviewState;
   onRetry?: () => void;
   widthPercent?: number;
+  alignment?: AttachmentImageAlignment;
   onWidthChange?: (widthPercent?: number) => void;
+  onAlignmentChange?: (alignment: AttachmentImageAlignment) => void;
   onRequestWrite?: () => void;
   onEditingChange?: (active: boolean) => void;
+  documentSnapshot?: string;
 }) {
   const [loadFailed, setLoadFailed] = useState(false);
   const [previewWidth, setPreviewWidth] = useState<number | undefined>(widthPercent);
-  const previewWidthRef = useRef<number | undefined>(widthPercent);
-  const committedWidthRef = useRef<number | undefined>(widthPercent);
+  const [measuredWidth, setMeasuredWidth] = useState(100);
+  const [resizing, setResizing] = useState(false);
+  const [previewOffset, setPreviewOffset] = useState(0);
+  const blockRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const focusedRef = useRef(false);
+  const widthChangeRef = useRef(onWidthChange);
+  const requestWriteRef = useRef(onRequestWrite);
+  const pendingLayoutRef = useRef<{
+    snapshot: Parameters<typeof isAttachmentLayoutSnapshotCurrent>[0];
+    change: { kind: 'width'; value: number } | { kind: 'alignment'; value: AttachmentImageAlignment };
+  } | null>(null);
+  const dragRef = useRef<ImageResizeDrag | null>(null);
   const editingActiveRef = useRef(false);
   const editingChangeRef = useRef(onEditingChange);
   const status = preview?.status ?? 'ready';
   const source = status === 'ready'
     ? attachmentImageUrl(attachmentId)
     : preview?.objectUrl;
+  const canResize = Boolean(onWidthChange);
+  const interactive = status === 'ready' && Boolean(onWidthChange || onRequestWrite);
+  const showAlignment = interactive && previewWidth !== 100 && measuredWidth < 99.5;
+
+  const reportActivity = (active: boolean) => {
+    if (editingActiveRef.current === active) return;
+    editingActiveRef.current = active;
+    editingChangeRef.current?.(active);
+  };
+
+  const finishResize = (commit: boolean, clientX?: number) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+    const deltaX = (clientX ?? drag.lastX) - drag.startX;
+    const next = widthForImageDrag(drag, clientX ?? drag.lastX);
+    const changed = Math.abs(deltaX) >= 2 && next !== drag.initialWidth;
+    if (commit && widthChangeRef.current && changed) {
+      setPreviewWidth(next);
+      widthChangeRef.current(next);
+    } else {
+      setPreviewWidth(drag.initialWidth);
+      if (commit && changed && requestWriteRef.current) {
+        pendingLayoutRef.current = {
+          snapshot: { ...drag.snapshot, expiresAt: Date.now() + 5000 },
+          change: { kind: 'width', value: next },
+        };
+      }
+    }
+    setPreviewOffset(0);
+    setResizing(false);
+    if (drag.handle.hasPointerCapture(drag.pointerId)) drag.handle.releasePointerCapture(drag.pointerId);
+    reportActivity(Boolean(widthChangeRef.current && focusedRef.current));
+  };
 
   useEffect(() => setLoadFailed(false), [source]);
   useEffect(() => {
     editingChangeRef.current = onEditingChange;
-  }, [onEditingChange]);
+    widthChangeRef.current = onWidthChange;
+    requestWriteRef.current = onRequestWrite;
+  }, [onEditingChange, onWidthChange, onRequestWrite]);
   useEffect(() => () => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if (drag?.handle.hasPointerCapture(drag.pointerId)) drag.handle.releasePointerCapture(drag.pointerId);
     if (editingActiveRef.current) editingChangeRef.current?.(false);
   }, []);
   useEffect(() => {
-    if (!onWidthChange && editingActiveRef.current) {
-      editingActiveRef.current = false;
-      editingChangeRef.current?.(false);
-    }
-  }, [onWidthChange]);
+    if (!canResize) finishResize(false);
+    reportActivity(canResize && Boolean(focusedRef.current || dragRef.current));
+    // Callback identity changes on each line render; only permission changes end a gesture.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canResize]);
   useEffect(() => {
-    previewWidthRef.current = widthPercent;
-    committedWidthRef.current = widthPercent;
+    const pending = pendingLayoutRef.current;
+    if (!pending) return;
+    if (!isAttachmentLayoutSnapshotCurrent(pending.snapshot, {
+      attachmentId, alignment, widthPercent, source, documentSnapshot, now: Date.now(),
+    }) || (!onWidthChange && !onRequestWrite)) {
+      pendingLayoutRef.current = null;
+      return;
+    }
+    if (pending.change.kind === 'width' && onWidthChange) {
+      pendingLayoutRef.current = null;
+      onWidthChange(pending.change.value);
+    } else if (pending.change.kind === 'alignment' && onAlignmentChange) {
+      pendingLayoutRef.current = null;
+      onAlignmentChange(pending.change.value);
+    }
+  }, [attachmentId, alignment, widthPercent, source, documentSnapshot, onWidthChange, onAlignmentChange, onRequestWrite]);
+  useEffect(() => {
+    finishResize(false);
     setPreviewWidth(widthPercent);
-  }, [widthPercent]);
+    // A remote layout/source change invalidates a pending pointer snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [widthPercent, alignment, source, documentSnapshot]);
+  useEffect(() => {
+    const block = blockRef.current;
+    const image = imageRef.current;
+    if (!block || !image) return;
+    const measure = () => {
+      const available = block.getBoundingClientRect().width;
+      if (available > 0) setMeasuredWidth(image.getBoundingClientRect().width / available * 100);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(block);
+    observer.observe(image);
+    return () => observer.disconnect();
+  }, [source, loadFailed]);
+  useEffect(() => {
+    const cancel = () => {
+      pendingLayoutRef.current = null;
+      finishResize(false);
+    };
+    window.addEventListener('blur', cancel);
+    return () => window.removeEventListener('blur', cancel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const commitWidth = (next = previewWidthRef.current) => {
-    if (next === committedWidthRef.current) return;
-    committedWidthRef.current = next;
-    onWidthChange?.(next);
+  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !event.isPrimary || dragRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const containerWidthPx = blockRef.current?.getBoundingClientRect().width ?? 0;
+    const startWidthPx = imageRef.current?.getBoundingClientRect().width ?? 0;
+    if (containerWidthPx <= 0 || startWidthPx <= 0) return;
+    const edge = event.currentTarget.dataset.resizeEdge as AttachmentResizeEdge;
+    pendingLayoutRef.current = null;
+    event.currentTarget.focus({ preventScroll: true });
+    dragRef.current = {
+      pointerId: event.pointerId, handle: event.currentTarget, edge,
+      startX: event.clientX, lastX: event.clientX, startWidthPx, containerWidthPx,
+      initialWidth: widthPercent, alignment,
+      snapshot: { attachmentId, widthPercent, alignment, source, documentSnapshot },
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (!onWidthChange) onRequestWrite?.();
+    reportActivity(Boolean(onWidthChange));
+  };
+
+  const endResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+    finishResize(true, event.clientX);
+  };
+  const cancelResize = () => finishResize(false);
+  const resizeFromKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape' && (dragRef.current || pendingLayoutRef.current)) {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelResize();
+      pendingLayoutRef.current = null;
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing) return;
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const current = previewWidth ?? measuredWidth;
+    const step = event.shiftKey ? 10 : 1;
+    const next = clampAttachmentWidthPercent(event.key === 'Home' ? 10 : event.key === 'End' ? 100
+      : current + (event.key === 'ArrowRight' ? step : -step));
+    if (next === current) return;
+    if (onWidthChange) onWidthChange(next);
+    else {
+      pendingLayoutRef.current = {
+        snapshot: { attachmentId, alignment, widthPercent, source, documentSnapshot, expiresAt: Date.now() + 5000 },
+        change: { kind: 'width', value: next },
+      };
+      onRequestWrite?.();
+    }
+  };
+  const cancelPendingFromKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Escape' || !pendingLayoutRef.current) return;
+    pendingLayoutRef.current = null;
+    event.preventDefault();
+    event.stopPropagation();
   };
 
   if (status === 'failed' || loadFailed || !source) {
@@ -234,14 +413,45 @@ export function AttachmentImageBlock({
   }
 
   return (
-    <div className="attachment-image-block" data-attachment-id={attachmentId}>
+    <div
+      ref={blockRef}
+      className="attachment-image-block"
+      data-attachment-id={attachmentId}
+      data-alignment={alignment}
+      data-has-alignment={showAlignment || undefined}
+    >
+      <div
+        className="attachment-image-frame"
+        data-resizing={resizing || undefined}
+        data-uploading={status === 'uploading' || undefined}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => event.stopPropagation()}
+        onKeyDownCapture={cancelPendingFromKey}
+        style={{
+          width: previewWidth === undefined ? undefined : `${previewWidth}%`,
+          transform: previewOffset ? `translateX(${previewOffset}px)` : undefined,
+        }}
+        onFocusCapture={() => {
+          focusedRef.current = true;
+          reportActivity(Boolean(onWidthChange));
+        }}
+        onBlurCapture={(event) => {
+          if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+          focusedRef.current = false;
+          pendingLayoutRef.current = null;
+          reportActivity(Boolean(onWidthChange && dragRef.current));
+        }}
+      >
       {/* eslint-disable-next-line @next/next/no-img-element -- authenticated Blob/API source */}
       <img
+        ref={imageRef}
         src={source}
         alt={preview?.fileName || '첨부 이미지'}
+        draggable={false}
         style={previewWidth === undefined
           ? undefined
-          : { width: `${previewWidth}%`, height: 'auto', maxHeight: 'none' }}
+          : { width: '100%', height: 'auto', maxHeight: 'none' }}
         onError={() => setLoadFailed(true)}
       />
       {status === 'uploading' && (
@@ -249,70 +459,70 @@ export function AttachmentImageBlock({
           <span className="attachment-image-spinner" />
         </div>
       )}
-      {onWidthChange && (
+      {interactive && (['left', 'right'] as const).map((edge) => (
         <div
-          className="attachment-image-controls"
-          role="group"
-          aria-label="이미지 너비"
+          key={edge}
+          data-resize-edge={edge}
+          className={`attachment-image-controls attachment-image-resize-edge attachment-image-resize-edge--${edge}`}
+          role="slider"
+          tabIndex={0}
+          aria-label={`이미지 ${edge === 'left' ? '왼쪽' : '오른쪽'} 테두리 크기 조절`}
+          aria-valuemin={10}
+          aria-valuemax={100}
+          aria-valuenow={previewWidth ?? clampAttachmentWidthPercent(measuredWidth)}
+          aria-valuetext={`${previewWidth ?? Math.round(measuredWidth)}%`}
+          title="좌우로 드래그해 이미지 크기 조절"
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onPointerDown={startResize}
+          onPointerMove={(event) => {
+            const drag = dragRef.current;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            drag.lastX = event.clientX;
+            if (!onWidthChange || Math.abs(event.clientX - drag.startX) < 2) return;
+            const next = widthForImageDrag(drag, event.clientX);
+            setPreviewWidth(next);
+            const deltaWidth = next / 100 * drag.containerWidthPx - drag.startWidthPx;
+            setPreviewOffset(drag.alignment === 'left' && drag.edge === 'left' ? -deltaWidth
+              : drag.alignment === 'right' && drag.edge === 'right' ? deltaWidth : 0);
+            setResizing(true);
+          }}
+          onPointerUp={endResize}
+          onPointerCancel={cancelResize}
+          onLostPointerCapture={cancelResize}
+          onKeyDown={resizeFromKey}
+        />
+      ))}
+      {showAlignment && (
+        <div className="attachment-image-controls attachment-image-alignment" role="group" aria-label="이미지 정렬"
+          onMouseDown={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
-          onFocusCapture={() => {
-            if (editingActiveRef.current) return;
-            editingActiveRef.current = true;
-            editingChangeRef.current?.(true);
-          }}
-          onBlurCapture={(event) => {
-            if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
-            if (!editingActiveRef.current) return;
-            editingActiveRef.current = false;
-            editingChangeRef.current?.(false);
-          }}
         >
-          <label>
-            <span>이미지 너비 {previewWidth === undefined ? '자동' : `${previewWidth}%`}</span>
-            <input
-              type="range"
-              min={10}
-              max={100}
-              step={1}
-              value={previewWidth ?? 100}
-              aria-label="이미지 너비"
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                previewWidthRef.current = next;
-                setPreviewWidth(next);
+          {(['left', 'center', 'right'] as const).map((position) => (
+            <button key={position} type="button" aria-label={`이미지 ${position === 'left' ? '왼쪽' : position === 'center' ? '가운데' : '오른쪽'} 정렬`}
+              aria-pressed={alignment === position}
+              title={`${position === 'left' ? '왼쪽' : position === 'center' ? '가운데' : '오른쪽'} 정렬`}
+              onClick={() => {
+                if (onAlignmentChange) onAlignmentChange(position);
+                else {
+                  pendingLayoutRef.current = {
+                    snapshot: { attachmentId, alignment, widthPercent, source, documentSnapshot, expiresAt: Date.now() + 5000 },
+                    change: { kind: 'alignment', value: position },
+                  };
+                  onRequestWrite?.();
+                }
               }}
-              onPointerUp={() => commitWidth()}
-              onPointerCancel={() => commitWidth()}
-              onKeyUp={() => commitWidth()}
-              onBlur={() => commitWidth()}
-            />
-          </label>
-          <button
-            type="button"
-            disabled={previewWidth === undefined}
-            onClick={() => {
-              previewWidthRef.current = undefined;
-              setPreviewWidth(undefined);
-              commitWidth(undefined);
-            }}
-          >
-            자동
-          </button>
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
+                <path d={position === 'left' ? 'M5 4v16M9 7h10v10H9z' : position === 'right' ? 'M19 4v16M5 7h10v10H5z' : 'M12 3v3m0 12v3M5 7h14v10H5z'} />
+              </svg>
+            </button>
+          ))}
         </div>
       )}
-      {!onWidthChange && onRequestWrite && (
-        <button
-          type="button"
-          className="attachment-image-request-write todo-action-button todo-action-button--secondary"
-          onClick={(event) => {
-            event.stopPropagation();
-            onRequestWrite();
-          }}
-        >
-          너비 조절
-        </button>
-      )}
+      </div>
     </div>
   );
 }

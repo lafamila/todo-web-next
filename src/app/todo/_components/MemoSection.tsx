@@ -2823,8 +2823,8 @@ export function MemoSection({
               <InlineEditor
                 key={
                   viewedVersion
-                    ? `${selectedMemo.id}-version-${viewedVersion.version}`
-                    : `${selectedMemo.id}-current`
+                    ? `${selectedMemo.id}-${user?.id ?? ''}-version-${viewedVersion.version}`
+                    : `${selectedMemo.id}-${user?.id ?? ''}-current`
                 }
                 ref={inlineEditorRef}
                 value={viewedVersion?.content ?? content}

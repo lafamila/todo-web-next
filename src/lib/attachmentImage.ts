@@ -3,13 +3,18 @@ export const ATTACHMENT_IMAGE_LABEL = '이미지';
 const UUID_PATTERN =
   '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}';
 const ATTACHMENT_IMAGE_PATTERN = new RegExp(
-  `^!\\[${ATTACHMENT_IMAGE_LABEL}\\]\\(todo-attachment:(${UUID_PATTERN})\\)(?: \\{width=(\\d{1,3})%\\})?$`,
+  `^!\\[${ATTACHMENT_IMAGE_LABEL}\\]\\(todo-attachment:(${UUID_PATTERN})\\)` +
+  `(?: \\{(?:width=(\\d{1,3})%(?: align=(left|center|right))?|align=(left|center|right))\\})?$`,
 );
 const ATTACHMENT_ID_PATTERN = new RegExp(`^${UUID_PATTERN}$`);
+
+export type AttachmentImageAlignment = 'left' | 'center' | 'right';
+export type AttachmentResizeEdge = 'left' | 'right';
 
 export interface AttachmentImageToken {
   attachmentId: string;
   widthPercent?: number;
+  alignment?: AttachmentImageAlignment;
 }
 
 /** 줄 전체가 attachment 토큰인 경우만 이미지로 분류한다. */
@@ -17,10 +22,12 @@ export function parseAttachmentImageLine(line: string): AttachmentImageToken | n
   const match = ATTACHMENT_IMAGE_PATTERN.exec(line);
   if (!match) return null;
   const widthPercent = match[2] === undefined ? undefined : Number(match[2]);
+  const alignment = (match[3] ?? match[4]) as AttachmentImageAlignment | undefined;
   if (widthPercent !== undefined && !isAttachmentWidthPercent(widthPercent)) return null;
   return {
     attachmentId: match[1].toLowerCase(),
     ...(widthPercent === undefined ? {} : { widthPercent }),
+    ...(alignment === undefined ? {} : { alignment }),
   };
 }
 
@@ -40,14 +47,20 @@ export function clampAttachmentWidthPercent(value: number): number {
 export function formatAttachmentImageLine(
   attachmentId: string,
   widthPercent?: number,
+  alignment?: AttachmentImageAlignment,
 ): string {
   if (!isAttachmentId(attachmentId)) {
     throw new Error(`Invalid attachment id: ${attachmentId}`);
   }
+  if (alignment !== undefined && !isAttachmentImageAlignment(alignment)) {
+    throw new Error(`Invalid attachment image alignment: ${alignment}`);
+  }
   const token = `![${ATTACHMENT_IMAGE_LABEL}](todo-attachment:${attachmentId.toLowerCase()})`;
-  return widthPercent === undefined
-    ? token
-    : `${token} {width=${clampAttachmentWidthPercent(widthPercent)}%}`;
+  const layout = [
+    ...(widthPercent === undefined ? [] : [`width=${clampAttachmentWidthPercent(widthPercent)}%`]),
+    ...(alignment === undefined || alignment === 'center' ? [] : [`align=${alignment}`]),
+  ];
+  return layout.length === 0 ? token : `${token} {${layout.join(' ')}}`;
 }
 
 export function updateAttachmentImageLineWidth(
@@ -55,7 +68,82 @@ export function updateAttachmentImageLineWidth(
   widthPercent?: number,
 ): string | null {
   const parsed = parseAttachmentImageLine(line);
-  return parsed ? formatAttachmentImageLine(parsed.attachmentId, widthPercent) : null;
+  return parsed
+    ? formatAttachmentImageLine(parsed.attachmentId, widthPercent, parsed.alignment)
+    : null;
+}
+
+export function updateAttachmentImageLineAlignment(
+  line: string,
+  alignment?: AttachmentImageAlignment,
+): string | null {
+  const parsed = parseAttachmentImageLine(line);
+  return parsed
+    ? formatAttachmentImageLine(parsed.attachmentId, parsed.widthPercent, alignment)
+    : null;
+}
+
+export function isAttachmentImageAlignment(
+  value: unknown,
+): value is AttachmentImageAlignment {
+  return value === 'left' || value === 'center' || value === 'right';
+}
+
+/**
+ * 이미지 가장자리 drag를 메모 열 대비 너비로 바꾼다.
+ * 가운데 정렬은 중심을 고정하므로 pointer 이동량이 양쪽에 반영되고, 좌우 정렬은 반대편 가장자리만 고정한다.
+ */
+export function attachmentWidthFromDrag(input: {
+  startWidthPx: number;
+  containerWidthPx: number;
+  deltaX: number;
+  edge: AttachmentResizeEdge;
+  alignment?: AttachmentImageAlignment;
+}): number {
+  const { startWidthPx, containerWidthPx } = input;
+  if (
+    !Number.isFinite(startWidthPx) || startWidthPx < 0 ||
+    !Number.isFinite(containerWidthPx) || containerWidthPx <= 0
+  ) return 100;
+
+  const startPercent = clampAttachmentWidthPercent(startWidthPx / containerWidthPx * 100);
+  if (!Number.isFinite(input.deltaX)) return startPercent;
+  const edgeDirection = input.edge === 'left' ? -1 : input.edge === 'right' ? 1 : 0;
+  if (edgeDirection === 0) return startPercent;
+  const alignment = isAttachmentImageAlignment(input.alignment) ? input.alignment : 'center';
+  const centeredScale = alignment === 'center' ? 2 : 1;
+  const nextWidthPx = startWidthPx + input.deltaX * edgeDirection * centeredScale;
+  return clampAttachmentWidthPercent(nextWidthPx / containerWidthPx * 100);
+}
+
+/** 편집 잠금 대기 중 캡처한 이미지 layout 의도가 아직 같은 문서에 적용 가능한지 검사한다. */
+export function isAttachmentLayoutSnapshotCurrent(
+  expected: {
+    attachmentId: string;
+    widthPercent?: number;
+    alignment: AttachmentImageAlignment;
+    source?: string;
+    documentSnapshot?: string;
+    expiresAt?: number;
+  },
+  current: {
+    attachmentId: string;
+    widthPercent?: number;
+    alignment: AttachmentImageAlignment;
+    source?: string;
+    documentSnapshot?: string;
+    now: number;
+  },
+): boolean {
+  const notExpired = expected.expiresAt === undefined || (
+    Number.isFinite(expected.expiresAt) && expected.expiresAt >= current.now
+  );
+  return notExpired &&
+    expected.attachmentId === current.attachmentId &&
+    expected.source === current.source &&
+    expected.widthPercent === current.widthPercent &&
+    expected.alignment === current.alignment &&
+    expected.documentSnapshot === current.documentSnapshot;
 }
 
 export interface TextLine<TId = number> {

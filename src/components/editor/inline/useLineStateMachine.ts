@@ -20,7 +20,7 @@ import {
   insertAttachmentRowsAtIndex,
   insertAttachmentRowsAtSelection,
 } from '@/lib/attachmentImage';
-import { updateAttachmentImageLineWidth } from '@/lib/attachmentImage';
+import { updateAttachmentImageLineAlignment, updateAttachmentImageLineWidth, type AttachmentImageAlignment } from '@/lib/attachmentImage';
 
 /** 자동 렌더 안정화 타이머. MemoSection 의 6초 락 해제 타이머와는 별개로 관리한다. */
 export const RENDER_SETTLE_MS = 2000;
@@ -1176,6 +1176,21 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     [commitHistory, commitLines, findIndex],
   );
 
+  const updateAttachmentImageAlignment = useCallback(
+    (lineId: number, alignment: AttachmentImageAlignment): boolean => {
+      if (optionsRef.current.readOnly) return false;
+      const index = findIndex(lineId);
+      if (index < 0) return false;
+      const nextText = updateAttachmentImageLineAlignment(linesRef.current[index].text, alignment);
+      if (!nextText || nextText === linesRef.current[index].text) return false;
+      commitHistory(false);
+      commitLines(linesRef.current.map((line, at) => at === index ? { ...line, text: nextText } : line));
+      forceHistoryBoundaryRef.current = true;
+      return true;
+    },
+    [commitHistory, commitLines, findIndex],
+  );
+
   // 활성 라인 하나에만 전달되지만, 안정적이어야 LineView 의 memo 가 유지된다.
   // ref 는 여기 섞지 않는다 — 섞으면 객체 전체가 ref 취급돼 렌더 중 접근으로 잡힌다.
   const lineHandlers = useMemo(
@@ -1213,6 +1228,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     insertAttachmentImageRowsAfterCaret,
     getAttachmentDropCursorOffset,
     updateAttachmentImageWidth,
+    updateAttachmentImageAlignment,
     pendingCodeFocusId,
     consumeCodeFocus,
     selectDomRange,

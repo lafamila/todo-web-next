@@ -541,6 +541,8 @@ export function InlineEditor({
               : undefined}
             onRetryAttachment={!readOnly ? onRetryAttachment : undefined}
             onAttachmentWidthChange={!readOnly ? machine.updateAttachmentImageWidth : undefined}
+            onAttachmentAlignmentChange={!readOnly ? machine.updateAttachmentImageAlignment : undefined}
+            attachmentDocumentSnapshot={group.cls.kind === 'attachment-image' ? value : undefined}
             onRequestAttachmentWrite={
               readOnly && onReadOnlyCodeEditIntent ? handleReadOnlyCodeIntent : undefined
             }
