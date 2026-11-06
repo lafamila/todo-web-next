@@ -2,11 +2,15 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
-import type { OnMount } from '@monaco-editor/react';
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from 'react';
+import type { OnChange, OnMount } from '@monaco-editor/react';
 import { CODE_LANGUAGES, resolveCodeLanguage } from '@/lib/codeFence';
 import { EDITOR_THEME } from '@/lib/constants';
 import { shouldRequestCodeWrite } from '@/lib/editorActivity';
+import { isMemoHistoryShortcut, isMemoVersionShortcut } from '@/lib/memoDocumentHistory';
 
 const MIN_EDITOR_HEIGHT = 120;
 
@@ -42,6 +46,8 @@ export interface MonacoCodeEditorProps {
   onFocusChange?: (focused: boolean) => void;
   /** lease 없는 read-only editor를 클릭했을 때 쓰기 의도를 상위로 전달한다. */
   onReadOnlyEditIntent?: () => void;
+  onHistoryShortcut?: (action: 'undo' | 'redo') => void;
+  onVersionShortcut?: () => void;
 }
 
 export function MonacoCodeEditor({
@@ -55,6 +61,8 @@ export function MonacoCodeEditor({
   onAutoFocused,
   onFocusChange,
   onReadOnlyEditIntent,
+  onHistoryShortcut,
+  onVersionShortcut,
 }: MonacoCodeEditorProps) {
   // Monaco 에 없는 id 를 넘기면 하이라이팅이 조용히 꺼지므로 항상 canonical id 로 정규화한다.
   const resolvedLanguage = resolveCodeLanguage(language);
@@ -63,6 +71,8 @@ export function MonacoCodeEditor({
   const onSaveRef = useRef(onSave);
   const onFocusChangeRef = useRef(onFocusChange);
   const onAutoFocusedRef = useRef(onAutoFocused);
+  const onHistoryShortcutRef = useRef(onHistoryShortcut);
+  const onVersionShortcutRef = useRef(onVersionShortcut);
   const editorDisposablesRef = useRef<Array<{ dispose: () => void }>>([]);
   const pendingReadOnlyFocusRef = useRef(false);
 
@@ -70,7 +80,9 @@ export function MonacoCodeEditor({
     onSaveRef.current = onSave;
     onFocusChangeRef.current = onFocusChange;
     onAutoFocusedRef.current = onAutoFocused;
-  }, [onAutoFocused, onFocusChange, onSave]);
+    onHistoryShortcutRef.current = onHistoryShortcut;
+    onVersionShortcutRef.current = onVersionShortcut;
+  }, [onAutoFocused, onFocusChange, onHistoryShortcut, onSave, onVersionShortcut]);
 
   // 문서 쪽 언어가 바뀌면(펜스 편집·되돌리기) uncontrolled 사용처의 선택도 따라가야 한다.
   useEffect(() => {
@@ -87,7 +99,11 @@ export function MonacoCodeEditor({
     setLocalLanguage(next);
   };
 
-  const handleEditorChange = (value: string | undefined) => {
+  const handleEditorChange: OnChange = (value, event) => {
+    if (event.isUndoing || event.isRedoing) {
+      onHistoryShortcutRef.current?.(event.isUndoing ? 'undo' : 'redo');
+      return;
+    }
     onChange(value || '');
   };
 
@@ -147,10 +163,25 @@ export function MonacoCodeEditor({
     onReadOnlyEditIntent?.();
   };
 
+  const handleEditorKeyDownCapture = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (isMemoVersionShortcut(event.nativeEvent)) {
+      event.preventDefault();
+      event.stopPropagation();
+      onVersionShortcutRef.current?.();
+      return;
+    }
+    const historyAction = isMemoHistoryShortcut(event.nativeEvent);
+    if (!historyAction) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onHistoryShortcutRef.current?.(historyAction);
+  };
+
   return (
     <div
       className="border border-gray-300 rounded overflow-hidden"
       onPointerDownCapture={handleReadOnlyPointerDown}
+      onKeyDownCapture={handleEditorKeyDownCapture}
     >
       {/* Language Selector */}
       <div className="bg-gray-800 px-3 py-1.5 flex items-center justify-between">

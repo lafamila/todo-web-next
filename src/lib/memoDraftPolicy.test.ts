@@ -21,6 +21,8 @@ import {
   shouldResumePendingSave,
   shouldDeleteDraftAfterSave,
   shouldAcceptDraftWrite,
+  isCurrentResolutionGeneration,
+  dismissalSourcesForDraft,
 } from './memoDraftPolicy.ts';
 
 test('draft key isolates origin, account, memo and tab', () => {
@@ -56,6 +58,9 @@ test('an async stale flush cannot overwrite a newer stored draft', () => {
   assert.equal(shouldAcceptDraftWrite(200, 199), false);
   assert.equal(shouldAcceptDraftWrite(200, 200), true);
   assert.equal(shouldAcceptDraftWrite(200, 201), true);
+  assert.equal(shouldAcceptDraftWrite(null, 7, 9), false);
+  assert.equal(shouldAcceptDraftWrite(null, 9, 9), false);
+  assert.equal(shouldAcceptDraftWrite(null, 10, 9), true);
 });
 
 test('current tab draft wins over a newer other-tab candidate without mutation', () => {
@@ -177,7 +182,7 @@ test('copied draft keeps the original external source lineage across page reload
   assert.equal(sourceLineageForDraft(copied, 'page-c-own')?.sourceKey, 'external');
 });
 
-test('dismissal hides only the exact source and accepted server revisions', () => {
+test('dismissal hides an exact local revision even after the server revision advances', () => {
   const draft = {
     key: 'source', origin: 'o', userId: 'u', memoId: 'm', tabId: 't',
     baseRevision: 'r1', baseContent: 'base', draftContent: 'draft', localRevision: 7,
@@ -190,7 +195,57 @@ test('dismissal hides only the exact source and accepted server revisions', () =
   };
   assert.deepEqual(evaluateDraftDismissals([draft], [dismissal], 'r2').candidates, []);
   assert.deepEqual(evaluateDraftDismissals([{ ...draft, localRevision: 8 }], [dismissal], 'r2').candidates, [{ ...draft, localRevision: 8 }]);
-  assert.deepEqual(evaluateDraftDismissals([draft], [dismissal], 'r3').staleDismissalKeys, [dismissal.key]);
+  assert.deepEqual(evaluateDraftDismissals([draft], [dismissal], 'r3').candidates, []);
+  assert.deepEqual(evaluateDraftDismissals([draft], [dismissal], 'r3').staleDismissalKeys, []);
+});
+
+test('dismissal retires both a recovered copy and its exact ancestor without hiding newer revisions', () => {
+  const original = {
+    key: 'source', origin: 'o', userId: 'u', memoId: 'm', tabId: 'source-tab',
+    baseRevision: 'r1', baseContent: 'base', draftContent: 'draft', localRevision: 7,
+    createdAt: 1, updatedAt: 2, retryCount: 0, lastError: null,
+  };
+  const copy = {
+    ...original, key: 'copy', tabId: 'copy-tab', localRevision: 9,
+    sourceLineage: {
+      sourceKey: original.key, sourceLocalRevision: original.localRevision,
+      origin: original.origin, userId: original.userId, memoId: original.memoId,
+    },
+  };
+  const dismissals = [original, copy].map((draft) => ({
+    key: makeDraftDismissalKey(draft.key), sourceKey: draft.key,
+    sourceLocalRevision: draft.localRevision, acceptedServerRevision: 'r2',
+    origin: draft.origin, userId: draft.userId, memoId: draft.memoId,
+    action: 'remote' as const, createdAt: 3,
+  }));
+  assert.deepEqual(evaluateDraftDismissals([original, copy], dismissals, 'r3').candidates, []);
+  assert.deepEqual(dismissalSourcesForDraft(copy, 'current-page'), [
+    {
+      sourceKey: copy.key, sourceLocalRevision: copy.localRevision,
+      origin: copy.origin, userId: copy.userId, memoId: copy.memoId,
+    },
+    copy.sourceLineage,
+  ]);
+  const newerCopy = { ...copy, localRevision: 10, draftContent: 'new local edit' };
+  assert.deepEqual(evaluateDraftDismissals([original, newerCopy], dismissals, 'r3').candidates, [newerCopy]);
+  assert.deepEqual(
+    evaluateDraftDismissals([{ ...copy, localRevision: 8 }], dismissals, 'r3').candidates,
+    [],
+  );
+  assert.deepEqual(evaluateDraftDismissals([], dismissals, 'r3').staleDismissalKeys, []);
+  assert.deepEqual(evaluateDraftDismissals([copy], dismissals, 'r3').candidates, []);
+  assert.equal(
+    dismissalSourcesForDraft({
+      ...copy,
+      sourceLineage: { ...copy.sourceLineage, userId: 'other-user' },
+    }, 'current-page').length,
+    1,
+  );
+});
+
+test('resolution generation rejects saves and fetched remote results from before remote adoption', () => {
+  assert.equal(isCurrentResolutionGeneration(4, 4), true);
+  assert.equal(isCurrentResolutionGeneration(3, 4), false);
 });
 
 test('failed draft queue preserves different memos and replaces only the same memo', () => {

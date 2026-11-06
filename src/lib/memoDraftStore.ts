@@ -1,5 +1,6 @@
 import {
   createDraftPageId,
+  makeDraftDismissalKey,
   makeMemoDraftKey,
   shouldDeleteDraftAfterSave,
   shouldAcceptDraftWrite,
@@ -74,15 +75,21 @@ export function currentMemoDraftKey(userId: string, memoId: string): string {
 export async function putMemoDraft(record: MemoDraftRecord): Promise<boolean> {
   const db = await openDraftDb();
   try {
-    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    const transaction = db.transaction([STORE_NAME, DISMISSAL_STORE_NAME], 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
+    const dismissalStore = transaction.objectStore(DISMISSAL_STORE_NAME);
     const done = transactionDone(transaction);
-    const current = await requestResult(
-      store.get(record.key) as IDBRequest<MemoDraftRecord | undefined>,
-    );
+    const [current, dismissal] = await Promise.all([
+      requestResult(store.get(record.key) as IDBRequest<MemoDraftRecord | undefined>),
+      requestResult(
+        dismissalStore.get(makeDraftDismissalKey(record.key)) as
+          IDBRequest<MemoDraftDismissalRecord | undefined>,
+      ),
+    ]);
     const accepted = shouldAcceptDraftWrite(
       current?.localRevision ?? null,
       record.localRevision,
+      dismissal?.sourceLocalRevision ?? null,
     );
     if (accepted) store.put(record);
     await done;

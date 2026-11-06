@@ -11,6 +11,7 @@ import {
   type InlineEditorHandle,
   type MentionState,
 } from '@/components/editor/inline/InlineEditor';
+import type { InlineDocumentChange } from '@/components/editor/inline/useLineStateMachine';
 import { insertAttachmentImagesAfterCursorLine } from '@/components/editor/inline/classifyLine';
 import type {
   ArticleInterface,
@@ -49,6 +50,7 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import {
   shouldAdoptMemoRevision,
   shouldResetMemoEditorState,
+  canRestoreMemoVersion,
 } from '@/lib/memoVersionPolicy';
 import { classifyLockDenial } from '@/lib/memoLeasePolicy';
 import {
@@ -75,9 +77,21 @@ import {
   decideRemoteRefreshAfterFetch,
   isLatestRemoteRefreshRequest,
   sourceLineageForDraft,
+  dismissalSourcesForDraft,
+  isCurrentResolutionGeneration,
   type MemoDraftRecord,
   type DraftDismissalAction,
 } from '@/lib/memoDraftPolicy';
+import {
+  createMemoDocumentHistory,
+  isMemoHistoryShortcut,
+  isMemoVersionShortcut,
+  enqueueMemoHistoryIntent,
+  shouldScheduleHistoryLeaseRelease,
+  type MemoHistoryAction,
+  type PendingMemoHistoryIntent,
+} from '@/lib/memoDocumentHistory';
+import { createCompletedMemoSaveLedger, createMemoSaveDrainRegistry } from '@/lib/memoSaveDrain';
 import {
   currentMemoDraftKey,
   deleteMemoDraftIfRevision,
@@ -116,6 +130,8 @@ interface PendingMemoSave {
   leaseRetryCount: number;
   allowConflict: boolean;
   draftStored: boolean;
+  resolutionGeneration: number;
+  allowVersionRestore?: boolean;
   resolve: (saved: boolean) => void;
 }
 
@@ -143,6 +159,11 @@ interface PendingMemoFileDrop {
   rawMode: boolean;
   cursorOffset: number | null;
   files: File[];
+}
+
+interface DraftConflictCleanupSnapshot {
+  source: MemoDraftRecord | null;
+  currentKey: string | null;
 }
 
 /**
@@ -236,6 +257,7 @@ const shortcutHelp = [
   { keys: '본문에서 바로 입력', description: '마지막 줄이 편집 상태가 되고 입력이 이어집니다.' },
   { keys: 'Enter / ↑ / ↓', description: '줄을 나누거나 위아래 줄로 편집을 옮깁니다.' },
   { keys: 'Ctrl/⌘ + Z', description: '되돌리기. Shift 를 더하면 다시 실행합니다.' },
+  { keys: 'Ctrl+Alt+Z / ⌘+Option+Z', description: '현재 메모의 저장 버전 목록을 열어 읽어 보거나 명시적으로 복원합니다.' },
   { keys: 'Ctrl/⌘ + Shift + X', description: '프로젝트가 선택되어 있으면 새 메모 입력칸에 포커스합니다. 프로젝트가 없으면 새 프로젝트 모달을 엽니다.' },
   { keys: 'Ctrl/⌘ + Shift + P', description: '현재 프로젝트의 메모 검색창으로 이동합니다.' },
   { keys: 'Ctrl/⌘ + Shift + O', description: '관리자에게 멤버 관리 모달을 엽니다.' },
@@ -364,6 +386,10 @@ export function MemoSection({
 
   const handlesGlobalKeyboard = keyboardActive && activeSurface === surfaceName;
 
+  useEffect(() => {
+    if (!handlesGlobalKeyboard) setVersionFocusRequest(0);
+  }, [handlesGlobalKeyboard]);
+
   // Raw 모드 = 문서 전체를 하나의 textarea 로 다루는 escape hatch (멀티라인 선택/복사용).
   const [rawMode, setRawMode] = useState(false);
   const rawModeRef = useRef(false);
@@ -376,8 +402,12 @@ export function MemoSection({
   const [accessRevoked, setAccessRevoked] = useState(false);
   const [showRemoteCompare, setShowRemoteCompare] = useState(false);
   const [viewedVersion, setViewedVersion] = useState<MemoVersionInterface | null>(null);
+  const [versionShortcutVisible, setVersionShortcutVisible] = useState(false);
+  const [versionFocusRequest, setVersionFocusRequest] = useState(0);
+  const [versionRestorePending, setVersionRestorePending] = useState(false);
   const isViewingVersion = viewedVersion !== null;
   const initializedMemoIdRef = useRef<string | null>(null);
+  const initializedUserIdRef = useRef<string | null>(null);
   const editorEpochRef = useRef(0);
   const [draftStatus, setDraftStatus] = useState<DraftStatus>('idle');
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -389,6 +419,8 @@ export function MemoSection({
   const recoveredDraftSourceRef = useRef<MemoDraftRecord | null>(null);
   const remoteRefreshSequenceRef = useRef(0);
   const remoteRefreshAbortRef = useRef<AbortController | null>(null);
+  const resolutionGenerationRef = useRef(0);
+  const completedSaveLedgerRef = useRef(createCompletedMemoSaveLedger());
 
   const [content, setContent] = useState('');
   const [originalContent, setOriginalContent] = useState('');
@@ -397,6 +429,8 @@ export function MemoSection({
   const contentRef = useRef<string>('');
   const originalContentRef = useRef<string>('');
   const pendingEditOffsetRef = useRef<number | null>(null);
+  const pendingHistoryIntentRef = useRef<PendingMemoHistoryIntent | null>(null);
+  const documentHistoryRef = useRef(createMemoDocumentHistory());
   const baseRevisionRef = useRef<string | undefined>(undefined);
   const localRevisionRef = useRef(0);
   const draftCreatedAtRef = useRef(0);
@@ -407,7 +441,7 @@ export function MemoSection({
   const pendingAttachmentSaveRef = useRef<PendingAttachmentSave | null>(null);
   const pendingFileDropRef = useRef<PendingMemoFileDrop | null>(null);
   const [fileDragActive, setFileDragActive] = useState(false);
-  const saveInFlightRef = useRef(false);
+  const saveDrainRegistryRef = useRef(createMemoSaveDrainRegistry());
   const saveRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resumePendingSaveRef = useRef<() => void>(() => {});
   const currentIssue =
@@ -480,6 +514,7 @@ export function MemoSection({
           }
           setContent(fresh.content);
           contentRef.current = fresh.content;
+          documentHistoryRef.current.reset(fresh.content);
           setOriginalContent(fresh.content);
           originalContentRef.current = fresh.content;
           baseRevisionRef.current = fresh.revision;
@@ -719,8 +754,17 @@ export function MemoSection({
   }, [flushDraft]);
 
   const applyContentMutation = useCallback(
-    (next: string) => {
+    (
+      next: string,
+      change: (InlineDocumentChange & { recordHistory?: boolean }) = {
+        group: 'memo:structural',
+        coalesce: false,
+      },
+    ) => {
       if (next === contentRef.current) return;
+      if (change.recordHistory !== false) {
+        documentHistoryRef.current.record(contentRef.current, next, change);
+      }
       localRevisionRef.current = nextDraftRevision(localRevisionRef.current);
       setContent(next);
       contentRef.current = next;
@@ -952,6 +996,108 @@ export function MemoSection({
   const canEdit =
     !isViewingVersion && leaseState === 'ready' && !isLockedByOther;
 
+  const applyHistoryAction = useCallback((action: MemoHistoryAction): boolean => {
+    const next = action === 'undo'
+      ? documentHistoryRef.current.undo(contentRef.current)
+      : documentHistoryRef.current.redo(contentRef.current);
+    if (next === null) return false;
+    applyContentMutation(next, {
+      group: `memo:${action}`,
+      coalesce: false,
+      recordHistory: false,
+    });
+    setShowMemoSearch(false);
+    setSearchQuery('');
+    return true;
+  }, [applyContentMutation]);
+
+  const rearmHistoryLeaseRelease = useCallback(() => {
+    requestAnimationFrame(() => {
+      const active = document.activeElement instanceof Element ? document.activeElement : null;
+      const editorFocusActive = Boolean(
+        active &&
+        surfaceRef.current?.contains(active) &&
+        active.closest('.editor-line-input, .monaco-editor, .attachment-image-controls'),
+      );
+      if (shouldScheduleHistoryLeaseRelease({
+        rawMode: rawModeRef.current,
+        editingActive: isEditingRef.current,
+        editorFocusActive,
+      })) scheduleLockRelease();
+    });
+  }, [scheduleLockRelease]);
+
+  const requestHistoryAction = useCallback((action: MemoHistoryAction) => {
+    if (!selectedMemo || !user || isViewingVersion) return;
+    const queued = pendingHistoryIntentRef.current;
+    const samePendingScope = Boolean(
+      queued &&
+      queued.memoId === selectedMemo.id &&
+      queued.userId === user.id &&
+      queued.editorEpoch === editorEpochRef.current &&
+      queued.content === contentRef.current,
+    );
+    const available = samePendingScope || (action === 'undo'
+      ? documentHistoryRef.current.canUndo()
+      : documentHistoryRef.current.canRedo());
+    if (!available) return;
+    if (canEdit) {
+      const applied = applyHistoryAction(action);
+      if (applied) {
+        holdLock();
+        rearmHistoryLeaseRelease();
+      }
+      return;
+    }
+    pendingHistoryIntentRef.current = enqueueMemoHistoryIntent(pendingHistoryIntentRef.current, {
+      memoId: selectedMemo.id,
+      userId: user.id,
+      editorEpoch: editorEpochRef.current,
+      content: contentRef.current,
+      action,
+    });
+    requestLock();
+  }, [
+    applyHistoryAction,
+    canEdit,
+    holdLock,
+    isViewingVersion,
+    rearmHistoryLeaseRelease,
+    requestLock,
+    selectedMemo,
+    user,
+  ]);
+
+  useEffect(() => {
+    if (!canEdit || !selectedMemo || !user) return;
+    const pending = pendingHistoryIntentRef.current;
+    if (!pending) return;
+    pendingHistoryIntentRef.current = null;
+    if (
+      pending.memoId !== selectedMemo.id ||
+      pending.userId !== user.id ||
+      pending.editorEpoch !== editorEpochRef.current ||
+      pending.content !== contentRef.current
+    ) return;
+    let applied = false;
+    for (const action of pending.actions) applied = applyHistoryAction(action) || applied;
+    if (applied) rearmHistoryLeaseRelease();
+  }, [applyHistoryAction, canEdit, rearmHistoryLeaseRelease, selectedMemo, user]);
+
+  const openVersionHistory = useCallback(() => {
+    if (actionableIssue || showRemoteCompare || recoveryDraft) return;
+    setVersionShortcutVisible(true);
+    setVersionFocusRequest((current) => current + 1);
+    setSaveMessage(null);
+  }, [
+    actionableIssue,
+    recoveryDraft,
+    setSaveMessage,
+    setVersionFocusRequest,
+    setVersionShortcutVisible,
+    showRemoteCompare,
+  ]);
+
   // pending 오버레이는 300ms 를 넘길 때만 보여준다 — 로컬/근거리 서버에서는 lease
   // 핸드셰이크가 수십 ms 에 끝나 매 클릭마다 배너가 번쩍이기 때문. 입력 차단
   // 자체(canEdit)는 지연 없이 즉시 걸리고, denied 는 실제 차단이라 바로 보인다.
@@ -988,13 +1134,18 @@ export function MemoSection({
 
   useEffect(() => {
     const nextMemoId = selectedMemo?.id ?? null;
+    const nextUserId = user?.id ?? null;
     if (
-      !shouldResetMemoEditorState(initializedMemoIdRef.current, nextMemoId)
+      !shouldResetMemoEditorState(initializedMemoIdRef.current, nextMemoId) &&
+      initializedUserIdRef.current === nextUserId
     ) {
       return;
     }
     initializedMemoIdRef.current = nextMemoId;
+    initializedUserIdRef.current = nextUserId;
     editorEpochRef.current += 1;
+    resolutionGenerationRef.current += 1;
+    pendingHistoryIntentRef.current = null;
     ownedDraftWriteRef.current = null;
     remoteRefreshSequenceRef.current += 1;
     remoteRefreshAbortRef.current?.abort();
@@ -1007,10 +1158,10 @@ export function MemoSection({
       }
       pendingSaveRef.current?.resolve(false);
       pendingSaveRef.current = null;
-      saveInFlightRef.current = false;
       setContent(selectedMemo.content);
       setOriginalContent(selectedMemo.content);
       contentRef.current = selectedMemo.content;
+      documentHistoryRef.current.reset(selectedMemo.content);
       originalContentRef.current = selectedMemo.content;
       setRawMode(false);
       rawModeRef.current = false;
@@ -1020,6 +1171,9 @@ export function MemoSection({
       setAccessRevoked(false);
       setShowRemoteCompare(false);
       setViewedVersion(null);
+      setVersionShortcutVisible(false);
+      setVersionFocusRequest(0);
+      setVersionRestorePending(false);
       isEditingRef.current = false;
       pendingEditOffsetRef.current = null;
       baseRevisionRef.current = selectedMemo.revision;
@@ -1187,11 +1341,46 @@ export function MemoSection({
     selectedMemoServerContent,
   ]);
 
+  const waitForSaveDrain = useCallback((memoId: string): Promise<void> => {
+    return saveDrainRegistryRef.current.wait(memoId);
+  }, []);
+
+  const invalidatePendingSaveWork = useCallback((): number => {
+    const generation = resolutionGenerationRef.current + 1;
+    resolutionGenerationRef.current = generation;
+    if (saveRetryTimerRef.current) {
+      clearTimeout(saveRetryTimerRef.current);
+      saveRetryTimerRef.current = null;
+    }
+    if (draftFlushTimerRef.current) {
+      clearTimeout(draftFlushTimerRef.current);
+      draftFlushTimerRef.current = null;
+    }
+    pendingSaveRef.current?.resolve(false);
+    pendingSaveRef.current = null;
+    pendingAttachmentSaveRef.current?.resolve(false);
+    pendingAttachmentSaveRef.current = null;
+    pendingHistoryIntentRef.current = null;
+    remoteRefreshSequenceRef.current += 1;
+    remoteRefreshAbortRef.current?.abort();
+    remoteRefreshAbortRef.current = null;
+    return generation;
+  }, []);
+
   const processPendingSave = useCallback(async () => {
     const pending = pendingSaveRef.current;
-    if (!pending || saveInFlightRef.current) return;
+    if (!pending || saveDrainRegistryRef.current.isInFlight(pending.memoId)) return;
     if (!selectedMemo || selectedMemo.id !== pending.memoId ||
-      pending.editorEpoch !== editorEpochRef.current || isViewingVersion) {
+      pending.editorEpoch !== editorEpochRef.current ||
+      (isViewingVersion && !pending.allowVersionRestore)) {
+      pendingSaveRef.current = null;
+      pending.resolve(false);
+      return;
+    }
+    if (!isCurrentResolutionGeneration(
+      pending.resolutionGeneration,
+      resolutionGenerationRef.current,
+    )) {
       pendingSaveRef.current = null;
       pending.resolve(false);
       return;
@@ -1221,13 +1410,23 @@ export function MemoSection({
       saveRetryTimerRef.current = null;
     }
     pendingSaveRef.current = null;
-    saveInFlightRef.current = true;
+    const inFlightToken = saveDrainRegistryRef.current.start(pending.memoId);
 
     try {
       const updated = await updateMemo(pending.content, pending.baseRevision);
+      completedSaveLedgerRef.current.record({
+        memoId: pending.memoId,
+        generation: pending.resolutionGeneration,
+        content: pending.content,
+        revision: updated.revision,
+      });
       if (
         initializedMemoIdRef.current !== pending.memoId ||
-        editorEpochRef.current !== pending.editorEpoch
+        editorEpochRef.current !== pending.editorEpoch ||
+        !isCurrentResolutionGeneration(
+          pending.resolutionGeneration,
+          resolutionGenerationRef.current,
+        )
       ) {
         pending.resolve(false);
         return;
@@ -1251,18 +1450,18 @@ export function MemoSection({
         }
         const recoveredSource = recoveredDraftSourceRef.current;
         if (recoveredSource) {
-          const sourceLineage = key
-            ? sourceLineageForDraft(recoveredSource, key)
-            : null;
-          if (sourceLineage) {
+          const dismissalSources = key
+            ? dismissalSourcesForDraft(recoveredSource, key)
+            : [];
+          for (const dismissalSource of dismissalSources) {
             await putMemoDraftDismissal({
-              key: makeDraftDismissalKey(sourceLineage.sourceKey),
-              sourceKey: sourceLineage.sourceKey,
-              sourceLocalRevision: sourceLineage.sourceLocalRevision,
+              key: makeDraftDismissalKey(dismissalSource.sourceKey),
+              sourceKey: dismissalSource.sourceKey,
+              sourceLocalRevision: dismissalSource.sourceLocalRevision,
               acceptedServerRevision: updated.revision ?? null,
-              origin: sourceLineage.origin,
-              userId: sourceLineage.userId,
-              memoId: sourceLineage.memoId,
+              origin: dismissalSource.origin,
+              userId: dismissalSource.userId,
+              memoId: dismissalSource.memoId,
               action: 'saved',
               createdAt: Date.now(),
             });
@@ -1292,7 +1491,11 @@ export function MemoSection({
       console.error('Failed to save memo:', error);
       if (
         initializedMemoIdRef.current !== pending.memoId ||
-        editorEpochRef.current !== pending.editorEpoch
+        editorEpochRef.current !== pending.editorEpoch ||
+        !isCurrentResolutionGeneration(
+          pending.resolutionGeneration,
+          resolutionGenerationRef.current,
+        )
       ) {
         pending.resolve(false);
         return;
@@ -1365,7 +1568,7 @@ export function MemoSection({
         pending.resolve(false);
       }
     } finally {
-      saveInFlightRef.current = false;
+      saveDrainRegistryRef.current.finish(inFlightToken);
       if (pendingSaveRef.current && !saveRetryTimerRef.current) {
         // 다음 task에서 최신 callback과 synchronous ownership gate로만 이어 간다.
         window.setTimeout(() => resumePendingSaveRef.current(), 0);
@@ -1425,9 +1628,10 @@ export function MemoSection({
       nextContent: string,
       allowConflict = false,
       waitForAttachments = false,
+      options?: { allowVersionRestore?: boolean; baseRevision?: string },
     ): Promise<boolean> => {
       if (!selectedMemo) return false;
-      if (isViewingVersion) {
+      if (isViewingVersion && !options?.allowVersionRestore) {
         setSaveMessage('과거 버전은 읽기 전용입니다. 현재 문서로 돌아온 뒤 저장하세요.');
         return false;
       }
@@ -1469,12 +1673,14 @@ export function MemoSection({
           memoId: selectedMemo.id,
           editorEpoch: editorEpochRef.current,
           content: nextContent,
-          baseRevision: baseRevisionRef.current,
           localRevision: snapshotLocalRevision,
           retryCount: 0,
           leaseRetryCount: 0,
           allowConflict,
           draftStored,
+          resolutionGeneration: resolutionGenerationRef.current,
+          allowVersionRestore: options?.allowVersionRestore,
+          baseRevision: options?.baseRevision ?? baseRevisionRef.current,
           resolve,
         };
         if (leaseState !== 'ready' || isLockedByOther) {
@@ -1531,6 +1737,76 @@ export function MemoSection({
 
   // 저장과 패널 닫기는 별개다. 백로그도 Cmd/Ctrl+S와 모바일 저장 버튼으로 닫히지 않는다.
   const handleExplicitSave = handleSaveMemo;
+
+  const handleRestoreVersion = useCallback(async (version: MemoVersionInterface) => {
+    if (!selectedMemo || versionRestorePending) return;
+    if (!canRestoreMemoVersion({
+      dirty: contentRef.current !== originalContentRef.current,
+      attachmentBlocksSave: attachmentBlocksMemoSave,
+      conflictActive: draftConflictActive || remoteContent !== null,
+      pendingSave: Boolean(pendingSaveRef.current),
+      pendingAttachmentSave: Boolean(pendingAttachmentSaveRef.current),
+      recoveryPending: Boolean(recoveryDraft),
+    })) {
+      throw new Error('현재 편집본을 먼저 저장하거나 정리한 뒤 복원하세요.');
+    }
+    const memoId = selectedMemo.id;
+    const editorEpoch = editorEpochRef.current;
+    const contentAtRequest = contentRef.current;
+    const generation = invalidatePendingSaveWork();
+    setVersionRestorePending(true);
+    try {
+      await waitForSaveDrain(memoId);
+      if (!isCurrentEditorRequest({
+        expectedMemoId: memoId,
+        expectedEpoch: editorEpoch,
+        currentMemoId: initializedMemoIdRef.current,
+        currentEpoch: editorEpochRef.current,
+      }) || !isCurrentResolutionGeneration(generation, resolutionGenerationRef.current)) return;
+      if (contentRef.current !== contentAtRequest) {
+        throw new Error('복원하는 동안 현재 내용이 변경되었습니다. 버전을 다시 선택하세요.');
+      }
+
+      const fresh = await getMemo(memoId);
+      if (!isCurrentEditorRequest({
+        expectedMemoId: memoId,
+        expectedEpoch: editorEpoch,
+        currentMemoId: initializedMemoIdRef.current,
+        currentEpoch: editorEpochRef.current,
+      }) || !isCurrentResolutionGeneration(generation, resolutionGenerationRef.current)) return;
+      if (contentRef.current !== contentAtRequest) {
+        throw new Error('복원하는 동안 현재 내용이 변경되었습니다. 버전을 다시 선택하세요.');
+      }
+
+      const saved = await queueMemoSave(version.content, true, false, {
+        allowVersionRestore: true,
+        baseRevision: fresh.revision,
+      });
+      if (!saved) {
+        setViewedVersion(null);
+        throw new Error('복원 저장을 완료하지 못했습니다. 현재 내용을 확인하세요.');
+      }
+      setContent(version.content);
+      contentRef.current = version.content;
+      setOriginalContent(version.content);
+      originalContentRef.current = version.content;
+      documentHistoryRef.current.reset(version.content);
+      setViewedVersion(null);
+      setVersionShortcutVisible(true);
+    } finally {
+      if (initializedMemoIdRef.current === memoId) setVersionRestorePending(false);
+    }
+  }, [
+    attachmentBlocksMemoSave,
+    draftConflictActive,
+    recoveryDraft,
+    remoteContent,
+    invalidatePendingSaveWork,
+    queueMemoSave,
+    selectedMemo,
+    versionRestorePending,
+    waitForSaveDrain,
+  ]);
 
   // 게시 / 재게시 핸들러
   const handlePublish = useCallback(async () => {
@@ -1716,7 +1992,26 @@ export function MemoSection({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!handlesGlobalKeyboard) return;
+      if (!handlesGlobalKeyboard || e.defaultPrevented) return;
+
+      const target = e.target instanceof Element ? e.target : null;
+      const outsideMemoInput = isTypingContext(target) &&
+        !target?.closest('.memo-editor-shell');
+
+      if (isMemoVersionShortcut(e)) {
+        if (outsideMemoInput || actionableIssue || showRemoteCompare || recoveryDraft) return;
+        e.preventDefault();
+        openVersionHistory();
+        return;
+      }
+
+      const historyAction = isMemoHistoryShortcut(e);
+      if (historyAction) {
+        if (outsideMemoInput || target?.closest('.monaco-editor')) return;
+        e.preventDefault();
+        requestHistoryAction(historyAction);
+        return;
+      }
 
       if (isMemoSaveShortcut(e)) {
         e.preventDefault();
@@ -1766,20 +2061,30 @@ export function MemoSection({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [
     canEdit,
+    actionableIssue,
     handleExplicitSave,
     handlesGlobalKeyboard,
     holdLock,
     isViewingVersion,
+    openVersionHistory,
+    recoveryDraft,
     rawMode,
     requestLock,
+    requestHistoryAction,
+    showRemoteCompare,
     toggleRawMode,
   ]);
 
   const handleRawContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const inputType = (e.nativeEvent as InputEvent).inputType;
+    if (inputType === 'historyUndo' || inputType === 'historyRedo') {
+      requestHistoryAction(inputType === 'historyUndo' ? 'undo' : 'redo');
+      return;
+    }
     const newContent = e.target.value;
     const cursorPos = e.target.selectionStart;
 
-    applyContentMutation(newContent);
+    applyContentMutation(newContent, { group: 'memo:raw', coalesce: true });
 
     const textBeforeCursor = newContent.substring(0, cursorPos);
     const lastAtIndex = textBeforeCursor.lastIndexOf('@');
@@ -1854,9 +2159,16 @@ export function MemoSection({
   const handleRawKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       holdLock();
+      const historyAction = isMemoHistoryShortcut(e.nativeEvent);
+      if (historyAction) {
+        e.preventDefault();
+        e.stopPropagation();
+        requestHistoryAction(historyAction);
+        return;
+      }
       handleMentionKeyDown(e);
     },
-    [handleMentionKeyDown, holdLock]
+    [handleMentionKeyDown, holdLock, requestHistoryAction]
   );
 
   /**
@@ -2141,7 +2453,7 @@ export function MemoSection({
   }, [applyContentMutation, cancelAttachmentUpload]);
 
   const handleInlineChange = useCallback(
-    (next: string) => applyContentMutation(next),
+    (next: string, change?: InlineDocumentChange) => applyContentMutation(next, change),
     [applyContentMutation],
   );
 
@@ -2202,30 +2514,31 @@ export function MemoSection({
   const cleanupDraftConflictSource = useCallback(async (
     action: DraftDismissalAction,
     acceptedServerRevision: string | null,
+    snapshot?: DraftConflictCleanupSnapshot,
   ) => {
-    const source = draftConflictSourceRef.current;
+    const source = snapshot?.source ?? draftConflictSourceRef.current;
     if (!source) return;
-    const currentKey = selectedMemo ? ownDraftKey(selectedMemo.id) : null;
-    const sourceLineage = currentKey
-      ? sourceLineageForDraft(source, currentKey)
-      : null;
+    const currentKey = snapshot?.currentKey ?? (selectedMemo ? ownDraftKey(selectedMemo.id) : null);
     if (currentKey && source.key === currentKey) {
       await deleteMemoDraftIfRevision(source.key, source.localRevision);
     }
-    if (sourceLineage) {
+    const dismissalSources = currentKey
+      ? dismissalSourcesForDraft(source, currentKey)
+      : [];
+    for (const dismissalSource of dismissalSources) {
       await putMemoDraftDismissal({
-        key: makeDraftDismissalKey(sourceLineage.sourceKey),
-        sourceKey: sourceLineage.sourceKey,
-        sourceLocalRevision: sourceLineage.sourceLocalRevision,
+        key: makeDraftDismissalKey(dismissalSource.sourceKey),
+        sourceKey: dismissalSource.sourceKey,
+        sourceLocalRevision: dismissalSource.sourceLocalRevision,
         acceptedServerRevision,
-        origin: sourceLineage.origin,
-        userId: sourceLineage.userId,
-        memoId: sourceLineage.memoId,
+        origin: dismissalSource.origin,
+        userId: dismissalSource.userId,
+        memoId: dismissalSource.memoId,
         action,
         createdAt: Date.now(),
       });
     }
-    draftConflictSourceRef.current = null;
+    if (draftConflictSourceRef.current === source) draftConflictSourceRef.current = null;
   }, [ownDraftKey, selectedMemo]);
 
   const cleanupOwnDraft = useCallback(async () => {
@@ -2242,6 +2555,7 @@ export function MemoSection({
     if (actionableIssue) {
       setContent(winnerContent);
       contentRef.current = winnerContent;
+      documentHistoryRef.current.reset(winnerContent);
       setOriginalContent(winnerContent);
       originalContentRef.current = winnerContent;
       setRemoteContent(null);
@@ -2277,7 +2591,22 @@ export function MemoSection({
       if (!actionableIssue && remoteContent !== null && nextContent === remoteContent) {
         const requestMemoId = selectedMemo.id;
         const requestEditorEpoch = editorEpochRef.current;
-        const fresh = await getMemo(requestMemoId);
+        const requestContentSnapshot = contentRef.current;
+        const draftCleanupSnapshot: DraftConflictCleanupSnapshot = {
+          source: draftConflictSourceRef.current,
+          currentKey: ownDraftKey(requestMemoId),
+        };
+        const completedBeforeResolution = completedSaveLedgerRef.current.get(requestMemoId);
+        const resolutionGeneration = invalidatePendingSaveWork();
+        await waitForSaveDrain(requestMemoId);
+        if (!isCurrentResolutionGeneration(
+          resolutionGeneration,
+          resolutionGenerationRef.current,
+        )) return;
+        if (contentRef.current !== requestContentSnapshot) {
+          throw new Error('원격 내용을 적용하는 동안 현재 내용이 변경되었습니다. 다시 비교하세요.');
+        }
+        let fresh = await getMemo(requestMemoId);
         if (
           !isCurrentEditorRequest({
             expectedMemoId: requestMemoId,
@@ -2286,25 +2615,66 @@ export function MemoSection({
             currentEpoch: editorEpochRef.current,
           })
         ) return;
+        if (!isCurrentResolutionGeneration(
+          resolutionGeneration,
+          resolutionGenerationRef.current,
+        )) return;
+        if (contentRef.current !== requestContentSnapshot) {
+          throw new Error('원격 내용을 적용하는 동안 현재 내용이 변경되었습니다. 다시 비교하세요.');
+        }
         if (!canAdoptFetchedRemote(nextContent, fresh.content)) {
-          setRemoteContent(fresh.content);
-          setDraftStatus('conflict');
-          throw new Error('선택하는 동안 서버 내용이 다시 변경되었습니다. 최신 내용을 비교하세요.');
+          const completed = completedSaveLedgerRef.current.get(requestMemoId);
+          const isInvalidatedOwnWrite = Boolean(
+            completed &&
+            completed !== completedBeforeResolution &&
+            completed.memoId === requestMemoId &&
+            completed.generation < resolutionGeneration &&
+            completed.content === fresh.content &&
+            completed.revision === fresh.revision,
+          );
+          if (!isInvalidatedOwnWrite) {
+            setRemoteContent(fresh.content);
+            setDraftStatus('conflict');
+            throw new Error('선택하는 동안 서버 내용이 다시 변경되었습니다. 최신 내용을 비교하세요.');
+          }
+          fresh = await updateMemoById(requestMemoId, nextContent, fresh.revision);
+          if (!isCurrentResolutionGeneration(
+            resolutionGeneration,
+            resolutionGenerationRef.current,
+          )) return;
         }
         baseRevisionRef.current = fresh.revision;
         setContent(nextContent);
         contentRef.current = nextContent;
+        documentHistoryRef.current.reset(nextContent);
         setOriginalContent(nextContent);
         originalContentRef.current = nextContent;
         setRemoteContent(null);
         setShowRemoteCompare(false);
         setDraftConflictActive(false);
-        const key = ownDraftKey(selectedMemo.id);
+        recoveredDraftSourceRef.current = null;
+        // No await before this emit: the socket still belongs to requestMemoId.
+        broadcastUpdate(nextContent);
+        const key = draftCleanupSnapshot.currentKey;
         if (key) {
           const stored = await loadMemoDraft(key);
           if (stored) await deleteMemoDraftIfRevision(key, stored.localRevision);
         }
-        await cleanupDraftConflictSource('remote', fresh.revision ?? null);
+        await cleanupDraftConflictSource(
+          'remote',
+          fresh.revision ?? null,
+          draftCleanupSnapshot,
+        );
+        completedSaveLedgerRef.current.delete(requestMemoId);
+        if (!isCurrentEditorRequest({
+          expectedMemoId: requestMemoId,
+          expectedEpoch: requestEditorEpoch,
+          currentMemoId: initializedMemoIdRef.current,
+          currentEpoch: editorEpochRef.current,
+        }) || !isCurrentResolutionGeneration(
+          resolutionGeneration,
+          resolutionGenerationRef.current,
+        )) return;
         setDraftStatus('idle');
         await refreshCurrentProject();
         return;
@@ -2314,6 +2684,7 @@ export function MemoSection({
       if (!saved) throw new Error('서버 저장을 완료하지 못했습니다. 기기 초안은 보존됩니다.');
       setContent(nextContent);
       contentRef.current = nextContent;
+      documentHistoryRef.current.reset(nextContent);
       setRemoteContent(null);
       setShowRemoteCompare(false);
       setDraftConflictActive(false);
@@ -2326,6 +2697,8 @@ export function MemoSection({
     [
       actionableIssue,
       cleanupDraftConflictSource,
+      broadcastUpdate,
+      invalidatePendingSaveWork,
       moveToNextIssue,
       ownDraftKey,
       queueMemoSave,
@@ -2333,6 +2706,7 @@ export function MemoSection({
       refreshCurrentProject,
       resolveIssues,
       selectedMemo,
+      waitForSaveDrain,
     ],
   );
 
@@ -2383,21 +2757,21 @@ export function MemoSection({
   const handleDiscardDraft = useCallback(async () => {
     if (!recoveryDraft) return;
     const currentKey = selectedMemo ? ownDraftKey(selectedMemo.id) : null;
-    const sourceLineage = currentKey
-      ? sourceLineageForDraft(recoveryDraft, currentKey)
-      : null;
     if (currentKey && recoveryDraft.key === currentKey) {
       await deleteMemoDraftIfRevision(recoveryDraft.key, recoveryDraft.localRevision);
     }
-    if (sourceLineage) {
+    const dismissalSources = currentKey
+      ? dismissalSourcesForDraft(recoveryDraft, currentKey)
+      : [];
+    for (const dismissalSource of dismissalSources) {
       await putMemoDraftDismissal({
-        key: makeDraftDismissalKey(sourceLineage.sourceKey),
-        sourceKey: sourceLineage.sourceKey,
-        sourceLocalRevision: sourceLineage.sourceLocalRevision,
+        key: makeDraftDismissalKey(dismissalSource.sourceKey),
+        sourceKey: dismissalSource.sourceKey,
+        sourceLocalRevision: dismissalSource.sourceLocalRevision,
         acceptedServerRevision: baseRevisionRef.current ?? null,
-        origin: sourceLineage.origin,
-        userId: sourceLineage.userId,
-        memoId: sourceLineage.memoId,
+        origin: dismissalSource.origin,
+        userId: dismissalSource.userId,
+        memoId: dismissalSource.memoId,
         action: 'discard',
         createdAt: Date.now(),
       });
@@ -2573,6 +2947,8 @@ export function MemoSection({
     <main
       ref={surfaceRef}
       className={`detail min-h-0${isBacklog ? ' backlog-editor-surface' : ''}`}
+      data-memo-id={selectedMemo.id}
+      data-editor-variant={isBacklog ? 'backlog' : 'main'}
       tabIndex={isBacklog ? -1 : undefined}
       onPointerDownCapture={activateSurface}
       onFocusCapture={activateSurface}
@@ -2682,7 +3058,7 @@ export function MemoSection({
           </button>
         )}
 
-        {features.memoVersionHistory &&
+        {(features.memoVersionHistory || versionShortcutVisible) &&
           !actionableIssue &&
           !(showRemoteCompare && remoteContent !== null) && (
             <MemoVersionBar
@@ -2691,6 +3067,9 @@ export function MemoSection({
               refreshKey={selectedMemo.updatedAtUtc ?? String(selectedMemo.updatedAt)}
               selectedVersion={viewedVersion}
               onSelect={handleVersionSelect}
+              onRestore={isBacklog || selectedProject.canWrite ? handleRestoreVersion : undefined}
+              focusRequest={versionFocusRequest}
+              disabled={versionRestorePending}
             />
           )}
 
@@ -2831,6 +3210,8 @@ export function MemoSection({
                 onChange={handleInlineChange}
                 onPersist={handlePersist}
                 onSave={handleSaveMemo}
+                onHistoryShortcut={requestHistoryAction}
+                onVersionShortcut={openVersionHistory}
                 onEditingChange={handleEditingChange}
                 onMentionChange={handleMentionChange}
                 onSelectAll={handleSelectAll}

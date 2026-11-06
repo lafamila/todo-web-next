@@ -59,16 +59,19 @@ export function evaluateDraftDismissals(
   dismissals: MemoDraftDismissalRecord[],
   currentServerRevision: MemoRevision,
 ): { candidates: MemoDraftRecord[]; staleDismissalKeys: string[] } {
+  // Kept in the signature for recovery-call compatibility; an explicit local
+  // decision remains valid when only the server revision advances.
+  void currentServerRevision;
   const draftsByKey = new Map(drafts.map((draft) => [draft.key, draft]));
   const activeDismissals = new Map<string, MemoDraftDismissalRecord>();
   const staleDismissalKeys: string[] = [];
 
   for (const dismissal of dismissals) {
     const source = draftsByKey.get(dismissal.sourceKey);
-    const valid =
-      Boolean(source) &&
-      source?.localRevision === dismissal.sourceLocalRevision &&
-      dismissal.acceptedServerRevision === currentServerRevision;
+    // Missing rows keep their retirement watermark: a put that started before
+    // the user's decision may still land later. A genuinely newer revision for
+    // the same key invalidates the watermark and becomes a candidate again.
+    const valid = !source || source.localRevision <= dismissal.sourceLocalRevision;
     if (valid) activeDismissals.set(dismissal.sourceKey, dismissal);
     else staleDismissalKeys.push(dismissal.key);
   }
@@ -77,6 +80,14 @@ export function evaluateDraftDismissals(
     candidates: drafts.filter((draft) => !activeDismissals.has(draft.key)),
     staleDismissalKeys,
   };
+}
+
+/** 원격 채택/버전 복원 뒤에는 그 전에 출발한 비동기 저장·GET 결과를 적용하지 않는다. */
+export function isCurrentResolutionGeneration(
+  expectedGeneration: number,
+  currentGeneration: number,
+): boolean {
+  return expectedGeneration === currentGeneration;
 }
 
 export function enqueueFailedDraftSnapshot<T extends { memoId: string }>(
@@ -100,6 +111,38 @@ export function sourceLineageForDraft(
     userId: draft.userId,
     memoId: draft.memoId,
   };
+}
+
+export interface DraftDismissalSource {
+  sourceKey: string;
+  sourceLocalRevision: number;
+  origin: string;
+  userId: string;
+  memoId: string;
+}
+
+/** 선택한 복구본 자체와 그 조상 source를 모두 exact revision으로 해소한다. */
+export function dismissalSourcesForDraft(
+  draft: MemoDraftRecord,
+  ownKey: string,
+): DraftDismissalSource[] {
+  const selected: DraftDismissalSource = {
+    sourceKey: draft.key,
+    sourceLocalRevision: draft.localRevision,
+    origin: draft.origin,
+    userId: draft.userId,
+    memoId: draft.memoId,
+  };
+  const lineage = sourceLineageForDraft(draft, ownKey);
+  const validLineage = lineage &&
+    lineage.origin === draft.origin &&
+    lineage.userId === draft.userId &&
+    lineage.memoId === draft.memoId;
+  if (!validLineage || (
+    lineage.sourceKey === selected.sourceKey &&
+    lineage.sourceLocalRevision === selected.sourceLocalRevision
+  )) return [selected];
+  return [selected, lineage];
 }
 
 export function createDraftPageId(randomId: () => string): string {
@@ -140,8 +183,10 @@ export function shouldDeleteDraftAfterSave(
 export function shouldAcceptDraftWrite(
   storedLocalRevision: number | null,
   incomingLocalRevision: number,
+  retiredLocalRevision: number | null = null,
 ): boolean {
-  return storedLocalRevision === null || storedLocalRevision <= incomingLocalRevision;
+  return (retiredLocalRevision === null || incomingLocalRevision > retiredLocalRevision) &&
+    (storedLocalRevision === null || storedLocalRevision <= incomingLocalRevision);
 }
 
 /** 현재 탭 record를 우선하고, 없을 때만 updatedAt 내림차순 목록의 최신 타 탭 후보를 쓴다. */

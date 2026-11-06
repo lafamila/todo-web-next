@@ -5,12 +5,17 @@ import { MonacoCodeEditor } from '@/components/editor/MonacoCodeEditor';
 import { BoxTableBlock } from '@/components/editor/blocks/ContentBlocks';
 import { assertClassifierMatchesParseContent } from './classifyLine';
 import { LineView } from './LineView';
-import { useLineStateMachine, type MentionState } from './useLineStateMachine';
+import {
+  useLineStateMachine,
+  type InlineDocumentChange,
+  type MentionState,
+} from './useLineStateMachine';
 import { lineCaretToDocumentOffset, takePendingCheckboxToggle, type PendingCheckboxToggle } from '@/lib/editorIntent';
 import {
   createEditorActivityTracker,
 } from '@/lib/editorActivity';
 import type { AttachmentPreviewState } from '@/lib/types';
+import { isMemoHistoryShortcut } from '@/lib/memoDocumentHistory';
 
 export type { MentionState };
 
@@ -36,7 +41,7 @@ export interface InlineEditorHandle {
 export interface InlineEditorProps {
   ref?: React.Ref<InlineEditorHandle>;
   value: string;
-  onChange: (next: string) => void;
+  onChange: (next: string, change?: InlineDocumentChange) => void;
   /** 체크박스 토글처럼 즉시 서버 반영이 필요한 변경. */
   onPersist?: (next: string) => void;
   onSave: () => void;
@@ -57,6 +62,8 @@ export interface InlineEditorProps {
   onRetryAttachment?: (id: string) => void;
   /** 이미지 파일 붙여넣기를 상위 업로드 큐에 넘겼으면 true. */
   onPasteImages?: (files: File[]) => boolean;
+  onHistoryShortcut?: (action: 'undo' | 'redo') => void;
+  onVersionShortcut?: () => void;
 }
 
 /**
@@ -83,6 +90,8 @@ export function InlineEditor({
   attachmentStateById,
   onRetryAttachment,
   onPasteImages,
+  onHistoryShortcut,
+  onVersionShortcut,
 }: InlineEditorProps) {
   const pendingCheckboxRef = useRef<PendingCheckboxToggle | null>(null);
   const [activityTracker] = useState(() =>
@@ -108,6 +117,7 @@ export function InlineEditor({
     onMentionKeyDown,
     onSelectAll,
     onSelectRange,
+    onHistoryShortcut,
     readOnly,
   });
 
@@ -349,19 +359,15 @@ export function InlineEditor({
 
   const handleSurfaceKeyDownCapture = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const target = event.target instanceof Element ? event.target : null;
+    const historyAction = isMemoHistoryShortcut(event.nativeEvent);
     if (
       readOnly ||
       !target?.closest('.attachment-image-controls') ||
-      event.repeat ||
-      event.nativeEvent.isComposing ||
-      event.keyCode === 229 ||
-      !(event.metaKey || event.ctrlKey) ||
-      event.key.toLowerCase() !== 'z'
+      !historyAction
     ) return;
     event.preventDefault();
     event.stopPropagation();
-    if (event.shiftKey) machine.redo();
-    else machine.undo();
+    onHistoryShortcut?.(historyAction);
   };
 
   const handleReadOnlyLineIntent = (lineId: number, caret: number) => {
@@ -490,6 +496,8 @@ export function InlineEditor({
                     : (language) => machine.setCodeGroupLanguage(group.open.id, language)
                 }
                 onSave={onSave}
+                onHistoryShortcut={onHistoryShortcut}
+                onVersionShortcut={onVersionShortcut}
                 readOnly={readOnly}
                 autoFocus={group.open.id === machine.pendingCodeFocusId}
                 onAutoFocused={machine.consumeCodeFocus}

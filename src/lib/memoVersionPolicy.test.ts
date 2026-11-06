@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { shouldAdoptMemoRevision, shouldResetMemoEditorState } from './memoVersionPolicy.ts';
+import { canRestoreMemoVersion, shouldAdoptMemoRevision, shouldResetMemoEditorState } from './memoVersionPolicy.ts';
 
 test('같은 메모의 sync metadata 갱신은 편집기 상태를 초기화하지 않는다', () => {
   assert.equal(shouldResetMemoEditorState('memo-1', 'memo-1'), false);
@@ -27,4 +27,15 @@ test('본문 동일성이 증명된 구조 이동 revision만 dirty buffer의 �
   );
   assert.equal(shouldAdoptMemoRevision({ ...base, draftConflictActive: true }), false);
   assert.equal(shouldAdoptMemoRevision({ ...base, incomingMemoId: 'memo-2' }), false);
+});
+
+test('version restore fails closed until the current editor is clean and settled', () => {
+  const clean = {
+    dirty: false, attachmentBlocksSave: false, conflictActive: false,
+    pendingSave: false, pendingAttachmentSave: false, recoveryPending: false,
+  };
+  assert.equal(canRestoreMemoVersion(clean), true);
+  for (const field of Object.keys(clean) as Array<keyof typeof clean>) {
+    assert.equal(canRestoreMemoVersion({ ...clean, [field]: true }), false, field);
+  }
 });

@@ -21,6 +21,7 @@ import {
   insertAttachmentRowsAtSelection,
 } from '@/lib/attachmentImage';
 import { updateAttachmentImageLineAlignment, updateAttachmentImageLineWidth, type AttachmentImageAlignment } from '@/lib/attachmentImage';
+import { isMemoHistoryShortcut } from '@/lib/memoDocumentHistory';
 
 /** 자동 렌더 안정화 타이머. MemoSection 의 6초 락 해제 타이머와는 별개로 관리한다. */
 export const RENDER_SETTLE_MS = 2000;
@@ -36,7 +37,7 @@ export interface MentionState {
 
 export interface UseLineStateMachineOptions {
   value: string;
-  onChange: (next: string) => void;
+  onChange: (next: string, change?: InlineDocumentChange) => void;
   /** 즉시 서버 반영이 필요한 변경(체크박스 토글)에만 호출된다. */
   onPersist?: (next: string) => void;
   /** 활성 라인 유무가 바뀔 때만 호출된다 — 6초 락 해제 타이머의 기준. */
@@ -52,7 +53,13 @@ export interface UseLineStateMachineOptions {
    * 문서 오프셋(anchor→focus)을 호출부에 넘겨 단일 텍스트 서피스에서 이어받게 한다.
    */
   onSelectRange?: (anchor: number, focus: number) => void;
+  onHistoryShortcut?: (action: 'undo' | 'redo') => void;
   readOnly?: boolean;
+}
+
+export interface InlineDocumentChange {
+  group: string;
+  coalesce: boolean;
 }
 
 /**
@@ -104,7 +111,6 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
   const switchingRef = useRef(false);
   const pendingCaretRef = useRef<number | null>(null);
   const forceHistoryBoundaryRef = useRef(false);
-  const textAtActivationRef = useRef('');
   const renderSettleTimerRef = useRef<NodeJS.Timeout | null>(null);
   const flashTimerRef = useRef<NodeJS.Timeout | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -134,32 +140,32 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     [],
   );
 
-  const snapshot = useCallback((): EditorSnapshot => {
-    return {
-      lines: linesRef.current,
-      activeLineId: activeLineIdRef.current,
-      caret: textareaRef.current?.selectionStart ?? 0,
-    };
-  }, []);
+  const snapshot = useCallback((): EditorSnapshot => ({
+    lines: linesRef.current,
+    activeLineId: activeLineIdRef.current,
+    caret: textareaRef.current?.selectionStart ?? 0,
+  }), []);
 
-  const commitHistory = useCallback(
-    (coalesce: boolean) => {
-      const forced = forceHistoryBoundaryRef.current;
-      forceHistoryBoundaryRef.current = false;
-      historyRef.current.commit(snapshot(), { coalesce: coalesce && !forced });
-    },
-    [snapshot],
-  );
+  // Legacy internal snapshots remain only for non-shortcut structural helpers.
+  // All user-facing Undo/Redo shortcuts are owned by MemoSection's document history.
+  const commitHistory = useCallback((coalesce: boolean) => {
+    const forced = forceHistoryBoundaryRef.current;
+    forceHistoryBoundaryRef.current = false;
+    historyRef.current.commit(snapshot(), { coalesce: coalesce && !forced });
+  }, [snapshot]);
 
   /** 라인 배열을 교체하고 문서 문자열을 위로 올린다. 바이트 동일 왕복이 여기서 보장된다. */
-  const commitLines = useCallback((next: EditorLine[]) => {
+  const commitLines = useCallback((
+    next: EditorLine[],
+    change: InlineDocumentChange = { group: 'inline:structural', coalesce: false },
+  ) => {
     linesRef.current = next;
     setLinesState(next);
 
     const text = linesToText(next);
     if (text !== lastDocRef.current) {
       lastDocRef.current = text;
-      optionsRef.current.onChange(text);
+      optionsRef.current.onChange(text, change);
     }
     return text;
   }, []);
@@ -215,7 +221,6 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
       clearRenderSettleTimer();
       switchingRef.current = true;
       pendingCaretRef.current = caret;
-      textAtActivationRef.current = linesRef.current.find((line) => line.id === id)?.text ?? '';
       lastCursorLineIdRef.current = id;
       if (caret != null) lastCursorColumnRef.current = caret;
       setActive(id, mode);
@@ -246,7 +251,6 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
 
     activeModeRef.current = 'focused-rendered';
     setActiveModeState('focused-rendered');
-    forceHistoryBoundaryRef.current = true;
 
     setFlashLineId(id);
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
@@ -405,6 +409,12 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
       const index = findIndex(id);
       if (index === -1) return;
 
+      const inputType = (e.nativeEvent as InputEvent).inputType;
+      if (inputType === 'historyUndo' || inputType === 'historyRedo') {
+        optionsRef.current.onHistoryShortcut?.(inputType === 'historyUndo' ? 'undo' : 'redo');
+        return;
+      }
+
       commitHistory(true);
       const text = el.value;
 
@@ -418,7 +428,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
       const current = linesRef.current;
       const previousText = current[index].text;
       const next = current.map((line) => (line.id === id ? { ...line, text } : line));
-      commitLines(next);
+      commitLines(next, { group: `inline:line:${id}`, coalesce: true });
 
       // 이번 입력으로 여는 펜스가 만들어졌으면 바로 코드블록을 완성하고 편집기로 넘긴다.
       // 조합 중에는 미룬다 — 확정 전 중간 글자에 반응하면 안 된다.
@@ -652,16 +662,10 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
         return;
       }
 
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) {
-        if (e.shiftKey) {
-          e.preventDefault();
-          redo();
-          return;
-        }
-        // 활성 라인 안에서 타이핑한 내용이 남아 있으면 네이티브 undo 를 우선한다.
-        if (mode === 'editing' && line.text !== textAtActivationRef.current) return;
+      const historyAction = isMemoHistoryShortcut(e.nativeEvent);
+      if (historyAction) {
         e.preventDefault();
-        undo();
+        optionsRef.current.onHistoryShortcut?.(historyAction);
         return;
       }
 
@@ -773,9 +777,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
       findIndex,
       mergeWithNext,
       mergeWithPrevious,
-      redo,
       splitLine,
-      undo,
     ],
   );
 
@@ -875,7 +877,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
         ...current.slice(0, openIndex + 1),
         ...replacement,
         ...current.slice(openIndex + 1 + bodyLength),
-      ]);
+      ], { group: `inline:code:${openLineId}`, coalesce: true });
       forceHistoryBoundaryRef.current = true;
     },
     [commitHistory, commitLines],

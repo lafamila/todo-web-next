@@ -14,6 +14,8 @@ interface MemoVersionBarProps {
   selectedVersion: MemoVersionInterface | null;
   disabled?: boolean;
   onSelect: (version: MemoVersionInterface | null) => void;
+  onRestore?: (version: MemoVersionInterface) => Promise<void>;
+  focusRequest?: number;
 }
 
 const formatTimestamp = (input: Date | string) => {
@@ -40,6 +42,8 @@ export function MemoVersionBar({
   selectedVersion,
   disabled = false,
   onSelect,
+  onRestore,
+  focusRequest = 0,
 }: MemoVersionBarProps) {
   const selectId = useId();
   const [versions, setVersions] = useState<MemoVersionSummaryInterface[]>([]);
@@ -47,6 +51,9 @@ export function MemoVersionBar({
   const [pendingVersion, setPendingVersion] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const versionRequestRef = useRef<AbortController | null>(null);
+  const selectRef = useRef<HTMLSelectElement>(null);
+  const focusedRequestRef = useRef<string | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -81,6 +88,31 @@ export function MemoVersionBar({
   useEffect(() => {
     return () => versionRequestRef.current?.abort();
   }, []);
+
+  useEffect(() => {
+    if (focusRequest <= 0 || isLoading || disabled) return;
+    const requestKey = `${memoId}:${focusRequest}`;
+    if (focusedRequestRef.current === requestKey) return;
+    focusedRequestRef.current = requestKey;
+    const frame = requestAnimationFrame(() => {
+      selectRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [disabled, focusRequest, isLoading, memoId]);
+
+  const handleRestore = async () => {
+    if (!selectedVersion || !onRestore || isRestoring) return;
+    if (!window.confirm(`v${selectedVersion.version} 내용으로 현재 메모를 복원할까요?\n현재 서버 내용은 이전 버전 기록으로 보존됩니다.`)) return;
+    setIsRestoring(true);
+    setError(null);
+    try {
+      await onRestore(selectedVersion);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '선택한 버전을 복원하지 못했습니다.');
+    } finally {
+      setIsRestoring(false);
+    }
+  };
 
   const handleChange = async (value: string) => {
     versionRequestRef.current?.abort();
@@ -127,10 +159,11 @@ export function MemoVersionBar({
     <section className="memo-version-bar" aria-label="메모 버전 기록">
       <label htmlFor={selectId}>버전</label>
       <select
+        ref={selectRef}
         id={selectId}
         value={pendingVersion ?? selectedVersion?.version ?? 'current'}
         onChange={(event) => void handleChange(event.target.value)}
-        disabled={disabled || isLoading}
+        disabled={disabled || isLoading || isRestoring}
         aria-describedby={`${selectId}-status`}
       >
         <option value="current">현재 · {formatTimestamp(currentUpdatedAt)}</option>
@@ -156,9 +189,16 @@ export function MemoVersionBar({
       </span>
 
       {selectedVersion && (
-        <button type="button" onClick={() => void handleChange('current')}>
-          현재로 돌아가기
-        </button>
+        <>
+          {onRestore && (
+            <button type="button" onClick={() => void handleRestore()} disabled={disabled || isRestoring}>
+              {isRestoring ? '복원 중…' : '이 버전으로 복원'}
+            </button>
+          )}
+          <button type="button" onClick={() => void handleChange('current')} disabled={isRestoring}>
+            현재로 돌아가기
+          </button>
+        </>
       )}
     </section>
   );

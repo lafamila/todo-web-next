@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start --port 3034",
     "lint": "eslint .",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --experimental-strip-types src/lib/editorActivity.test.ts src/lib/editorIntent.test.ts src/lib/memoDraftPolicy.test.ts src/lib/memoLeasePolicy.test.ts src/lib/memoSelectionPolicy.test.ts src/lib/memoVersionPolicy.test.ts src/lib/projectSearchPolicy.test.ts src/lib/boxTable.test.ts src/lib/projectHierarchy.test.ts src/lib/backlogPolicy.test.ts src/lib/panelLayout.test.ts src/lib/attachmentImage.test.ts src/lib/attachmentUploadPolicy.test.ts"
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --experimental-strip-types src/lib/memoDocumentHistory.test.ts src/lib/memoSaveDrain.test.ts src/lib/editorActivity.test.ts src/lib/editorIntent.test.ts src/lib/memoDraftPolicy.test.ts src/lib/memoLeasePolicy.test.ts src/lib/memoSelectionPolicy.test.ts src/lib/memoVersionPolicy.test.ts src/lib/projectSearchPolicy.test.ts src/lib/boxTable.test.ts src/lib/projectHierarchy.test.ts src/lib/backlogPolicy.test.ts src/lib/panelLayout.test.ts src/lib/attachmentImage.test.ts src/lib/attachmentUploadPolicy.test.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

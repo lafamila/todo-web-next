@@ -191,8 +191,10 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   (`bash`→`shell`, `tsx`/`ts`→`typescript`, `text`→`plaintext` …). Monaco 에 없는 id 를 넘기면 하이라이팅이
   조용히 꺼지므로 언어는 반드시 이 모듈을 거쳐 정규화한다. Monaco 헤더의 언어 선택기는 결과를 여는 펜스
   라인에 되쓴다(`setCodeGroupLanguage` → `formatCodeFence`; 기본 언어면 ` ``` ` 만 남긴다).
-- **Undo/redo**: 문서 스냅샷 스택(`history.ts`, 최대 200, 500ms 병합). 활성 라인 안에서 타이핑한 내용이
-  남아 있는 동안에는 네이티브 undo 를 우선한다.
+- **Undo/redo**: `MemoSection`의 `memoDocumentHistory.ts`가 문서 문자열 이력(최대200, 같은 입력 group만500ms 병합)을
+  소유한다. 일반 줄·구조·Raw·Monaco·이미지는 같은 Cmd/Ctrl+Z·Cmd/Ctrl+Shift+Z 경로를 사용하고 native undo를 새 편집으로 기록하지 않는다.
+  같은 메모의 줄/모드/포커스 이동·저장 ACK는 이력을 보존한다. 실제 계정/메모·권위 있는 원격 채택 경계는 이력을 초기화한다.
+  rendered/lease idle에서의 Undo도 편집 의도를 요청하고 동일 문서/계정/epoch일 때만 재생한다.
 - **Raw 모드 (Cmd/Ctrl+E)**: 문서 전체를 하나의 textarea 로 여는 escape hatch. 멀티라인 선택/복사와
   `@메모명` 검색이 필요할 때 쓴다.
 - **줄을 넘는 선택은 Raw 모드가 이어받는다**: 라인마다 textarea 가 따로라 DOM 선택이 줄 경계를 넘지 못한다.
@@ -262,8 +264,11 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
   멈춘 뒤 기존 `MemoResolutionPanel`에서 기기 초안과 현재 서버 내용을 비교한다. 저장 성공 시에도 요청 이후
   새 입력의 `localRevision`이 더 크면 최신 draft를 삭제하지 않는다. 재진입 시 같은-base 초안은 복구/폐기를
   명시적으로 묻고, 다른-base 초안은 곧바로 비교 화면을 연다. 다른 탭/page의 draft record는 삭제하지 않고,
-  명시적 폐기·원격 적용·저장 완료를 source localRevision+accepted serverRevision tombstone으로 기록한다.
-  source나 server revision이 바뀌면 tombstone을 폐기해 후보를 다시 보여준다. clean socket 갱신도 `getMemo`로
+  명시적 폐기·원격 적용·저장 완료는 실제 선택 source와 lineage 각각의 localRevision watermark로 기록한다.
+  같거나 오래된 source revision은 이후 server revision이 바뀌어도 다시 묻지 않고 실제 신규 localRevision만 후보로 보여준다.
+  source row가 잠시 없어도 watermark를 보존하고 IDB put도 retirement와 같은 transaction에서 검사한다.
+  원격 채택은 메모별 in-flight 저장 완료를 기다린 뒤 fresh GET/CAS를 검증하고 이전 retry·attachment-save·GET 세대를 무효화한다.
+  정리 대상 key/source는 await 전에 고정해 A→B 전환이 B 초안이나 소켓 broadcast에 영향을 주지 않게 한다. clean socket 갱신도 `getMemo`로
   본문+revision을 함께 확인하고 이전 GET은 AbortController+request sequence로 취소한 뒤 같은 editor epoch가
   계속 clean일 때만 채택한다. 외부 draft를 현재 page key로 복사할 때 원 source lineage를 own record metadata에
   같이 저장해 메모 이동·reload 뒤의 저장/폐기도 원 source tombstone을 정확히 가리킨다. 이 보호는 4개
@@ -398,8 +403,11 @@ todo 는 한 레포로 **2×2 = 4모드**를 돌린다. 축은 직교한다 —
   (dev-local·prod-local)은 숨기고 `*-prod`(dev-prod·prod-prod)는 표시한다 (2026-07-31 사용자 확정).
   dev-local 은 prod-local 의 거울이라 숨김 UX 까지 동일하며, 숨겨진 기능의 테스트는 dev-prod web(:30334)에서 한다.
   판정 자체는 API 가 내려주는 `features` 플래그(`src/lib/types.ts`)이며 web 은 그대로 따른다.
-- **메모 버전 선택 UI는 반대로 local 전용이다.** `memoVersionHistory`가 참인 `dev-local`·`prod-local`에만
-  표시하며, API 필드가 없는 구버전 서버에서는 fail-closed로 숨긴다.
+- **메모 버전 막대 기본 표시는 local 쪽이다.** `memoVersionHistory`가 참인 `dev-local`·`prod-local`의 기본 표시는 유지한다.
+  모든 모드에서 Mac Cmd+Option+Z / Windows Ctrl+Alt+Z로 활성 메모·백로그의 막대를 명시적으로 열 수 있다.
+  IME/외부 입력/다른 pane은 무시하고 Alt 조합은 Undo/Redo와 분리한다. 버전 선택 자체는 읽기 전용이다.
+  '이 버전으로 복원'은 기존 권한/lease/CAS 저장과 이전 서버 본문 버전 보존을 사용한다. 현재 미저장·복구 후보·업로드·저장·병합 대기는
+  먼저 정리하도록 fail-closed 안내하며, 단축키나 preview만으로 서버 본문을 덮어쓰지 않는다.
 - **HTTPS/WSS 강제는 `deploy-todo-prod.sh` 의 검증이지 이 레포의 제약이 아니다.** 코드에도 Dockerfile 에도
   scheme 판정이 없다(빌드 인자는 "비어 있지 않을 것"만 검사). prod-local 빌드는 그 스크립트를 거치지 않으므로
   http/ws 값으로 정상 빌드·동작한다 (2026-07-30 실측 검증).

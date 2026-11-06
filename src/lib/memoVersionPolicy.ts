@@ -25,3 +25,19 @@ export function shouldAdoptMemoRevision(input: {
       input.incomingServerContent === input.acceptedContent,
   );
 }
+
+export function canRestoreMemoVersion(input: {
+  dirty: boolean;
+  attachmentBlocksSave: boolean;
+  conflictActive: boolean;
+  pendingSave: boolean;
+  pendingAttachmentSave: boolean;
+  recoveryPending: boolean;
+}): boolean {
+  return !input.dirty &&
+    !input.attachmentBlocksSave &&
+    !input.conflictActive &&
+    !input.pendingSave &&
+    !input.pendingAttachmentSave &&
+    !input.recoveryPending;
+}
