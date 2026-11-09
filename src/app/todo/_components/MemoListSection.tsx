@@ -25,7 +25,6 @@ import {
   buildMemberInviteScope,
   confirmationsMatchBulkMove,
   ownedLeafMoveTargets,
-  siblingSubprojects,
 } from '@/lib/projectHierarchy';
 import { ProjectMemberModal } from './ProjectMemberModal';
 import {
@@ -48,7 +47,6 @@ export default function MemoListSection() {
     toggleSelectMemo,
     clearSelectedMemos,
     deleteMemos,
-    moveMemo,
     bulkMoveMemos,
     loadMembers,
     inviteMember,
@@ -85,10 +83,6 @@ export default function MemoListSection() {
   const [inviteRole, setInviteRole] = useState<ProjectRole>('editor');
   const [inviteAllChildren, setInviteAllChildren] = useState(true);
   const [inviteChildIds, setInviteChildIds] = useState<string[]>([]);
-  const [movingMemo, setMovingMemo] = useState<MemoInterface | null>(null);
-  const [moveTargetId, setMoveTargetId] = useState('');
-  const [moveError, setMoveError] = useState('');
-  const [isMoving, setIsMoving] = useState(false);
   const [showBulkMoveModal, setShowBulkMoveModal] = useState(false);
   const [bulkMoveTargetId, setBulkMoveTargetId] = useState('');
   const [sourceConfirmationName, setSourceConfirmationName] = useState('');
@@ -298,14 +292,6 @@ export default function MemoListSection() {
     await removeMember(memberProject.id, userId);
   }, [memberProject, removeMember]);
 
-  const moveTargets = useMemo(
-    () => selectedProject ? siblingSubprojects(projects, selectedProject) : [],
-    [projects, selectedProject],
-  );
-  const canMoveMemos = Boolean(
-    selectedProject?.parentProjectId &&
-    projects.find((project) => project.id === selectedProject.parentProjectId)?.canDelete,
-  );
   const bulkMoveTargets = useMemo(
     () => selectedProject
       ? ownedLeafMoveTargets(projects, user?.id, selectedProject.id)
@@ -316,27 +302,6 @@ export default function MemoListSection() {
     () => bulkMoveTargets.find((project) => project.id === bulkMoveTargetId) ?? null,
     [bulkMoveTargetId, bulkMoveTargets],
   );
-
-  const openMoveMemo = (memo: MemoInterface) => {
-    if (memo.kind === 'backlog' || moveTargets.length === 0) return;
-    setMovingMemo(memo);
-    setMoveTargetId(moveTargets[0].id);
-    setMoveError('');
-  };
-
-  const handleMoveMemo = async () => {
-    if (!movingMemo || !moveTargetId) return;
-    setIsMoving(true);
-    setMoveError('');
-    try {
-      await moveMemo(movingMemo.id, moveTargetId);
-      setMovingMemo(null);
-    } catch (error) {
-      setMoveError(error instanceof Error ? error.message : '메모 이동에 실패했습니다.');
-    } finally {
-      setIsMoving(false);
-    }
-  };
 
   const openBulkMove = () => {
     const firstTarget = bulkMoveTargets[0];
@@ -756,19 +721,6 @@ export default function MemoListSection() {
                     )}
                     {memo.title}
                   </h3>
-                  {!isMultiSelectMode && canMoveMemos && moveTargets.length > 0 && memo.kind !== 'backlog' && (
-                    <button
-                      type="button"
-                      className="todo-action-button todo-action-button--secondary"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openMoveMemo(memo);
-                      }}
-                      aria-label={`${memo.title} 이동`}
-                    >
-                      이동
-                    </button>
-                  )}
                   <div className="shrink-0 whitespace-nowrap text-right flex flex-col gap-1 text-xs text-gray-500 mr-2 ml-3">
                     <span className="task-date-created">생성: {formatDate(memo.createdAt)}</span>
                     <span>편집: {formatDate(memo.updatedAt)}</span>
@@ -793,41 +745,6 @@ export default function MemoListSection() {
     </div>
 
       {memberModal}
-
-      <Modal
-        isOpen={Boolean(movingMemo)}
-        onClose={() => !isMoving && setMovingMemo(null)}
-        title="메모 이동"
-        size="sm"
-      >
-        {movingMemo && (
-          <div className="space-y-4">
-            <p className="text-sm text-gray-700">
-              <strong>{movingMemo.title}</strong>을 같은 프로젝트의 다른 서브프로젝트로 이동합니다.
-              메모 ID와 버전 기록은 유지됩니다.
-            </p>
-            <label className="block text-sm font-medium text-gray-700">이동 대상</label>
-            <select
-              className="w-full border border-gray-300 rounded px-3 py-2"
-              value={moveTargetId}
-              onChange={(event) => setMoveTargetId(event.target.value)}
-            >
-              {moveTargets.map((project) => (
-                <option key={project.id} value={project.id}>{project.name}</option>
-              ))}
-            </select>
-            {moveError && <p className="text-sm text-red-600">{moveError}</p>}
-            <div className="flex justify-end gap-2">
-              <Button onClick={handleMoveMemo} disabled={isMoving || !moveTargetId}>
-                {isMoving ? '이동 중...' : '이동'}
-              </Button>
-              <Button variant="secondary" onClick={() => setMovingMemo(null)} disabled={isMoving}>
-                취소
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
 
       <Modal
         isOpen={showBulkMoveModal}
