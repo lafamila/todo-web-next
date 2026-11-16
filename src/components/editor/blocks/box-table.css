@@ -4,26 +4,6 @@
   margin: 8px 0;
 }
 
-.editor-table-controls {
-  display: flex;
-  justify-content: flex-end;
-  margin: 4px 0 6px;
-}
-
-.editor-table-controls .todo-action-button {
-  height: 28px;
-  min-height: 28px;
-  padding: 0 9px;
-  font-size: 12px;
-}
-
-.editor-table-source {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.875em;
-}
-
 .box-table-scroll {
   width: 100%;
   min-width: 0;
@@ -73,6 +53,100 @@
 
 .box-table-scroll .box-table tbody tr:nth-child(even) {
   background: #1e1e1e;
+}
+
+.box-table-editor {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.box-table-editor--interactive {
+  padding: 22px;
+}
+
+.box-table-editor > .box-table-scroll {
+  margin: 0;
+}
+
+/* 셀과 같은 타이포를 유지하고 .detail textarea의 18px/100% 규칙을 덮는다. */
+.box-table-active-cell {
+  position: relative;
+  display: block;
+  min-height: 1.6em;
+}
+
+.box-table-cell-layout {
+  visibility: hidden;
+}
+
+.box-table-editor textarea.box-table-cell-input {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  min-width: 5ch;
+  min-height: 1.6em;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  resize: none;
+  overflow: hidden;
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  background: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.box-table-editor td:has(.box-table-cell-input),
+.box-table-editor th:has(.box-table-cell-input) {
+  box-shadow: inset 0 0 0 1px #a3a3a3;
+}
+
+.box-table-insert {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  padding: 0;
+  border: 1px solid #737373;
+  border-radius: 4px;
+  font: 16px/1 Arial, sans-serif;
+  color: #fafafa;
+  background: #262626;
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  transition: opacity 100ms ease, background-color 100ms ease;
+  cursor: pointer;
+}
+
+.box-table-insert:hover,
+.box-table-insert:focus-visible {
+  opacity: 1;
+}
+
+.box-table-insert:hover {
+  background: #525252;
+}
+
+.box-table-insert:focus-visible {
+  outline: 2px solid #fafafa;
+  outline-offset: 1px;
+}
+
+@media (hover: none) {
+  .box-table-insert {
+    opacity: 1;
+  }
 }
 
 @media (max-width: 768px) {

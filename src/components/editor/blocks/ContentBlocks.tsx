@@ -1,11 +1,6 @@
 'use client';
 
 import { Fragment, useEffect, useRef, useState, type AnchorHTMLAttributes, type ReactNode } from 'react';
-import ReactMarkdown from 'react-markdown';
-import type { Components } from 'react-markdown';
-import remarkBreaks from 'remark-breaks';
-import remarkGfm from 'remark-gfm';
-import { remarkBracketBold, splitBracketBold } from '@/lib/bracketBold';
 import { cn } from '@/lib/utils';
 import type { BoxTableData } from '@/lib/boxTable';
 import type { AttachmentPreviewState } from '@/lib/types';
@@ -17,6 +12,13 @@ import {
   type AttachmentImageAlignment,
   type AttachmentResizeEdge,
 } from '@/lib/attachmentImage';
+import {
+  analyzeMemoLine,
+  safeMemoLinkTarget,
+  shouldBypassMemoInline,
+  tokenizeCheckboxInline,
+  tokenizeMemoInline,
+} from '@/lib/memoSyntax';
 
 /**
  * 메모 본문 블록의 단일 표현.
@@ -24,18 +26,18 @@ import {
  * 편집 화면과 읽기 화면의 시각이 갈라지지 않는다 (워크스페이스 원칙 9).
  */
 
-export const CONTENT_MARKDOWN_PLUGINS = [remarkGfm, remarkBreaks, remarkBracketBold];
-
-/** 본문 링크의 단일 표현 — 마크다운 경로와 경량 렌더러가 같은 앵커를 쓴다. */
+/** 본문 링크의 단일 표현 — 허용 목록 토큰과 앱 메모 링크가 같은 앵커를 쓴다. */
 function ContentLink({
   href,
   children,
   ...props
 }: { href?: string } & AnchorHTMLAttributes<HTMLAnchorElement>) {
-  const isMemoLink = Boolean(href && (href.includes('memoId=') || href.startsWith('?')));
+  const safeHref = href ? safeMemoLinkTarget(href) : null;
+  const isMemoLink = Boolean(safeHref && (safeHref.includes('memoId=') || safeHref.startsWith('?')));
+  if (!safeHref) return <span>{children}</span>;
   return (
     <a
-      href={href}
+      href={safeHref}
       target="_blank"
       rel="noopener noreferrer"
       className={cn('hover:underline', isMemoLink ? 'text-white' : 'text-blue-300')}
@@ -46,70 +48,47 @@ function ContentLink({
   );
 }
 
-/** `[텍스트](URL)` — 마크다운을 통과하지 않는 표면에서만 필요한 최소 링크 문법. */
-const INLINE_LINK_PATTERN = /\[([^[\]\n]*)\]\(([^()\s]+)\)/g;
+/**
+ * 확정된 인라인 허용 목록만 적용하는 경량 렌더러. 전체 Markdown 문법을 통과시키지 않으므로
+ * 제거한 heading/emphasis/task/reference/escape/entity 문법은 원문 그대로 남는다.
+ */
+export function InlineMarks({ text, checkbox = false }: { text: string; checkbox?: boolean }) {
+  const tokens = shouldBypassMemoInline(text)
+    ? [{ type: 'text' as const, value: text }]
+    : checkbox ? tokenizeCheckboxInline(text) : tokenizeMemoInline(text);
+  return <>{tokens.map((token, index): ReactNode => {
+    switch (token.type) {
+      case 'strong':
+        return <strong key={index}>{token.value}</strong>;
+      case 'code':
+        return <code key={index} className="memo-inline-code">{token.value}</code>;
+      case 'link': {
+        const safeTarget = safeMemoLinkTarget(token.target);
+        return safeTarget
+          ? <ContentLink key={index} href={safeTarget}>{token.value}</ContentLink>
+          : <Fragment key={index}>{`[${token.value}](${token.target})`}</Fragment>;
+      }
+      case 'image': {
+        const safeTarget = safeMemoLinkTarget(token.target);
+        return safeTarget && (/^https?:/iu.test(safeTarget) || safeTarget.startsWith('/'))
+          // eslint-disable-next-line @next/next/no-img-element -- user-authored external URL has no stable Next image loader contract
+          ? <img key={index} src={safeTarget} alt={token.value} className="memo-external-image" />
+          : <Fragment key={index}>{`![${token.value}](${token.target})`}</Fragment>;
+      }
+      default:
+        return <Fragment key={index}>{token.value}</Fragment>;
+    }
+  })}</>;
+}
 
-function boldNodes(text: string, keyPrefix: string) {
-  return splitBracketBold(text).map((part, index) =>
-    part.bold ? (
-      <strong key={`${keyPrefix}-${index}`}>{part.text}</strong>
-    ) : (
-      <Fragment key={`${keyPrefix}-${index}`}>{part.text}</Fragment>
-    ),
+function SourcePrefix({ source, visual }: { source: string; visual?: ReactNode }) {
+  return (
+    <span className="memo-source-prefix">
+      <span className="memo-source-prefix-ghost" aria-hidden="true">{source}</span>
+      {visual && <span className="memo-source-prefix-visual">{visual}</span>}
+    </span>
   );
 }
-
-/**
- * `[텍스트]` 강조 + `[텍스트](URL)` 링크만 적용하는 경량 인라인 렌더러.
- * 체크박스 내용은 마크다운을 통과하지 않으므로(원문 그대로를 span 에 넣는다) 이 표면이 본문과
- * 같은 규칙을 쓰게 하는 유일한 경로다. 전체 마크다운을 돌리지 않는 이유는 기존 체크박스 내용의
- * `*`·`#`·`_` 가 갑자기 서식으로 해석되는 걸 막기 위함이다.
- */
-export function InlineMarks({ text }: { text: string }) {
-  const pattern = new RegExp(INLINE_LINK_PATTERN.source, 'g');
-  const nodes: ReactNode[] = [];
-  let last = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > last) nodes.push(...boldNodes(text.slice(last, match.index), `t${last}`));
-    nodes.push(
-      <ContentLink key={`l${match.index}`} href={match[2]}>
-        {match[1]}
-      </ContentLink>,
-    );
-    last = match.index + match[0].length;
-  }
-
-  if (last < text.length || nodes.length === 0) {
-    nodes.push(...boldNodes(text.slice(last), `t${last}`));
-  }
-
-  return <>{nodes}</>;
-}
-
-export const contentMarkdownComponents: Components = {
-  a: ({ href, children, ...props }) => (
-    <ContentLink href={href} {...props}>
-      {children}
-    </ContentLink>
-  ),
-  ol: ({ children, ...props }) => (
-    <ol className="my-1 list-decimal pl-6 marker:text-white" {...props}>
-      {children}
-    </ol>
-  ),
-  ul: ({ children, ...props }) => (
-    <ul className="my-1 list-disc pl-6 marker:text-white" {...props}>
-      {children}
-    </ul>
-  ),
-  li: ({ children, ...props }) => (
-    <li className="pl-1" {...props}>
-      {children}
-    </li>
-  ),
-};
 
 export interface MarkdownBlockProps {
   children: string;
@@ -117,11 +96,19 @@ export interface MarkdownBlockProps {
 }
 
 export function MarkdownBlock({ children, className }: MarkdownBlockProps) {
+  const syntax = analyzeMemoLine(children);
+  if (syntax.kind === 'rule') {
+    return <div className={cn('memo-rendered-line memo-rule-line', className)}><span>{syntax.indent}</span><hr /></div>;
+  }
+
   return (
-    <div className={className}>
-      <ReactMarkdown remarkPlugins={CONTENT_MARKDOWN_PLUGINS} components={contentMarkdownComponents}>
-        {children}
-      </ReactMarkdown>
+    <div className={cn('memo-rendered-line', className)}>
+      <span className="memo-leading-space" aria-hidden="true">{syntax.indent}</span>
+      {syntax.kind === 'bullet' && <SourcePrefix source={syntax.prefix} visual="•" />}
+      {syntax.kind === 'strike' && <SourcePrefix source={syntax.prefix} />}
+      <span className={cn(syntax.kind === 'strike' && 'memo-slash-strike')}>
+        <InlineMarks text={syntax.content} />
+      </span>
     </div>
   );
 }
@@ -129,16 +116,21 @@ export function MarkdownBlock({ children, className }: MarkdownBlockProps) {
 export interface CheckboxBlockProps {
   checked: boolean;
   content: string;
+  /** 원문에서 `-- `/`v-- ` 앞에 있던 실제 공백 수. */
+  indent?: number;
   /** 없으면 읽기 전용 체크박스로 렌더된다. */
   onToggle?: () => void;
 }
 
-export function CheckboxBlock({ checked, content, onToggle }: CheckboxBlockProps) {
+export function CheckboxBlock({ checked, content, indent = 0, onToggle }: CheckboxBlockProps) {
   const interactive = Boolean(onToggle);
 
   return (
-    <div className="flex items-start gap-2">
-      <button
+    <div className="memo-rendered-line memo-checkbox-line">
+      <span className="memo-leading-space" aria-hidden="true">{' '.repeat(indent)}</span>
+      <SourcePrefix
+        source={checked ? 'v-- ' : '-- '}
+        visual={<button
         type="button"
         role="checkbox"
         aria-checked={checked}
@@ -152,7 +144,7 @@ export function CheckboxBlock({ checked, content, onToggle }: CheckboxBlockProps
           onToggle?.();
         }}
         className={cn(
-          'mt-[0.3em] flex h-3 w-3 shrink-0 items-center justify-center rounded-[2px] border transition-colors',
+          'memo-checkbox-control flex h-3 w-3 items-center justify-center rounded-[2px] border transition-colors',
           checked ? 'border-[#3994ef] bg-[#3994ef] text-white' : 'border-white/40 bg-transparent',
           interactive ? 'cursor-pointer hover:border-[#3994ef]' : 'cursor-default',
         )}
@@ -162,9 +154,10 @@ export function CheckboxBlock({ checked, content, onToggle }: CheckboxBlockProps
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
           </svg>
         )}
-      </button>
-      <span className={cn('flex-1', checked && 'text-gray-500 line-through')}>
-        <InlineMarks text={content} />
+      </button>}
+      />
+      <span>
+        <InlineMarks text={content} checkbox />
       </span>
     </div>
   );
@@ -401,7 +394,7 @@ export function AttachmentImageBlock({
 
   if (status === 'failed' || loadFailed || !source) {
     return (
-      <div className="attachment-image-block attachment-image-error" role="status">
+      <div className="attachment-image-block attachment-image-error" role="status" data-editor-activity-surface="image">
         <span>{preview?.error || '이미지를 불러오지 못했습니다.'}</span>
         {onRetry && (
           <button type="button" className="todo-action-button todo-action-button--secondary" onClick={onRetry}>
@@ -417,6 +410,7 @@ export function AttachmentImageBlock({
       ref={blockRef}
       className="attachment-image-block"
       data-attachment-id={attachmentId}
+      data-editor-activity-surface="image"
       data-alignment={alignment}
       data-has-alignment={showAlignment || undefined}
     >
@@ -536,16 +530,31 @@ export interface StaticCodeBlockProps {
 export function BoxTableBlock({
   table,
   rowLineIds,
+  sourceLineIds,
   onActivateCell,
+  renderCell,
 }: {
   table: BoxTableData;
   rowLineIds?: number[];
-  onActivateCell?: (rowIndex: number, cellIndex: number) => void;
+  sourceLineIds?: number[];
+  onActivateCell?: (rowIndex: number, cellIndex: number, caret?: number) => void;
+  renderCell?: (rowIndex: number, cellIndex: number, content: ReactNode) => ReactNode;
 }) {
   const renderRow = (row: BoxTableData['rows'][number], rowIndex: number) => (
-    <tr key={rowIndex} data-line-id={rowLineIds?.[rowIndex]}>
+    <tr key={sourceLineIds?.[row.lineOffset] ?? rowIndex} data-line-id={rowLineIds?.[rowIndex]}>
       {row.cells.map((cell, cellIndex) => {
         const Cell = rowIndex < table.headerRowCount ? 'th' : 'td';
+        const content = row.cellSegments[cellIndex].map((segment, index) => (
+          <Fragment key={segment.lineOffset}>
+            {index > 0 && <br />}
+            <span
+              data-line-id={sourceLineIds?.[segment.lineOffset]}
+              data-table-cell-offset={segment.sourceStart}
+              data-table-source-map={segment.valueToSourceOffsets.join(',')}
+              data-table-value-start={segment.valueStart}
+            >{segment.text}</span>
+          </Fragment>
+        ));
         return (
           <Cell
             key={cellIndex}
@@ -555,10 +564,21 @@ export function BoxTableBlock({
               const selection = window.getSelection();
               if (selection && !selection.isCollapsed) return;
               event.stopPropagation();
-              onActivateCell(rowIndex, cellIndex);
+              const caretDocument = document as Document & {
+                caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+                caretRangeFromPoint?: (x: number, y: number) => Range | null;
+              };
+              const position = caretDocument.caretPositionFromPoint?.(event.clientX, event.clientY);
+              const range = position ? null : caretDocument.caretRangeFromPoint?.(event.clientX, event.clientY);
+              const node = position?.offsetNode ?? range?.startContainer ?? null;
+              const offset = position?.offset ?? range?.startOffset ?? 0;
+              const segment = node?.parentElement?.closest<HTMLElement>('[data-table-value-start]');
+              const caret = segment && event.currentTarget.contains(segment)
+                ? Number(segment.dataset.tableValueStart) + offset : 0;
+              onActivateCell(rowIndex, cellIndex, Math.min(cell.length, caret));
             } : undefined}
           >
-            {cell}
+            {renderCell ? renderCell(rowIndex, cellIndex, content) : content}
           </Cell>
         );
       })}

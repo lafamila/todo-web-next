@@ -1,5 +1,5 @@
 import { codeFenceLanguage, isCodeFenceLine } from '@/lib/codeFence';
-import { matchCheckbox, splitIndent } from '@/lib/lineMarks';
+import { matchCheckbox } from '@/lib/lineMarks';
 import { parseContent } from '@/lib/utils';
 import type { ContentBlockInterface } from '@/lib/types';
 import { readBoxTable, type BoxTableData } from '@/lib/boxTable';
@@ -87,8 +87,7 @@ export function classifyLine(text: string): LineClassification {
 
     if (match) {
       const [, memoTitle, memoId] = match;
-      const { level, body } = splitIndent(text);
-      return { kind: 'memo-link', content: body, checked: false, indent: level, memoId, memoTitle };
+      return { kind: 'memo-link', content: text, checked: false, indent: 0, memoId, memoTitle };
     }
   }
 
@@ -96,8 +95,7 @@ export function classifyLine(text: string): LineClassification {
     return { kind: 'blank', content: text, checked: false, indent: 0 };
   }
 
-  const { level, body } = splitIndent(text);
-  return { kind: 'text', content: body, checked: false, indent: level };
+  return { kind: 'text', content: text, checked: false, indent: 0 };
 }
 
 /** 자동 렌더(2초 안정화)의 대상이 되는 종류인가. text/blank 는 소스와 렌더 차이가 없어 제외한다. */

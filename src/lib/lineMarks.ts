@@ -13,30 +13,9 @@
 export const CHECKBOX_CHECKED_PREFIX = 'v-- ';
 export const CHECKBOX_UNCHECKED_PREFIX = '-- ';
 
-/** 스페이스 2칸 = 들여쓰기 한 단위. */
-export const INDENT_UNIT = 2;
-/** 본문이 화면 밖으로 밀리지 않게 상한을 둔다 (기존 메모에 32칸 들여쓴 줄이 있다). */
-export const MAX_INDENT_LEVEL = 8;
-/** 한 단위의 시각 폭 — 마크다운 목록의 `pl-6`(1.5rem) 과 같은 리듬을 쓴다. */
-const INDENT_STEP_REM = 1.5;
-
-/** 들여쓰기를 인정하는 목록 표기: `1. ` `1) ` `- ` `* ` `+ `. */
-const LIST_MARKER_PATTERN = /^(?:\d+[.)]|[-*+]) /;
-/**
- * 들여쓰기를 인정하는 링크 표기: 줄 **어디든** `[텍스트](URL)` 이 있으면 된다
- * (메모 링크 `[@메모](?memoId=…)` 포함). 링크 앞에는 아무 텍스트나 올 수 있다.
- * `](` 까지 확인하는 것이 안전장치다 — 실측 코퍼스에서 이 패턴에 걸리는 기존 들여쓴 비목록 줄은
- * 0개라, 펜스 없이 붙여넣은 코드(`[key: string]: boolean;` 등)는 코드 블록으로 그대로 남는다.
- */
-const LINK_PATTERN = /\[[^[\]\n]*\]\(/;
-
-function isIndentableBody(body: string): boolean {
-  return (
-    matchCheckboxBody(body) !== null ||
-    LIST_MARKER_PATTERN.test(body) ||
-    LINK_PATTERN.test(body)
-  );
-}
+/** 호환 export. 이제 level은 근사 단계가 아니라 원문의 선행 공백 문자 수다. */
+export const INDENT_UNIT = 1;
+export const MAX_INDENT_LEVEL = Number.MAX_SAFE_INTEGER;
 
 export interface CheckboxMark {
   checked: boolean;
@@ -45,7 +24,7 @@ export interface CheckboxMark {
 }
 
 export interface IndentSplit {
-  /** 들여쓰기 단위 수 (0 = 없음). */
+  /** 원문의 선행 공백 문자 수 (0 = 없음). */
   level: number;
   /** 원문의 앞 공백 그대로 — 토글이 들여쓰기를 보존할 때 쓴다. */
   indentText: string;
@@ -66,25 +45,16 @@ function matchCheckboxBody(body: string): CheckboxMark | null {
 }
 
 /**
- * 앞 공백을 들여쓰기 단위로 해석한다.
- *
- * 체크박스/목록/링크 표기가 뒤따를 때**만** 들여쓰기로 보고 그 외 줄은 원문을 그대로 둔다.
- * 이 줄들은 앞 공백을 **반드시** 걷어내야 하는데, 에디터가 한 줄씩 따로 마크다운으로 넘기므로
- * 4칸 이상 들여쓰면 목록/링크가 아니라 코드 블록으로 렌더되기 때문이다 — 들여쓰기는 렌더에서
- * padding 으로 되살린다. 반대로 그 외 줄에서 공백을 걷어내면 안 된다: 실측 코퍼스에는 펜스 없이
- * 붙여넣은 JSON/코드가 11,048줄(메모 95개) 있고, 이들은 4칸 들여쓰기 덕에 코드 블록으로 렌더된다.
+ * 모든 앞 공백을 원문 그대로 분리한다. 일반 텍스트도 예외 없이 같은 정보를 반환하며,
+ * 렌더러가 실제 공백 문자로 다시 그려 편집 전후 폭을 같게 한다.
  */
 export function splitIndent(text: string): IndentSplit {
   const match = /^( +)(.*)$/.exec(text);
   if (!match) return { level: 0, indentText: '', body: text };
 
   const [, indentText, body] = match;
-  if (!isIndentableBody(body)) {
-    return { level: 0, indentText: '', body: text };
-  }
-
   return {
-    level: Math.min(Math.floor(indentText.length / INDENT_UNIT), MAX_INDENT_LEVEL),
+    level: indentText.length,
     indentText,
     body,
   };
@@ -105,12 +75,4 @@ export function toggleCheckboxLine(text: string): string {
 
   const prefix = mark.checked ? CHECKBOX_UNCHECKED_PREFIX : CHECKBOX_CHECKED_PREFIX;
   return `${indentText}${prefix}${mark.content}`;
-}
-
-/**
- * 렌더된 블록에만 붙이는 들여쓰기 스타일.
- * 편집 중인 줄은 원문의 공백이 그대로 보이므로 padding 을 주면 두 번 들여쓴 것처럼 보인다.
- */
-export function indentStyle(level: number): { paddingLeft: string } | undefined {
-  return level > 0 ? { paddingLeft: `${level * INDENT_STEP_REM}rem` } : undefined;
 }

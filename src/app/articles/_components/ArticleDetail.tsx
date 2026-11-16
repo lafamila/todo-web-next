@@ -8,7 +8,6 @@ import {
   BoxTableBlock,
   AttachmentImageBlock,
 } from '@/components/editor/blocks/ContentBlocks';
-import { indentStyle } from '@/lib/lineMarks';
 import { parseContent } from '@/lib/utils';
 import type { ArticleInterface, ContentBlockInterface } from '@/lib/types';
 
@@ -34,9 +33,6 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
     const blocks = parseContent(article.content || '') as ContentBlockInterface[];
 
     return blocks.map((block, index) => {
-      // 들여쓰기(스페이스 2칸 = 1단위)는 에디터와 같은 규칙으로 렌더에서만 되살린다.
-      const indent = indentStyle(block.metadata?.indent ?? 0);
-
       switch (block.type) {
         case 'attachment-image':
           return block.metadata?.attachmentId
@@ -53,8 +49,12 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
             : <pre key={index}>{block.content}</pre>;
         case 'checkbox':
           return (
-            <div key={index} className="my-1" style={indent}>
-              <CheckboxBlock checked={block.metadata?.checked || false} content={block.content} />
+            <div key={index} className="my-1">
+              <CheckboxBlock
+                checked={block.metadata?.checked || false}
+                content={block.content}
+                indent={block.metadata?.indent ?? 0}
+              />
             </div>
           );
 
@@ -65,7 +65,7 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
 
         case 'memo-link':
           return (
-            <div key={index} style={indent}>
+            <div key={index}>
               <MarkdownBlock className="my-2">{block.content}</MarkdownBlock>
             </div>
           );
@@ -76,7 +76,7 @@ export function ArticleDetail({ article, onBack }: ArticleDetailProps) {
             return <br key={index} />;
           }
           return (
-            <div key={index} style={indent}>
+            <div key={index}>
               <MarkdownBlock className="article-markdown">{block.content}</MarkdownBlock>
             </div>
           );

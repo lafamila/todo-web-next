@@ -2,12 +2,50 @@ export interface EditorActivitySources {
   line: boolean;
   monaco: boolean;
   image: boolean;
+  table: boolean;
 }
 
 export type EditorActivitySource = keyof EditorActivitySources;
 
 export function combinedEditorActivity(sources: EditorActivitySources): boolean {
-  return sources.line || sources.monaco || sources.image;
+  return sources.line || sources.monaco || sources.image || sources.table;
+}
+
+/**
+ * 모든 편집 surface가 공유하는 DOM 표식. 표 셀/구조 버튼처럼 input이 아닌 컨트롤도
+ * 전역 타이핑과 6초 lease 해제 판정에서 같은 편집 영역으로 취급한다.
+ */
+export const EDITOR_ACTIVITY_SURFACE_SELECTOR = '[data-editor-activity-surface]';
+
+export function isEditorActivitySurface(element: Element | null): boolean {
+  return Boolean(element?.closest?.(EDITOR_ACTIVITY_SURFACE_SELECTOR));
+}
+
+interface EditorStrikeShortcutEvent {
+  key: string;
+  code?: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  repeat?: boolean;
+  isComposing?: boolean;
+  keyCode?: number;
+}
+
+/** Mac Cmd+/ 및 Windows/Linux Ctrl+/만 취소선 토글로 예약한다. */
+export function isEditorStrikeShortcut(event: EditorStrikeShortcutEvent): boolean {
+  const primaryModifier = event.metaKey !== event.ctrlKey;
+  const slashKey = event.key === '/' || event.code === 'Slash';
+  return (
+    primaryModifier &&
+    slashKey &&
+    !event.altKey &&
+    !event.shiftKey &&
+    !event.repeat &&
+    !event.isComposing &&
+    event.keyCode !== 229
+  );
 }
 
 export function shouldRequestCodeWrite(
@@ -52,7 +90,7 @@ export function createEditorActivityTracker(
     return () => clearTimeout(timer);
   },
 ): EditorActivityTracker {
-  let sources: EditorActivitySources = { line: false, monaco: false, image: false };
+  let sources: EditorActivitySources = { line: false, monaco: false, image: false, table: false };
   let reported = false;
   let onChange = initialOnChange;
   let cancelScheduledEnd: (() => void) | null = null;
@@ -87,11 +125,12 @@ export function createEditorActivityTracker(
       update('line', false);
       update('monaco', false);
       update('image', false);
+      update('table', false);
     },
     dispose: () => {
       cancelScheduledEnd?.();
       cancelScheduledEnd = null;
-      sources = { line: false, monaco: false, image: false };
+      sources = { line: false, monaco: false, image: false, table: false };
       if (reported) onChange(false);
       reported = false;
     },

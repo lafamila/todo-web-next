@@ -2,7 +2,7 @@
 
 import React, { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { MonacoCodeEditor } from '@/components/editor/MonacoCodeEditor';
-import { BoxTableBlock } from '@/components/editor/blocks/ContentBlocks';
+import { TableEditor } from './TableEditor';
 import { assertClassifierMatchesParseContent } from './classifyLine';
 import { LineView } from './LineView';
 import {
@@ -240,9 +240,12 @@ export function InlineEditor({
       const prefix = document.createRange();
       prefix.selectNodeContents(cell);
       prefix.setEnd(node, offset);
+      const offsets = cell.dataset.tableSourceMap?.split(',').map(Number);
+      const renderedOffset = prefix.toString().length;
       return {
         lineId,
-        column: Math.min(source.length, Number(cell.dataset.tableCellOffset) + prefix.toString().length),
+        column: Math.min(source.length, offsets?.[Math.min(renderedOffset, offsets.length - 1)] ??
+          Number(cell.dataset.tableCellOffset) + renderedOffset),
       };
     }
     const nodeText = node?.textContent ?? '';
@@ -362,7 +365,7 @@ export function InlineEditor({
     const historyAction = isMemoHistoryShortcut(event.nativeEvent);
     if (
       readOnly ||
-      !target?.closest('.attachment-image-controls') ||
+      !target?.closest('.attachment-image-controls, .box-table-insert') ||
       !historyAction
     ) return;
     event.preventDefault();
@@ -425,55 +428,32 @@ export function InlineEditor({
     >
       {groups.flatMap<React.ReactNode>((group) => {
         if (group.type === 'table') {
-          if (group.lines.some((line) => line.id === activeLineId)) {
-            // root-level line keys를 유지한다. 편집 중 표가 일시적으로 불완전해져도
-            // 같은 textarea가 유지되어 포커스·IME·undo를 잃지 않는다.
-            return [
-              <div key={`table-controls-${group.key}`} className="editor-table-controls">
-                <button type="button" className="todo-action-button todo-action-button--secondary" onClick={machine.deactivate}>
-                  표로 보기
-                </button>
-              </div>,
-              ...group.lines.map((line) => (
-                <LineView
-                  key={line.id}
-                  line={line}
-                  mode={line.id === activeLineId ? activeMode : null}
-                  flash={line.id === flashLineId}
-                  readOnly={readOnly}
-                  onActivate={activateLineAndRemember}
-                  onReadOnlyEditIntent={handleReadOnlyLineIntent}
-                  onToggleCheckbox={machine.toggleCheckboxLine}
-                  textareaRef={machine.textareaRef}
-                  handlers={line.id === activeLineId ? machine.lineHandlers : undefined}
-                  asPlainText
-                />
-              )),
-            ];
-          }
-
-          const canRequestEdit = !readOnly || Boolean(onReadOnlyEditIntent);
-          const activateSource = (lineId: number, column: number) => {
-            pendingCheckboxRef.current = null;
-            if (readOnly) handleReadOnlyLineIntent(lineId, column);
-            else activateLineAndRemember(lineId, column);
-          };
           return (
             <div key={group.key} className="editor-box-table">
-              <BoxTableBlock
+              <TableEditor
+                lines={group.lines}
                 table={group.table}
-                rowLineIds={group.table.rows.map((row) => group.lines[row.lineOffset].id)}
-                onActivateCell={canRequestEdit ? (rowIndex, cellIndex) => {
-                  const row = group.table.rows[rowIndex];
-                  activateSource(group.lines[row.lineOffset].id, row.cellOffsets[cellIndex]);
-                } : undefined}
+                documentSnapshot={value}
+                readOnly={readOnly}
+                onRequestWrite={onReadOnlyCodeEditIntent ? handleReadOnlyCodeIntent : undefined}
+                onActivate={() => {
+                  pendingCheckboxRef.current = null;
+                  lastCodeFocusIdRef.current = null;
+                  machine.deactivate();
+                }}
+                onChange={(raw, result, change) => machine.setTableGroupLines(group.key, raw, {
+                  lines: result.lines, lineOrigins: result.lineOrigins,
+                }, change)}
+                onEditingChange={(active) => activityTracker.update('table', active)}
+                onHistoryShortcut={onHistoryShortcut}
+                onSave={onSave}
               />
             </div>
           );
         }
         if (group.type === 'code') {
           return (
-            <div key={group.key} className="my-2" data-code-open-line-id={group.open.id}>
+            <div key={group.key} className="my-2" data-code-open-line-id={group.open.id} data-editor-activity-surface="monaco">
               <LineView
                 line={group.open}
                 mode={group.open.id === activeLineId ? activeMode : null}

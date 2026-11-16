@@ -12,10 +12,92 @@
 
 /* 1. 모든 라인의 공통 기저: 상태 전환 트랜지션 */
 .editor-line {
+  /* Raw textarea는 p-0이다. Tailwind의 px-1을 덮어 두 서피스 시작점을 같게 한다. */
+  padding-inline: 0;
   border-radius: 4px;
   transition:
     background-color var(--editor-line-transition) ease,
     box-shadow var(--editor-line-transition) ease;
+}
+
+/*
+ * 렌더 상태도 textarea 원문의 문자 폭을 그대로 예약한다. 선행 공백과 `- `/`-- `/`v-- `/`//`
+ * 접두사를 padding/list-style로 근사하지 않아 포커스 전환 때 본문 시작점과 줄바꿈이 움직이지 않는다.
+ */
+.memo-rendered-line {
+  min-width: 0;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.memo-leading-space,
+.memo-source-prefix {
+  white-space: pre;
+}
+
+.memo-source-prefix {
+  position: relative;
+}
+
+.memo-source-prefix-ghost {
+  visibility: hidden;
+}
+
+.memo-source-prefix-visual {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 0;
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  transform: translateY(-50%);
+}
+
+.memo-checkbox-control {
+  flex: none;
+  margin: 0;
+  padding: 0;
+}
+
+.memo-slash-strike {
+  text-decoration: line-through;
+}
+
+.memo-rendered-line code.memo-inline-code {
+  padding: 0.05em 0.25em;
+  font-family: ui-monospace, sfmono-regular, menlo, monospace;
+  font-size: 1em;
+  line-height: inherit;
+  color: inherit;
+  background: rgb(255 255 255 / 12%);
+  border-radius: 3px;
+}
+
+.memo-external-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.memo-rule-line {
+  display: flex;
+  align-items: center;
+}
+
+.memo-rule-line > span {
+  white-space: pre;
+}
+
+.memo-rule-line > hr {
+  flex: 1;
+  margin: 0.5em 0;
+  border: 0;
+  border-top: 1px solid currentcolor;
+  opacity: 0.35;
 }
 
 /* 2. editing: 편집 중인 라인 배경 */

@@ -2,7 +2,6 @@
 
 import React, { memo, useEffect, useLayoutEffect } from 'react';
 import { AttachmentImageBlock, CheckboxBlock, MarkdownBlock } from '@/components/editor/blocks/ContentBlocks';
-import { indentStyle } from '@/lib/lineMarks';
 import { cn } from '@/lib/utils';
 import { classifyLine, type EditorLine } from './classifyLine';
 import type { LineHandlers, LineMode } from './useLineStateMachine';
@@ -147,6 +146,7 @@ function LineViewImpl({
           <CheckboxBlock
             checked={cls.checked}
             content={cls.content}
+            indent={cls.indent}
             onToggle={readOnly
               ? onReadOnlyCheckboxIntent && (() => onReadOnlyCheckboxIntent(line.id))
               : () => onToggleCheckbox(line.id)}
@@ -174,17 +174,8 @@ function LineViewImpl({
       case 'blank':
         return <br />;
       default:
-        // 들여쓰기를 뺀 본문을 넘긴다 — 4칸 이상 남아 있으면 마크다운이 코드 블록으로 읽는다.
         return <MarkdownBlock>{cls.content}</MarkdownBlock>;
     }
-  };
-
-  /** 렌더 결과에만 들여쓰기를 준다 (편집 중인 줄은 원문 공백이 그대로 보인다). */
-  const renderIndentedBlock = () => {
-    if (asPlainText) return renderBlock();
-    const indent = indentStyle(cls.indent);
-    if (!indent) return renderBlock();
-    return <div style={indent}>{renderBlock()}</div>;
   };
 
   return (
@@ -198,10 +189,11 @@ function LineViewImpl({
         fenceCollapsed && 'editor-line-fence-collapsed',
       )}
       data-line-id={line.id}
+      data-editor-activity-surface={mode ? 'line' : undefined}
       onClick={activateFromPointer}
       onDoubleClick={activateFromPointer}
     >
-      {showRendered && renderIndentedBlock()}
+      {showRendered && renderBlock()}
       {handlers && (
         <textarea
           ref={textareaRef}

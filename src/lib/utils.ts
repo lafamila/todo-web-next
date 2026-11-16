@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { codeFenceLanguage, isCodeFenceLine } from "./codeFence";
-import { matchCheckbox, splitIndent, toggleCheckboxLine } from "./lineMarks";
+import { matchCheckbox, toggleCheckboxLine } from "./lineMarks";
 import { readBoxTable } from "./boxTable";
 import { parseAttachmentImageLine } from "./attachmentImage";
 import type { ContentBlockInterface } from "./types";
@@ -107,18 +107,16 @@ export function parseContent(content: string): ContentBlockInterface[] {
 
       if (match) {
         const [, memoTitle, memoId] = match;
-        const { level, body } = splitIndent(line);
         blocks.push({
           type: "memo-link",
-          content: body,
-          metadata: { memoId, memoTitle, indent: level },
+          content: line,
+          metadata: { memoId, memoTitle, indent: 0 },
         });
         continue;
       }
     }
 
-    const { level, body } = splitIndent(line);
-    blocks.push({ type: "text", content: body, metadata: { indent: level } });
+    blocks.push({ type: "text", content: line, metadata: { indent: 0 } });
   }
 
   return blocks;

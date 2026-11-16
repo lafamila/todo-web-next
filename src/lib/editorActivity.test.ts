@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   createEditorActivityTracker,
+  isEditorStrikeShortcut,
   shouldRequestCodeWrite,
   updateEditorActivity,
   type EditorActivitySources,
 } from './editorActivity.ts';
 
-function transitions(events: Array<['line' | 'monaco' | 'image', boolean]>) {
-  let sources: EditorActivitySources = { line: false, monaco: false, image: false };
+function transitions(events: Array<['line' | 'monaco' | 'image' | 'table', boolean]>) {
+  let sources: EditorActivitySources = { line: false, monaco: false, image: false, table: false };
   const emitted: boolean[] = [];
   for (const [source, active] of events) {
     const result = updateEditorActivity(sources, source, active);
@@ -54,7 +55,7 @@ test('duplicate focus and blur events are ignored', () => {
   );
 });
 
-function trackedTransitions(events: Array<['line' | 'monaco' | 'image', boolean]>) {
+function trackedTransitions(events: Array<['line' | 'monaco' | 'image' | 'table', boolean]>) {
   const emitted: boolean[] = [];
   const scheduled: Array<() => void> = [];
   const tracker = createEditorActivityTracker(
@@ -129,6 +130,40 @@ test('reset clears active image controls', () => {
   tracked.tracker.reset();
   tracked.tracker.dispose();
   assert.deepEqual(tracked.emitted, [true, false]);
+});
+
+test('table cell and structure control handoff never releases the editor lease', () => {
+  assert.deepEqual(
+    trackedTransitions([
+      ['line', true],
+      ['line', false],
+      ['table', true],
+      ['table', false],
+    ]).emitted,
+    [true, false],
+  );
+});
+
+test('reset clears an active table surface', () => {
+  const tracked = trackedTransitions([['table', true]]);
+  tracked.tracker.reset();
+  tracked.tracker.dispose();
+  assert.deepEqual(tracked.emitted, [true, false]);
+});
+
+test('strike shortcut accepts only a non-composing single primary modifier plus slash', () => {
+  const base = {
+    key: '/', code: 'Slash', ctrlKey: false, metaKey: true,
+    altKey: false, shiftKey: false, repeat: false, isComposing: false, keyCode: 191,
+  };
+  assert.equal(isEditorStrikeShortcut(base), true);
+  assert.equal(isEditorStrikeShortcut({ ...base, metaKey: false, ctrlKey: true }), true);
+  assert.equal(isEditorStrikeShortcut({ ...base, metaKey: true, ctrlKey: true }), false);
+  assert.equal(isEditorStrikeShortcut({ ...base, altKey: true }), false);
+  assert.equal(isEditorStrikeShortcut({ ...base, shiftKey: true }), false);
+  assert.equal(isEditorStrikeShortcut({ ...base, repeat: true }), false);
+  assert.equal(isEditorStrikeShortcut({ ...base, isComposing: true }), false);
+  assert.equal(isEditorStrikeShortcut({ ...base, keyCode: 229 }), false);
 });
 
 test('read-only Monaco requests a lease only when an edit-intent handler exists', () => {

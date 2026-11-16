@@ -22,6 +22,9 @@ import {
 } from '@/lib/attachmentImage';
 import { updateAttachmentImageLineAlignment, updateAttachmentImageLineWidth, type AttachmentImageAlignment } from '@/lib/attachmentImage';
 import { isMemoHistoryShortcut } from '@/lib/memoDocumentHistory';
+import { isEditorStrikeShortcut } from '@/lib/editorActivity';
+import { toggleSlashStrikeRange } from '@/lib/memoSyntax';
+import { reconcileEditorLines } from '@/lib/editorLineReconcile';
 
 /** 자동 렌더 안정화 타이머. MemoSection 의 6초 락 해제 타이머와는 별개로 관리한다. */
 export const RENDER_SETTLE_MS = 2000;
@@ -60,6 +63,15 @@ export interface UseLineStateMachineOptions {
 export interface InlineDocumentChange {
   group: string;
   coalesce: boolean;
+}
+
+/**
+ * 표 직렬화 결과의 한 물리 줄. sourceLineOffset은 현재 표 그룹 안의 기존 줄을 가리키며,
+ * null인 줄에만 새 session-local line id를 발급한다.
+ */
+export interface TableLineReplacement {
+  lines: readonly string[];
+  lineOrigins: readonly (number | null)[];
 }
 
 /**
@@ -266,7 +278,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     if (options.value === lastDocRef.current) return;
 
     lastDocRef.current = options.value;
-    const rebuilt = splitDocument(options.value);
+    const rebuilt = reconcileEditorLines(linesRef.current, options.value, nextLineId);
 
     linesRef.current = rebuilt;
     setLinesState(rebuilt);
@@ -617,6 +629,32 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
       const line = linesRef.current[index];
       const mode = activeModeRef.current;
 
+      if (isEditorStrikeShortcut(e.nativeEvent)) {
+        e.preventDefault();
+        closeMention();
+        const toggled = toggleSlashStrikeRange(
+          line.text,
+          el.selectionStart,
+          el.selectionEnd,
+        );
+        if (!toggled.changed) return;
+
+        commitHistory(false);
+        commitLines(
+          linesRef.current.map((item) =>
+            item.id === id ? { ...item, text: toggled.text } : item,
+          ),
+          { group: `inline:strike:${id}`, coalesce: false },
+        );
+        forceHistoryBoundaryRef.current = true;
+        requestAnimationFrame(() => {
+          const current = textareaRef.current;
+          if (!current || activeLineIdRef.current !== id) return;
+          current.setSelectionRange(toggled.selectionStart, toggled.selectionEnd);
+        });
+        return;
+      }
+
       // Shift+↑/↓: 줄을 넘는 선택은 라인별 textarea 로 표현할 수 없다.
       // 네이티브와 같은 열 유지 규칙으로 anchor/focus 오프셋을 만들어 호출부(Raw 모드)에 넘기면
       // 이후 Shift+방향키·복사·삭제는 전부 브라우저 기본 동작으로 이어진다.
@@ -881,6 +919,68 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
       forceHistoryBoundaryRef.current = true;
     },
     [commitHistory, commitLines],
+  );
+
+  /**
+   * 표 모델의 순수 mutation 결과를 현재 문서의 정확히 같은 표 span에 반영한다.
+   * expectedRaw가 달라졌으면 늦은 셀/구조 편집 결과이므로 아무것도 적용하지 않는다.
+   */
+  const setTableGroupLines = useCallback(
+    (
+      openLineId: number,
+      expectedRaw: string,
+      replacement: TableLineReplacement,
+      change: InlineDocumentChange,
+    ): boolean => {
+      if (optionsRef.current.readOnly) return false;
+      if (replacement.lines.length !== replacement.lineOrigins.length) return false;
+
+      const current = linesRef.current;
+      const group = buildLineGroups(current).find(
+        (item): item is Extract<LineGroup, { type: 'table' }> =>
+          item.type === 'table' && item.lines[0]?.id === openLineId,
+      );
+      if (!group || linesToText(group.lines) !== expectedRaw) return false;
+
+      const groupStart = current.findIndex((line) => line.id === openLineId);
+      if (groupStart < 0) return false;
+
+      const usedOrigins = new Set<number>();
+      const nextLines: EditorLine[] = [];
+      for (let index = 0; index < replacement.lines.length; index++) {
+        const origin = replacement.lineOrigins[index];
+        if (origin === null) {
+          nextLines.push({ id: nextLineId(), text: replacement.lines[index] });
+          continue;
+        }
+        if (
+          !Number.isInteger(origin) ||
+          origin < 0 ||
+          origin >= group.lines.length ||
+          usedOrigins.has(origin)
+        ) return false;
+        usedOrigins.add(origin);
+        nextLines.push({ id: group.lines[origin].id, text: replacement.lines[index] });
+      }
+
+      const nextRaw = linesToText(nextLines);
+      if (nextRaw === expectedRaw) return false;
+
+      commitHistory(false);
+      commitLines(
+        [
+          ...current.slice(0, groupStart),
+          ...nextLines,
+          ...current.slice(groupStart + group.lines.length),
+        ],
+        change,
+      );
+      forceHistoryBoundaryRef.current = true;
+      closeMention();
+      deactivate();
+      return true;
+    },
+    [closeMention, commitHistory, commitLines, deactivate],
   );
 
   /** Monaco 헤더의 언어 선택을 여는 펜스 라인에 되쓴다 (선택이 문서에 남아야 다음에도 유지된다). */
@@ -1236,6 +1336,7 @@ export function useLineStateMachine(options: UseLineStateMachineOptions) {
     selectDomRange,
     setCodeGroupBody,
     setCodeGroupLanguage,
+    setTableGroupLines,
     toggleCheckboxLine: handleToggleCheckbox,
     undo,
     redo,

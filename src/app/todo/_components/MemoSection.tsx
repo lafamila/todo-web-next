@@ -91,6 +91,11 @@ import {
   type MemoHistoryAction,
   type PendingMemoHistoryIntent,
 } from '@/lib/memoDocumentHistory';
+import {
+  isEditorActivitySurface,
+  isEditorStrikeShortcut,
+} from '@/lib/editorActivity';
+import { toggleSlashStrikeRange } from '@/lib/memoSyntax';
 import { createCompletedMemoSaveLedger, createMemoSaveDrainRegistry } from '@/lib/memoSaveDrain';
 import {
   currentMemoDraftKey,
@@ -175,6 +180,7 @@ export const SHOW_MEMO_LIST_EVENT = 'todo:showMemoList';
 
 export const isTypingContext = (el: Element | null) => {
   if (!el) return false;
+  if (isEditorActivitySurface(el)) return true;
   const tag = (el as HTMLElement).tagName?.toLowerCase();
   if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
   const htmlEl = el as HTMLElement;
@@ -219,20 +225,22 @@ const editorFeatureHelp = [
   { syntax: 'v-- 완료한 일', description: '체크된 체크박스를 만듭니다.' },
   {
     syntax: '┌──┬──┐\n│항목│내용│\n└──┴──┘',
-    description: '상자 문자로 그린 표를 실제 표로 표시합니다. 셀을 누르면 해당 원문 줄을 수정할 수 있습니다. 코드 블록 안에서는 변환하지 않습니다.',
+    description: '상자 문자 표의 셀을 직접 수정합니다. 구분선 사이의 여러 줄은 셀 안 줄바꿈이며, 표 가장자리의 +로 행·열을 추가합니다. Enter는 셀 줄바꿈, Tab은 다음 셀로 이동합니다. 코드 블록 안에서는 변환하지 않습니다.',
   },
   {
     syntax: '``` / java```',
     description:
       '코드 블록을 만듭니다. 기본 언어는 typescript 이고 ``` 앞에 언어를 쓰면 그 언어로 하이라이팅됩니다(에디터 위 선택기로도 바꿀 수 있습니다). ``` 표시는 화면에서 감춰집니다.',
   },
+  { syntax: '`인라인 코드`', description: '본문과 같은 크기의 글자에 회색 배경을 적용해 코드로 표시합니다.' },
+  { syntax: '//취소할 내용', description: '해당 줄을 취소선으로 표시합니다. 원문 접두사는 Ctrl/⌘ + /로 켜고 끌 수 있습니다.' },
   { syntax: '@메모명', description: '편집 중 다른 메모를 검색해서 링크로 삽입합니다.' },
-  { syntax: '1. 항목', description: '번호 목록을 만듭니다.' },
   { syntax: '- 항목', description: '글머리 목록을 만듭니다.' },
+  { syntax: '---', description: '수평선을 만듭니다. ***·___는 글자 그대로 표시합니다.' },
   {
-    syntax: '  -- 할 일\n  1. 항목\n  - 항목',
+    syntax: '  일반 내용\n  -- 할 일\n  - 항목',
     description:
-      '스페이스 2칸이 들여쓰기 한 단위입니다. 체크박스·번호 목록·글머리 목록 앞에 쓰면 그만큼 들여쓴 채로 렌더됩니다(최대 8단계).',
+      '줄 앞 공백은 개수와 관계없이 사라지거나 코드 블록으로 바뀌지 않고 실제 들여쓰기로 표시됩니다.',
   },
   { syntax: '[텍스트]', description: '대괄호로 감싼 부분을 굵게 표시합니다. 줄 시작이나 공백 뒤에 있어야 하고, 뒤에 (가 오면 링크로 봅니다.' },
   { syntax: '[텍스트](URL)', description: '링크를 만듭니다.' },
@@ -243,6 +251,7 @@ const shortcutHelp = [
   { keys: 'Ctrl/⌘ + Shift + S', description: '선택한 프로젝트의 백로그를 열거나 닫습니다. 데스크톱은 오른쪽, 모바일은 아래에서 펼쳐집니다.' },
   { keys: 'Ctrl/⌘ + Enter', description: '현재 메모 편집기를 전체화면으로 열거나 원래 화면으로 돌아갑니다.' },
   { keys: 'Ctrl/⌘ + E', description: 'Raw 모드를 켜고 끕니다. 본문 전체를 하나의 텍스트로 선택·복사할 때 씁니다.' },
+  { keys: 'Ctrl/⌘ + /', description: '현재 줄 또는 선택한 여러 줄의 // 취소선을 설정하거나 해제합니다.' },
   {
     keys: 'Ctrl/⌘ + A',
     description: '본문 전체를 선택합니다. 선택 동안만 원문이 보이고, 복사하거나 선택을 풀면 자동으로 돌아옵니다.',
@@ -1017,7 +1026,11 @@ export function MemoSection({
       const editorFocusActive = Boolean(
         active &&
         surfaceRef.current?.contains(active) &&
-        active.closest('.editor-line-input, .monaco-editor, .attachment-image-controls'),
+        (
+          isEditorActivitySurface(active) ||
+          // 이전 렌더와의 교차 커밋 동안에도 lease가 풀리지 않게 기존 표식을 잠시 유지한다.
+          active.closest('.editor-line-input, .monaco-editor, .attachment-image-controls')
+        ),
       );
       if (shouldScheduleHistoryLeaseRelease({
         rawMode: rawModeRef.current,
@@ -2159,6 +2172,30 @@ export function MemoSection({
   const handleRawKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       holdLock();
+      if (isEditorStrikeShortcut(e.nativeEvent)) {
+        e.preventDefault();
+        e.stopPropagation();
+        const textarea = e.currentTarget;
+        const direction = textarea.selectionDirection;
+        const toggled = toggleSlashStrikeRange(
+          textarea.value,
+          textarea.selectionStart,
+          textarea.selectionEnd,
+        );
+        if (!toggled.changed) return;
+        applyContentMutation(toggled.text, { group: 'memo:strike', coalesce: false });
+        requestAnimationFrame(() => {
+          const current = textareaRef.current;
+          if (!current) return;
+          current.focus({ preventScroll: true });
+          current.setSelectionRange(
+            toggled.selectionStart,
+            toggled.selectionEnd,
+            direction,
+          );
+        });
+        return;
+      }
       const historyAction = isMemoHistoryShortcut(e.nativeEvent);
       if (historyAction) {
         e.preventDefault();
@@ -2168,7 +2205,7 @@ export function MemoSection({
       }
       handleMentionKeyDown(e);
     },
-    [handleMentionKeyDown, holdLock, requestHistoryAction]
+    [applyContentMutation, handleMentionKeyDown, holdLock, requestHistoryAction]
   );
 
   /**
@@ -3179,6 +3216,7 @@ export function MemoSection({
             <div className="w-full min-h-0 h-full overflow-y-auto relative">
               <textarea
                 ref={textareaRef}
+                data-editor-activity-surface="raw"
                 value={content}
                 onChange={handleRawContentChange}
                 onKeyDown={handleRawKeyDown}
