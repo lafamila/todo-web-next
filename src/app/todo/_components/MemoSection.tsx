@@ -58,6 +58,7 @@ import {
   canClaimDraftWrite,
   isMemoSaveShortcut,
   ownsDraftRecord,
+  shouldIsolateTaskRollupKey,
 } from '@/lib/backlogPolicy';
 import { MemoResolutionPanel } from './MemoResolutionPanel';
 import { MemoVersionBar } from './MemoVersionBar';
@@ -97,6 +98,10 @@ import {
 } from '@/lib/editorActivity';
 import { toggleSlashStrikeRange } from '@/lib/memoSyntax';
 import { createCompletedMemoSaveLedger, createMemoSaveDrainRegistry } from '@/lib/memoSaveDrain';
+import {
+  normalMemoEditorRegistry,
+  type MemoEditorRegistryToken,
+} from '@/lib/memoEditorRegistry';
 import {
   currentMemoDraftKey,
   deleteMemoDraftIfRevision,
@@ -418,6 +423,7 @@ export function MemoSection({
   const initializedMemoIdRef = useRef<string | null>(null);
   const initializedUserIdRef = useRef<string | null>(null);
   const editorEpochRef = useRef(0);
+  const editorRegistryTokenRef = useRef<MemoEditorRegistryToken | null>(null);
   const [draftStatus, setDraftStatus] = useState<DraftStatus>('idle');
   const [draftError, setDraftError] = useState<string | null>(null);
   const [recoveryDraft, setRecoveryDraft] = useState<MemoDraftRecord | null>(null);
@@ -1750,6 +1756,52 @@ export function MemoSection({
 
   // 저장과 패널 닫기는 별개다. 백로그도 Cmd/Ctrl+S와 모바일 저장 버튼으로 닫히지 않는다.
   const handleExplicitSave = handleSaveMemo;
+  const registryMemoId = selectedMemo?.id;
+  const registryMemoTitle = selectedMemo?.title;
+
+  useEffect(() => {
+    if (isBacklog || !registryMemoId || registryMemoTitle === undefined) return;
+    const token = normalMemoEditorRegistry.mount(
+      registryMemoId,
+      registryMemoTitle,
+      editorEpochRef.current,
+    );
+    editorRegistryTokenRef.current = token;
+    return () => {
+      normalMemoEditorRegistry.unmount(token);
+      if (editorRegistryTokenRef.current === token) editorRegistryTokenRef.current = null;
+    };
+  }, [isBacklog, registryMemoId, registryMemoTitle]);
+
+  useEffect(() => {
+    const token = editorRegistryTokenRef.current;
+    if (!token || isBacklog || token.memoId !== selectedMemo?.id) return;
+    normalMemoEditorRegistry.update(token, {
+      dirty: content !== originalContent,
+      pending:
+        attachmentBlocksMemoSave ||
+        versionRestorePending ||
+        Boolean(recoveryDraft) ||
+        draftStatus === 'lock-wait' ||
+        draftStatus === 'retrying',
+      conflicted:
+        draftConflictActive ||
+        remoteContent !== null ||
+        Boolean(actionableIssue),
+    });
+  }, [
+    actionableIssue,
+    attachmentBlocksMemoSave,
+    content,
+    draftConflictActive,
+    draftStatus,
+    isBacklog,
+    originalContent,
+    recoveryDraft,
+    remoteContent,
+    selectedMemo?.id,
+    versionRestorePending,
+  ]);
 
   const handleRestoreVersion = useCallback(async (version: MemoVersionInterface) => {
     if (!selectedMemo || versionRestorePending) return;
@@ -2008,6 +2060,15 @@ export function MemoSection({
       if (!handlesGlobalKeyboard || e.defaultPrevented) return;
 
       const target = e.target instanceof Element ? e.target : null;
+      // The generated rollup owns its controls and keyboard activation. This
+      // document listener otherwise sees Space/Enter after React's delegated
+      // handlers and can move focus into the private backlog editor before the
+      // native button/checkbox activation completes. Do not prevent default:
+      // the focused rollup control must retain normal browser activation.
+      if (
+        target?.closest('[data-testid="task-rollup"]') &&
+        shouldIsolateTaskRollupKey(e)
+      ) return;
       const outsideMemoInput = isTypingContext(target) &&
         !target?.closest('.memo-editor-shell');
 

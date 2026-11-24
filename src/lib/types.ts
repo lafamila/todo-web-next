@@ -116,6 +116,116 @@ export interface MemoLeaseInterface {
   generation?: number;
 }
 
+export interface TaskRollupAliasInterface {
+  seedKey: string;
+  variantKeys: string[];
+}
+
+export type TaskRollupMemoScope = 'all' | 'recent30';
+
+export interface TaskRollupLeaseInterface {
+  memoId: string;
+  token: string;
+}
+
+export interface TaskRollupOccurrenceInterface {
+  key: string;
+  memoId: string;
+  memoTitle: string;
+  revision: string;
+  lineIndex: number;
+  byteStart: number;
+  marker: '-- ' | 'v-- ' | '- ';
+  checked: boolean;
+  text: string;
+  physicalPath: string[];
+}
+
+export interface TaskRollupNodeInterface {
+  key: string;
+  kind: 'task' | 'description';
+  text: string;
+  checked: boolean;
+  actionable: boolean;
+  occurrences: TaskRollupOccurrenceInterface[];
+  children: TaskRollupNodeInterface[];
+}
+
+export interface TaskRollupCandidateInterface {
+  seedKey: string;
+  variantKeys: string[];
+  reason: string;
+}
+
+export interface TaskRollupAfterMemoInterface {
+  memoId: string;
+  revision: string;
+  contentHash: string;
+  updatedAtUtc: string;
+}
+
+export interface TaskRollupContextInterface {
+  key: string;
+  kind: 'task' | 'description';
+  text: string;
+  checked: boolean;
+}
+
+export type TaskRollupCompletionStatus =
+  | 'ready'
+  | 'pending'
+  | 'superseded'
+  | 'conflict'
+  | 'undone';
+
+export interface TaskRollupCompletionInterface {
+  operationId: string;
+  projectId: string;
+  groupKey: string;
+  group: TaskRollupNodeInterface;
+  context?: TaskRollupContextInterface[];
+  memoScope?: TaskRollupMemoScope;
+  changedMemoIds: string[];
+  afterManifest: TaskRollupAfterMemoInterface[];
+  completedAtUtc: string;
+  expiresAtUtc: string;
+  status: TaskRollupCompletionStatus;
+  canUndo: boolean;
+}
+
+export interface TaskRollupPreviewInterface {
+  projectId: string;
+  corpusDigest: string;
+  serverTimeUtc: string;
+  nextBoundaryUtc: string;
+  canComplete: boolean;
+  groups: TaskRollupNodeInterface[];
+  candidates: TaskRollupCandidateInterface[];
+  aliases: TaskRollupAliasInterface[];
+  completions: TaskRollupCompletionInterface[];
+  memoScope: TaskRollupMemoScope;
+  totalMemoCount: number;
+  selectedMemoCount: number;
+  excludedMemoCount: number;
+}
+
+export interface CompleteTaskRollupRequestInterface {
+  operationId: string;
+  corpusDigest: string;
+  groupKey: string;
+  aliases: TaskRollupAliasInterface[];
+  occurrenceKeys: string[];
+  leases: TaskRollupLeaseInterface[];
+  memoScope?: TaskRollupMemoScope;
+}
+
+export interface UndoTaskRollupRequestInterface {
+  undoOperationId: string;
+  corpusDigest: string;
+  leases: TaskRollupLeaseInterface[];
+  memoScope?: TaskRollupMemoScope;
+}
+
 export type MemoLeaseState = "idle" | "pending" | "ready" | "denied";
 
 export type SyncIssueKind =

@@ -74,6 +74,14 @@ export function isMemoSaveShortcut(event: ShortcutLike): boolean {
   );
 }
 
+/**
+ * Rollup controls own ordinary keys, but the existing active memo surface must
+ * still receive the explicit manual-save chord so it can prevent browser Save As.
+ */
+export function shouldIsolateTaskRollupKey(event: ShortcutLike): boolean {
+  return !isMemoSaveShortcut(event);
+}
+
 /** A delayed close/animation callback may affect only the same visible panel session. */
 export function canCloseBacklogSession(input: {
   phase: BacklogPanelPhase;

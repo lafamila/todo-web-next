@@ -28,6 +28,12 @@ import type {
   InviteMemberScopeInterface,
   SyncIssuesResponseInterface,
   SyncStatusInterface,
+  TaskRollupAliasInterface,
+  TaskRollupCompletionInterface,
+  TaskRollupMemoScope,
+  TaskRollupPreviewInterface,
+  CompleteTaskRollupRequestInterface,
+  UndoTaskRollupRequestInterface,
   UserInterface,
 } from "./types";
 
@@ -328,6 +334,59 @@ export async function ensureProjectBacklog(projectId: string): Promise<MemoInter
     `/projects/${projectId}/backlog`,
     { method: "POST" },
     "백로그를 만들지 못했습니다.",
+  );
+}
+
+export async function getProjectTaskRollup(
+  projectId: string,
+  memoScope: TaskRollupMemoScope = "all",
+  signal?: AbortSignal,
+): Promise<TaskRollupPreviewInterface> {
+  const params = new URLSearchParams({ memoScope });
+  return fetchJson<TaskRollupPreviewInterface>(
+    `/projects/${projectId}/backlog/task-rollup?${params.toString()}`,
+    { signal },
+    "할 일 모음을 불러오지 못했습니다.",
+  );
+}
+
+export async function previewProjectTaskRollup(
+  projectId: string,
+  aliases: TaskRollupAliasInterface[],
+  memoScope: TaskRollupMemoScope = "all",
+  signal?: AbortSignal,
+): Promise<TaskRollupPreviewInterface> {
+  return fetchJson<TaskRollupPreviewInterface>(
+    `/projects/${projectId}/backlog/task-rollup/preview`,
+    {
+      method: "POST",
+      body: JSON.stringify({ aliases, memoScope }),
+      signal,
+    },
+    "확인한 할 일 표현을 미리 보지 못했습니다.",
+  );
+}
+
+export async function completeProjectTaskRollup(
+  projectId: string,
+  request: CompleteTaskRollupRequestInterface,
+): Promise<TaskRollupCompletionInterface> {
+  return fetchJson<TaskRollupCompletionInterface>(
+    `/projects/${projectId}/backlog/task-rollup/complete`,
+    { method: "POST", body: JSON.stringify(request) },
+    "할 일을 완료하지 못했습니다.",
+  );
+}
+
+export async function undoProjectTaskRollup(
+  projectId: string,
+  operationId: string,
+  request: UndoTaskRollupRequestInterface,
+): Promise<TaskRollupCompletionInterface> {
+  return fetchJson<TaskRollupCompletionInterface>(
+    `/projects/${projectId}/backlog/task-rollup/${operationId}/undo`,
+    { method: "POST", body: JSON.stringify(request) },
+    "완료를 되돌리지 못했습니다.",
   );
 }
 

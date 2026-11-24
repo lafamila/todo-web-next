@@ -28,6 +28,7 @@ import {
   EDITOR_ACTIVE_SURFACE_EVENT,
   MemoSection,
 } from './MemoSection';
+import { TaskRollupPanel } from './TaskRollupPanel';
 
 const dispatchPanelState = (open: boolean, restoreMainEditorFocus = false) => {
   window.dispatchEvent(new CustomEvent(BACKLOG_VISIBILITY_EVENT, {
@@ -358,14 +359,19 @@ export function BacklogPanel() {
           {loading ? (
             <div className="backlog-panel-message">백로그를 불러오는 중입니다…</div>
           ) : memo ? (
-            <MemoSection
-              key={memo.id}
-              memo={memo}
-              project={selectedProject}
-              variant="backlog"
-              keyboardActive={backlogAcceptsInput(phase)}
-              onClose={() => closePanel(panelSession)}
-            />
+            <div className="backlog-panel-content">
+              <TaskRollupPanel project={selectedProject} />
+              <div className="backlog-memo-region">
+                <MemoSection
+                  key={memo.id}
+                  memo={memo}
+                  project={selectedProject}
+                  variant="backlog"
+                  keyboardActive={backlogAcceptsInput(phase)}
+                  onClose={() => closePanel(panelSession)}
+                />
+              </div>
+            </div>
           ) : (
             <div className="backlog-panel-message" role="alert">
               <strong>백로그를 열 수 없습니다</strong>

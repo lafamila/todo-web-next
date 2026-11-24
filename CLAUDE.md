@@ -65,6 +65,21 @@ Next.js 16 frontend for the standalone todo service. This repo owns the todo use
 - `BacklogPanel`은 선택된 leaf 프로젝트+로그인 계정별 비공개 백로그를 불러오며 일반 목록에 섞지 않는다.
   다른 멤버·프로젝트 owner에게 공유하지 않으며 viewer도 자기 백로그는 생성·편집할 수 있다. `MemoSection`의 문서 override로
   동일한 InlineEditor/Monaco/Raw/IME/CAS/lease/기기 초안 기능을 재사용하고 기존 메모와 별도 버퍼·소켓을 가진다.
+- `TaskRollupPanel`은 그 위의 별도 생성 목록이다. 기존 백로그 본문에 원문을 붙여넣거나 숨은 ID를 삽입하지 않는다.
+  현재 leaf의 최신 저장 일반 메모만 서버에서 집계한다. 체크된 부모/`- 설명`은 문맥으로 남기고 미완료 자식을 보존하며,
+  동일 문구+상위 문맥의 복사본과 순서가 다른 자식을 합산한다. 긴 문장의 후보는 확인한 표현만 함께 보고 원문 전체를 체크한다.
+- 생성 목록의 `전체`/`최근 30개`는 명시적인 원문 범위다. 생성일 기준 선택/제외 문서 수를 표시하고, 범위 변경은 개인 백로그 본문을
+  remount하지 않는다. 처리·응답 확인 대기 중에는 범위를 고정하고, 제외된 오래된 문서를 몰래 체크하지 않는다.
+- 생성 목록 체크는 공유 원문들을 즉시 반영한다. 별도 소켓이 원문별 lease를 얻고 전부 확보한 뒤 요청하며,
+  main 편집기의 dirty/pending/conflict를 잠금 획득 전후 모두 확인한다. 같은 계정의 다른 편집기 잠금도 빼앗지 않는다.
+  응답이 유실되면 operation UUID를 유지하고, 같은 UUID의 서버 receipt가 확인되면 대기를 해소한다. 확인되지 않으면 재시도 UI를 유지한다.
+- 오늘 완료 trail과 ancestor breadcrumb는 계정별이다. 서버가 준 KST 다음 자정에 재조회 실패 중에도 로컬 표시를 만료한다.
+  원문 `v--`는 유지되며 새로운 미체크 복사본/하위 작업은 다시 보인다. undo는 해당 operation이 바꾼 접두사만 되돌린다.
+  source/완료 기록의 원자성은 한 API DB까지이며 아직 내려오지 않은 오프라인 복사본은 대상이 아니다.
+- 생성 목록의 Space/Enter/후보 입력은 메모의 `focusLastLine`에 전달하지 않는다. 명시적 Cmd/Ctrl+S는 기존 활성 백로그 수동 저장으로
+  넘겨 browser Save As를 막고 패널을 닫지 않는다. Cmd/Ctrl+Shift+S/두 Esc/resize/모바일 전환은 기존 경로를 유지한다.
+  `normalMemoEditorRegistry`는 normal 편집기만 epoch/등록 토큰으로 추적하며 source refresh가 private editor를 remount하지 않는다.
+- HTTP DTO와 sync v5 양쪽 API 갱신 순서는 `../todo-api-fastapi/docs/task-rollup-contract.md`를 따른다. 새 Web env/의존성은 없다.
 - Cmd/Ctrl+Shift+S는 백로그 열기/닫기 토글, Cmd/Ctrl+S는 마지막으로 포커스한 편집기 저장이다. 백로그 열기는 focus를 이동하고
   닫기는 기존 focus를 복원한다. Cmd/Ctrl+S·모바일 저장·체크박스 저장은 패널을 닫지 않고 저장만 한다.
   저장 실패·대기·충돌은 유지하며 수동 닫기에도 debounce 전 초안을 flush한다.

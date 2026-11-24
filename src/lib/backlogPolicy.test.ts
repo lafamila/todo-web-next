@@ -11,6 +11,7 @@ import {
   isBacklogShortcut,
   isBacklogShortcutChord,
   isMemoSaveShortcut,
+  shouldIsolateTaskRollupKey,
   ownsDraftRecord,
 } from './backlogPolicy.ts';
 
@@ -25,6 +26,16 @@ test('Cmd/Ctrl+Shift+S is distinct from ordinary save and IME input', () => {
   assert.equal(isBacklogShortcut({ key: 's', metaKey: true, shiftKey: true, repeat: true }), false);
   assert.equal(isBacklogShortcutChord({ key: 's', metaKey: true, shiftKey: true, repeat: true }), true);
   assert.equal(isBacklogShortcutChord({ key: 's', metaKey: true, shiftKey: true, isComposing: true }), false);
+});
+
+test('rollup controls isolate native keys but pass only the existing explicit-save chord', () => {
+  assert.equal(shouldIsolateTaskRollupKey({ key: 'Enter' }), true);
+  assert.equal(shouldIsolateTaskRollupKey({ key: ' ' }), true);
+  assert.equal(shouldIsolateTaskRollupKey({ key: 'x' }), true);
+  assert.equal(shouldIsolateTaskRollupKey({ key: 's', metaKey: true }), false);
+  assert.equal(shouldIsolateTaskRollupKey({ key: 'S', ctrlKey: true }), false);
+  assert.equal(shouldIsolateTaskRollupKey({ key: 's', metaKey: true, shiftKey: true }), true);
+  assert.equal(shouldIsolateTaskRollupKey({ key: 's', metaKey: true, isComposing: true }), true);
 });
 
 test('clean editor may delete only the draft record written by its own mounted session', () => {
