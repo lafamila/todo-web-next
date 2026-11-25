@@ -24,13 +24,11 @@ import { normalMemoEditorRegistry } from '@/lib/memoEditorRegistry';
 import { shouldIsolateTaskRollupKey } from '@/lib/backlogPolicy';
 import {
   collectTaskRollupOperation,
-  canChangeTaskRollupMemoScope,
   acquireTaskRollupWriteReadiness,
   editorBlockersForTaskRollup,
   indexTaskRollupNodes,
   hasTaskRollupCompletionReceipt,
   hasTaskRollupUndoReceipt,
-  formatTaskRollupMemoCounts,
   isTaskRollupOperationScopeCurrent,
   isTaskRollupCompletionVisible,
   isTaskRollupNodeInteractive,
@@ -47,7 +45,6 @@ import type {
   TaskRollupCandidateInterface,
   TaskRollupCompletionInterface,
   TaskRollupNodeInterface,
-  TaskRollupMemoScope,
   TaskRollupPreviewInterface,
   UndoTaskRollupRequestInterface,
 } from '@/lib/types';
@@ -261,7 +258,6 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [confirmingSeed, setConfirmingSeed] = useState<string | null>(null);
   const [pendingRequest, setPendingRequest] = useState<PendingRequest | null>(null);
-  const [memoScope, setMemoScope] = useState<TaskRollupMemoScope>('all');
   const pendingRequestRef = useRef<PendingRequest | null>(null);
   const acknowledgedReceiptIdsRef = useRef(new Set<string>());
   const releaseOperationLeasesRef = useRef<() => void>(() => {});
@@ -274,7 +270,6 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
   const operationScopeRef = useRef<TaskRollupOperationScope>({
     actorId,
     projectId: project.id,
-    memoScope,
     epoch: 1,
   });
   useSyncExternalStore(
@@ -288,16 +283,14 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
     projectIdRef.current = project.id;
     if (
       operationScopeRef.current.actorId === actorId &&
-      operationScopeRef.current.projectId === project.id &&
-      operationScopeRef.current.memoScope === memoScope
+      operationScopeRef.current.projectId === project.id
     ) return;
     operationScopeRef.current = {
       actorId,
       projectId: project.id,
-      memoScope,
       epoch: operationScopeRef.current.epoch + 1,
     };
-  }, [actorId, memoScope, project.id]);
+  }, [actorId, project.id]);
 
   const isCurrentOperation = useCallback((scope: TaskRollupOperationScope) =>
     isTaskRollupOperationScopeCurrent(scope, operationScopeRef.current), []);
@@ -318,7 +311,6 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
 
   const loadDefaultPreview = useCallback(async (quiet = false) => {
     const requestProjectId = project.id;
-    const requestMemoScope = memoScope;
     const scope = { ...operationScopeRef.current };
     const sequence = ++requestSequenceRef.current;
     previewAbortRef.current?.abort();
@@ -326,15 +318,10 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
     previewAbortRef.current = controller;
     if (!quiet) setLoading(true);
     try {
-      const next = await getProjectTaskRollup(
-        requestProjectId,
-        requestMemoScope,
-        controller.signal,
-      );
+      const next = await getProjectTaskRollup(requestProjectId, controller.signal);
       if (
         sequence !== requestSequenceRef.current ||
         requestProjectId !== projectIdRef.current ||
-        requestMemoScope !== operationScopeRef.current.memoScope ||
         !isCurrentOperation(scope)
       ) return;
       adoptPreview(next);
@@ -372,7 +359,7 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
         previewAbortRef.current = null;
       }
     }
-  }, [adoptPreview, isCurrentOperation, memoScope, project.id, replacePendingRequest]);
+  }, [adoptPreview, isCurrentOperation, project.id, replacePendingRequest]);
 
   const refreshAfterSourceChange = useCallback(() => {
     void refreshCurrentProject().catch(() => undefined);
@@ -405,7 +392,7 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
     };
     // release is stable; a project switch must invalidate all operation-scoped leases.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actorId, loadDefaultPreview, memoScope, project.id]);
+  }, [actorId, loadDefaultPreview, project.id]);
 
   useEffect(() => {
     const refreshVisible = () => {
@@ -557,7 +544,6 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
         aliases: preview.aliases,
         occurrenceKeys: operation.occurrenceKeys,
         leases: readiness.leases,
-        memoScope: scope.memoScope,
       };
       const pending: PendingRequest = {
         kind: 'complete',
@@ -606,7 +592,6 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
         undoOperationId: operationId(),
         corpusDigest: preview.corpusDigest,
         leases: readiness.leases,
-        memoScope: scope.memoScope,
       };
       const pending: PendingRequest = {
         kind: 'undo',
@@ -646,12 +631,7 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
     const controller = new AbortController();
     previewAbortRef.current = controller;
     try {
-      const next = await previewProjectTaskRollup(
-        project.id,
-        aliases,
-        scope.memoScope,
-        controller.signal,
-      );
+      const next = await previewProjectTaskRollup(project.id, aliases, controller.signal);
       if (
         sequence !== requestSequenceRef.current ||
         !isCurrentOperation(scope)
@@ -726,7 +706,6 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
       data-lease-state={leases.state}
       data-busy={busy ? 'true' : 'false'}
       data-pending-request={pendingRequest ? pendingRequest.kind : 'none'}
-      data-memo-scope={memoScope}
       aria-labelledby="task-rollup-heading"
       onKeyDown={(event) => {
         if (shouldIsolateTaskRollupKey(event)) event.stopPropagation();
@@ -735,31 +714,10 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
       onBeforeInput={(event) => event.stopPropagation()}
     >
       <div className="task-rollup-heading-row">
-        <div className="task-rollup-heading-copy">
+        <div>
           <strong id="task-rollup-heading">저장된 메모의 할 일</strong>
           <span>최신 저장본에서 생성됨</span>
         </div>
-        <label className="task-rollup-scope-control">
-          <span>메모 범위</span>
-          <select
-            aria-label="할 일 모음 메모 범위"
-            value={memoScope}
-            disabled={!canChangeTaskRollupMemoScope({
-              busy,
-              hasPendingRequest: Boolean(pendingRequest),
-            })}
-            onChange={(event) => {
-              const nextScope = event.currentTarget.value as TaskRollupMemoScope;
-              if (nextScope === memoScope) return;
-              requestSequenceRef.current += 1;
-              previewAbortRef.current?.abort();
-              setMemoScope(nextScope);
-            }}
-          >
-            <option value="all">전체 메모</option>
-            <option value="recent30">최근 생성 30개</option>
-          </select>
-        </label>
         <button
           type="button"
           className="task-rollup-refresh todo-action-button todo-action-button--secondary"
@@ -773,12 +731,6 @@ export function TaskRollupPanel({ project }: TaskRollupPanelProps) {
       {(message || error || leases.message) && (
         <div className={error || leases.message ? 'task-rollup-error' : 'task-rollup-message'} role="status" aria-live="polite">
           {error || leases.message || message}
-        </div>
-      )}
-
-      {preview && (
-        <div className="task-rollup-scope-counts" aria-live="polite">
-          {formatTaskRollupMemoCounts(preview)}
         </div>
       )}
 

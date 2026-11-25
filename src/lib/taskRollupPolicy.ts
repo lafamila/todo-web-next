@@ -3,7 +3,6 @@ import type {
   TaskRollupCandidateInterface,
   TaskRollupNodeInterface,
   TaskRollupOccurrenceInterface,
-  TaskRollupMemoScope,
 } from './types';
 import type { NormalMemoEditorState } from './memoEditorRegistry';
 
@@ -22,7 +21,6 @@ export interface TaskRollupEditorBlocker {
 export interface TaskRollupOperationScope {
   actorId: string | null;
   projectId: string;
-  memoScope: TaskRollupMemoScope;
   epoch: number;
 }
 
@@ -50,21 +48,6 @@ export function isTaskRollupNodeInteractive(input: {
     input.hasUndoAction ||
     (input.actionable && input.hasCompleteAction)
   );
-}
-
-export function canChangeTaskRollupMemoScope(input: {
-  busy: boolean;
-  hasPendingRequest: boolean;
-}): boolean {
-  return !input.busy && !input.hasPendingRequest;
-}
-
-export function formatTaskRollupMemoCounts(input: {
-  totalMemoCount: number;
-  selectedMemoCount: number;
-  excludedMemoCount: number;
-}): string {
-  return `전체 ${input.totalMemoCount}개 · 선택 ${input.selectedMemoCount}개 · 제외 ${input.excludedMemoCount}개`;
 }
 
 export function summarizeTaskRollupSources(
@@ -134,7 +117,6 @@ export function isTaskRollupOperationScopeCurrent(
 ): boolean {
   return captured.actorId === current.actorId &&
     captured.projectId === current.projectId &&
-    captured.memoScope === current.memoScope &&
     captured.epoch === current.epoch;
 }
 

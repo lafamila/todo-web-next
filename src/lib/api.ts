@@ -30,7 +30,6 @@ import type {
   SyncStatusInterface,
   TaskRollupAliasInterface,
   TaskRollupCompletionInterface,
-  TaskRollupMemoScope,
   TaskRollupPreviewInterface,
   CompleteTaskRollupRequestInterface,
   UndoTaskRollupRequestInterface,
@@ -339,12 +338,10 @@ export async function ensureProjectBacklog(projectId: string): Promise<MemoInter
 
 export async function getProjectTaskRollup(
   projectId: string,
-  memoScope: TaskRollupMemoScope = "all",
   signal?: AbortSignal,
 ): Promise<TaskRollupPreviewInterface> {
-  const params = new URLSearchParams({ memoScope });
   return fetchJson<TaskRollupPreviewInterface>(
-    `/projects/${projectId}/backlog/task-rollup?${params.toString()}`,
+    `/projects/${projectId}/backlog/task-rollup`,
     { signal },
     "할 일 모음을 불러오지 못했습니다.",
   );
@@ -353,14 +350,13 @@ export async function getProjectTaskRollup(
 export async function previewProjectTaskRollup(
   projectId: string,
   aliases: TaskRollupAliasInterface[],
-  memoScope: TaskRollupMemoScope = "all",
   signal?: AbortSignal,
 ): Promise<TaskRollupPreviewInterface> {
   return fetchJson<TaskRollupPreviewInterface>(
     `/projects/${projectId}/backlog/task-rollup/preview`,
     {
       method: "POST",
-      body: JSON.stringify({ aliases, memoScope }),
+      body: JSON.stringify({ aliases }),
       signal,
     },
     "확인한 할 일 표현을 미리 보지 못했습니다.",

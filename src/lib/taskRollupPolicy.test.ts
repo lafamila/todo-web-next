@@ -4,14 +4,12 @@ import test from 'node:test';
 import type { TaskRollupCompletionInterface, TaskRollupNodeInterface } from './types.ts';
 import {
   collectTaskRollupOperation,
-  canChangeTaskRollupMemoScope,
   acquireTaskRollupWriteReadiness,
   editorBlockersForTaskRollup,
   isTaskRollupCompletionVisible,
   isTaskRollupNodeInteractive,
   hasTaskRollupCompletionReceipt,
   hasTaskRollupUndoReceipt,
-  formatTaskRollupMemoCounts,
   isTaskRollupOperationScopeCurrent,
   removeTaskRollupNode,
   summarizeTaskRollupSources,
@@ -66,20 +64,6 @@ test('server-authorized historical undo is interactive even though its checked s
   assert.equal(isTaskRollupNodeInteractive({
     kind: 'description', actionable: true, hasCompleteAction: true, hasUndoAction: true,
   }), false);
-});
-
-test('memo scope remains switchable after an all-scope preview error but not during a fixed-scope operation', () => {
-  assert.equal(canChangeTaskRollupMemoScope({ busy: false, hasPendingRequest: false }), true);
-  assert.equal(canChangeTaskRollupMemoScope({ busy: true, hasPendingRequest: false }), false);
-  assert.equal(canChangeTaskRollupMemoScope({ busy: false, hasPendingRequest: true }), false);
-});
-
-test('scope counts explicitly report selected and excluded saved memos', () => {
-  assert.equal(formatTaskRollupMemoCounts({
-    totalMemoCount: 325,
-    selectedMemoCount: 30,
-    excludedMemoCount: 295,
-  }), '전체 325개 · 선택 30개 · 제외 295개');
 });
 
 test('source summaries retain duplicate counts and deterministic labels', () => {
@@ -153,8 +137,8 @@ test('a stale A lease continuation does not release a possibly newer B batch', a
 });
 
 test('an A request continuation cannot affect B retry, glyph, busy, or lease state', () => {
-  const captured = { actorId: 'actor-1', projectId: 'project-a', memoScope: 'all' as const, epoch: 7 };
-  const current = { actorId: 'actor-1', projectId: 'project-b', memoScope: 'all' as const, epoch: 8 };
+  const captured = { actorId: 'actor-1', projectId: 'project-a', epoch: 7 };
+  const current = { actorId: 'actor-1', projectId: 'project-b', epoch: 8 };
   const effects = { retry: 0, glyph: 0, busy: 0, release: 0 };
   assert.equal(isTaskRollupOperationScopeCurrent(captured, captured), true);
   if (isTaskRollupOperationScopeCurrent(captured, current)) {
@@ -165,13 +149,10 @@ test('an A request continuation cannot affect B retry, glyph, busy, or lease sta
   }
   assert.deepEqual(effects, { retry: 0, glyph: 0, busy: 0, release: 0 });
   assert.equal(isTaskRollupOperationScopeCurrent(captured, {
-    actorId: 'actor-2', projectId: 'project-a', memoScope: 'all', epoch: 8,
+    actorId: 'actor-2', projectId: 'project-a', epoch: 8,
   }), false);
   assert.equal(isTaskRollupOperationScopeCurrent(captured, {
-    actorId: 'actor-1', projectId: 'project-a', memoScope: 'all', epoch: 8,
-  }), false);
-  assert.equal(isTaskRollupOperationScopeCurrent(captured, {
-    actorId: 'actor-1', projectId: 'project-a', memoScope: 'recent30', epoch: 7,
+    actorId: 'actor-1', projectId: 'project-a', epoch: 8,
   }), false);
 });
 

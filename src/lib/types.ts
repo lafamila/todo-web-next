@@ -121,8 +121,6 @@ export interface TaskRollupAliasInterface {
   variantKeys: string[];
 }
 
-export type TaskRollupMemoScope = 'all' | 'recent30';
-
 export interface TaskRollupLeaseInterface {
   memoId: string;
   token: string;
@@ -184,7 +182,6 @@ export interface TaskRollupCompletionInterface {
   groupKey: string;
   group: TaskRollupNodeInterface;
   context?: TaskRollupContextInterface[];
-  memoScope?: TaskRollupMemoScope;
   changedMemoIds: string[];
   afterManifest: TaskRollupAfterMemoInterface[];
   completedAtUtc: string;
@@ -203,10 +200,6 @@ export interface TaskRollupPreviewInterface {
   candidates: TaskRollupCandidateInterface[];
   aliases: TaskRollupAliasInterface[];
   completions: TaskRollupCompletionInterface[];
-  memoScope: TaskRollupMemoScope;
-  totalMemoCount: number;
-  selectedMemoCount: number;
-  excludedMemoCount: number;
 }
 
 export interface CompleteTaskRollupRequestInterface {
@@ -216,14 +209,12 @@ export interface CompleteTaskRollupRequestInterface {
   aliases: TaskRollupAliasInterface[];
   occurrenceKeys: string[];
   leases: TaskRollupLeaseInterface[];
-  memoScope?: TaskRollupMemoScope;
 }
 
 export interface UndoTaskRollupRequestInterface {
   undoOperationId: string;
   corpusDigest: string;
   leases: TaskRollupLeaseInterface[];
-  memoScope?: TaskRollupMemoScope;
 }
 
 export type MemoLeaseState = "idle" | "pending" | "ready" | "denied";
